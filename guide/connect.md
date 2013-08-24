@@ -36,7 +36,7 @@ Monitoring the connection process
 
 The connection is managed by a separate process. Because
 software errors are a reality, it is important to monitor
-this process for failure. Thankfully, do to the asynchronous
+this process for failure. Thankfully, due to the asynchronous
 nature of Gun, we only need to create a monitor once when
 the connection is established.
 

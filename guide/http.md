@@ -15,7 +15,7 @@ identify incoming messages.
 Streams are references in Gun, and are therefore always unique.
 
 Streams can be canceled at any time. This will stop any further
-messages to be sent to the controlling process. Depending on
+messages being sent to the controlling process. Depending on
 its capabilities, the server will also be instructed to drop
 the request.
 
