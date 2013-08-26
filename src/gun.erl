@@ -193,7 +193,7 @@ init(Parent, Owner, Host, Port, Opts) ->
 			keepalive=Keepalive, type=Type,
 			retry=Retry, retry_timeout=RetryTimeout}, Retry)
 	catch Class:Reason ->
-		Owner ! {gun, error, self(), {{Class, Reason, erlang:get_stacktrace()},
+		Owner ! {gun_error, self(), {{Class, Reason, erlang:get_stacktrace()},
 			"An unexpected error occurred."}}
 	end.
 
@@ -301,15 +301,15 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{loop, [State]});
 		Any when is_tuple(Any), is_pid(element(2, Any)) ->
-			element(2, Any) ! {gun, error, self(), {notowner,
+			element(2, Any) ! {gun_error, self(), {notowner,
 				"Operations are restricted to the owner of the connection."}},
 			loop(State);
 		{ws_upgrade, _, _, _} ->
-			Owner ! {gun, error, self(), {badstate,
+			Owner ! {gun_error, self(), {badstate,
 				"Websocket over SPDY isn't supported."}},
 			loop(State);
 		{ws_send, _, _} ->
-			Owner ! {gun, error, self(), {badstate,
+			Owner ! {gun_error, self(), {badstate,
 				"Connection needs to be upgraded to Websocket "
 				"before the gun:ws_send/1 function can be used."}},
 			loop(State);
@@ -344,7 +344,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{loop, [State]});
 		Any when is_tuple(Any), is_pid(element(2, Any)) ->
-			element(2, Any) ! {gun, error, self(), {notowner,
+			element(2, Any) ! {gun_error, self(), {notowner,
 				"Operations are restricted to the owner of the connection."}},
 			loop(State);
 		Any ->

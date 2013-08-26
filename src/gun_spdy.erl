@@ -68,10 +68,10 @@ handle_frame(Rest, State=#spdy_state{owner=Owner,
 				cow_spdy:rst_stream(StreamID, stream_already_closed)),
 			handle_loop(Rest, delete_stream(StreamID, State));
 		S = #stream{ref=StreamRef} when IsFin ->
-			Owner ! {gun, data, self(), StreamRef, fin, Data},
+			Owner ! {gun_data, self(), StreamRef, fin, Data},
 			handle_loop(Rest, in_fin_stream(S, State));
 		#stream{ref=StreamRef} ->
-			Owner ! {gun, data, self(), StreamRef, nofin, Data},
+			Owner ! {gun_data, self(), StreamRef, nofin, Data},
 			handle_loop(Rest, State);
 		false ->
 			Transport:send(Socket,
@@ -116,7 +116,7 @@ handle_frame(Rest, State=#spdy_state{owner=Owner,
 				cow_spdy:rst_stream(StreamID, stream_already_closed)),
 			handle_loop(Rest, delete_stream(StreamID, State));
 		S = #stream{ref=StreamRef} ->
-			Owner ! {gun, response, self(), StreamRef, Status, Headers},
+			Owner ! {gun_response, self(), StreamRef, Status, Headers},
 			if IsFin ->
 				handle_loop(Rest, in_fin_stream(S, State));
 			true ->
@@ -131,7 +131,7 @@ handle_frame(Rest, State=#spdy_state{owner=Owner},
 		{rst_stream, StreamID, Status}) ->
 	case get_stream_by_id(StreamID, State) of
 		#stream{} ->
-			Owner ! {gun, error, self(), StreamID, Status},
+			Owner ! {gun_error, self(), StreamID, Status},
 			handle_loop(Rest, delete_stream(StreamID, State));
 		false ->
 			handle_loop(Rest, State)
@@ -162,7 +162,7 @@ handle_frame(Rest, State, {window_update, StreamID, DeltaWindowSize}) ->
 	handle_loop(Rest, State);
 handle_frame(_, #spdy_state{owner=Owner, socket=Socket, transport=Transport},
 		{error, badprotocol}) ->
-	Owner ! {gun, error, self(), {badprotocol,
+	Owner ! {gun_error, self(), {badprotocol,
 		"The remote endpoint sent invalid data."}},
 	%% @todo LastGoodStreamID
 	Transport:send(Socket, cow_spdy:goaway(0, protocol_error)),
@@ -222,12 +222,12 @@ cancel(State=#spdy_state{socket=Socket, transport=Transport},
 	end.
 
 error_stream_closed(State=#spdy_state{owner=Owner}) ->
-	Owner ! {gun, error, self(), {badstate,
+	Owner ! {gun_error, self(), {badstate,
 		"The stream has already been closed."}},
 	State.
 
 error_stream_not_found(State=#spdy_state{owner=Owner}) ->
-	Owner ! {gun, error, self(), {badstate,
+	Owner ! {gun_error, self(), {badstate,
 		"The stream cannot be found."}},
 	State.
 

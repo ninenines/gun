@@ -51,7 +51,7 @@ spdy(_) ->
 	{ok, Pid} = gun:open("twitter.com", 443, []),
 	Ref = gun:get(Pid, "/"),
 	receive
-		{gun, response, Pid, Ref, Status, Headers} ->
+		{gun_response, Pid, Ref, Status, Headers} ->
 			ct:print("response ~p ~p", [Status, Headers]),
 			data_loop(Pid, Ref)
 	after 5000 ->
@@ -60,10 +60,10 @@ spdy(_) ->
 
 data_loop(Pid, Ref) ->
 	receive
-		{gun, data, Pid, Ref, nofin, Data} ->
+		{gun_data, Pid, Ref, nofin, Data} ->
 			ct:print("data ~p", [Data]),
 			data_loop(Pid, Ref);
-		{gun, data, Pid, Ref, fin, Data} ->
+		{gun_data, Pid, Ref, fin, Data} ->
 			ct:print("data ~p~nend", [Data])
 	after 5000 ->
 		error(timeout)
