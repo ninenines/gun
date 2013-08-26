@@ -13,15 +13,17 @@ server. Because of this, the connection must be initiated
 before being able to send any request.
 
 The process that creates the connection is also known as the
-owner of the connection. Only this process can perform operations
-on the connection, and only this process will receive messages
-from the connection.
+owner of the connection, or the controlling process.. Only
+this process can perform operations on the connection, and
+only this process will receive messages from the connection.
 
-To open a new connection, the `gun:open/3` function can be used.
+To open a new connection, the `gun:open/{2,3}` function can be used.
 
 ``` erlang
-{ok, Pid} = gun:open("twitter.com", 443, []).
+{ok, Pid} = gun:open("twitter.com", 443).
 ```
+
+Gun will by default assume that SSL should be used.
 
 The connection is managed by a separate process and is supervised
 by the Gun supervisor directly.
@@ -41,7 +43,7 @@ nature of Gun, we only need to create a monitor once when
 the connection is established.
 
 ``` erlang
-{ok, Pid} = gun:open("twitter.com", 443, []).
+{ok, Pid} = gun:open("twitter.com", 443).
 MRef = monitor(process, Pid).
 ```
 

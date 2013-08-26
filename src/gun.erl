@@ -15,6 +15,7 @@
 -module(gun).
 
 %% Connection.
+-export([open/2]).
 -export([open/3]).
 -export([close/1]).
 -export([shutdown/1]).
@@ -68,6 +69,9 @@
 }).
 
 %% Connection.
+
+open(Host, Port) ->
+	open(Host, Port, []).
 
 open(Host, Port, Opts) ->
 	case open_opts(Opts) of

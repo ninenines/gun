@@ -48,7 +48,7 @@ end_per_suite(_) ->
 	ok.
 
 spdy(_) ->
-	{ok, Pid} = gun:open("twitter.com", 443, []),
+	{ok, Pid} = gun:open("twitter.com", 443),
 	Ref = gun:get(Pid, "/"),
 	receive
 		{gun_response, Pid, Ref, Status, Headers} ->
