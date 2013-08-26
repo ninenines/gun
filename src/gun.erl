@@ -53,26 +53,44 @@
 -export([start_link/4]).
 -export([init/5]).
 
+-type conn_type() :: ssl | tcp | tcp_spdy.
+-type headers() :: [{iodata(), iodata()}].
+
+-type ws_close_code() :: 1000..4999.
+-type ws_frame() :: close | ping | pong
+	| {text | binary | close | ping | pong, iodata()}
+	| {close, ws_close_code(), iodata()}.
+
+-type opts() :: [{keepalive, pos_integer()}
+	| {retry, non_neg_integer()}
+	| {retry_timeout, pos_integer()}
+	| {type, conn_type()}].
+-export_type([opts/0]).
+
 -record(state, {
-	parent,
-	owner,
-	host,
-	port,
-	keepalive,
-	type,
-	retry,
-	retry_timeout,
-	socket,
-	transport,
-	protocol,
-	protocol_state
+	parent :: pid(),
+	owner :: pid(),
+	host :: inet:hostname(),
+	port :: inet:port_number(),
+	keepalive :: pos_integer(),
+	type :: conn_type(),
+	retry :: non_neg_integer(),
+	retry_timeout :: pos_integer(),
+	socket :: inet:socket() | ssl:sslsocket(),
+	transport :: module(),
+	protocol :: module(),
+	protocol_state :: any()
 }).
 
 %% Connection.
 
+-spec open(inet:hostname(), inet:port_number())
+	-> {ok, pid()} | {error, any()}.
 open(Host, Port) ->
 	open(Host, Port, []).
 
+-spec open(inet:hostname(), inet:port_number(), opts())
+	-> {ok, pid()} | {error, any()}.
 open(Host, Port, Opts) ->
 	case open_opts(Opts) of
 		ok ->
@@ -84,11 +102,11 @@ open(Host, Port, Opts) ->
 %% @private
 open_opts([]) ->
 	ok;
-open_opts([{keepalive, K}|Opts]) when is_integer(K) ->
+open_opts([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	open_opts(Opts);
-open_opts([{retry, R}|Opts]) when is_integer(R) ->
+open_opts([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	open_opts(Opts);
-open_opts([{retry_timeout, T}|Opts]) when is_integer(T) ->
+open_opts([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
 	open_opts(Opts);
 open_opts([{type, T}|Opts])
 		when T =:= tcp; T =:= tcp_spdy; T =:= ssl ->
@@ -96,53 +114,80 @@ open_opts([{type, T}|Opts])
 open_opts([Opt|_]) ->
 	{error, {options, Opt}}.
 
+-spec close(pid()) -> ok.
 close(ServerPid) ->
 	supervisor:terminate_child(gun_sup, ServerPid).
 
+-spec shutdown(pid()) -> ok.
 shutdown(ServerPid) ->
-	gen_server:call(ServerPid, {shutdown, self()}).
+	_ = ServerPid ! {shutdown, self()},
+	ok.
 
 %% Requests.
 
+-spec delete(pid(), iodata()) -> reference().
 delete(ServerPid, Path) ->
 	request(ServerPid, <<"DELETE">>, Path, []).
+
+-spec delete(pid(), iodata(), headers()) -> reference().
 delete(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"DELETE">>, Path, Headers).
 
+-spec get(pid(), iodata()) -> reference().
 get(ServerPid, Path) ->
 	request(ServerPid, <<"GET">>, Path, []).
+
+-spec get(pid(), iodata(), headers()) -> reference().
 get(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"GET">>, Path, Headers).
 
+-spec head(pid(), iodata()) -> reference().
 head(ServerPid, Path) ->
 	request(ServerPid, <<"HEAD">>, Path, []).
+
+-spec head(pid(), iodata(), headers()) -> reference().
 head(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"HEAD">>, Path, Headers).
 
+-spec options(pid(), iodata()) -> reference().
 options(ServerPid, Path) ->
 	request(ServerPid, <<"OPTIONS">>, Path, []).
+
+-spec options(pid(), iodata(), headers()) -> reference().
 options(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"OPTIONS">>, Path, Headers).
 
+-spec patch(pid(), iodata(), headers()) -> reference().
 patch(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"PATCH">>, Path, Headers).
+
+-spec patch(pid(), iodata(), headers(), iodata()) -> reference().
 patch(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PATCH">>, Path, Headers, Body).
 
+-spec post(pid(), iodata(), headers()) -> reference().
 post(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"POST">>, Path, Headers).
+
+-spec post(pid(), iodata(), headers(), iodata()) -> reference().
 post(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"POST">>, Path, Headers, Body).
 
+-spec put(pid(), iodata(), headers()) -> reference().
 put(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"PUT">>, Path, Headers).
+
+-spec put(pid(), iodata(), headers(), iodata()) -> reference().
 put(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PUT">>, Path, Headers, Body).
 
+-spec request(pid(), iodata(), iodata(), headers()) -> reference().
 request(ServerPid, Method, Path, Headers) ->
 	StreamRef = make_ref(),
 	_ = ServerPid ! {request, self(), StreamRef, Method, Path, Headers},
 	StreamRef.
+
+-spec request(pid(), iodata(), iodata(), headers(), iodata()) -> reference().
 request(ServerPid, Method, Path, Headers, Body) ->
 	StreamRef = make_ref(),
 	_ = ServerPid ! {request, self(), StreamRef, Method, Path, Headers, Body},
@@ -150,26 +195,32 @@ request(ServerPid, Method, Path, Headers, Body) ->
 
 %% Streaming data.
 
+-spec data(pid(), reference(), fin | nofin, iodata()) -> ok.
 data(ServerPid, StreamRef, IsFin, Data) ->
 	_ = ServerPid ! {data, self(), StreamRef, IsFin, Data},
 	ok.
 
 %% Cancelling a stream.
 
+-spec cancel(pid(), reference()) -> ok.
 cancel(ServerPid, StreamRef) ->
 	_ = ServerPid ! {cancel, self(), StreamRef},
 	ok.
 
 %% Websocket.
 
+-spec ws_upgrade(pid(), iodata()) -> ok.
 ws_upgrade(ServerPid, Path) ->
 	ws_upgrade(ServerPid, Path, []).
+
+-spec ws_upgrade(pid(), iodata(), headers()) -> ok.
 ws_upgrade(ServerPid, Path, Headers) ->
 	_ = ServerPid ! {ws_upgrade, self(), Path, Headers},
 	ok.
 
-ws_send(ServerPid, Payload) ->
-	_ = ServerPid ! {ws_send, self(), Payload},
+-spec ws_send(pid(), ws_frame() | [ws_frame()]) -> ok.
+ws_send(ServerPid, Frames) ->
+	_ = ServerPid ! {ws_send, self(), Frames},
 	ok.
 
 %% Internals.
@@ -337,6 +388,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 			Transport:close(Socket),
 			retry_loop(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
+		%% @todo keepalive
 		{ws_send, Owner, Frames} when is_list(Frames) ->
 			todo; %% @todo
 		{ws_send, Owner, Frame} ->
