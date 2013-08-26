@@ -43,8 +43,8 @@ basis.
 
 To retrieve a resource, `gun:get/{2,3}` can be used. If you
 don't need the response body, `gun:head/{2,3}` is available.
-As this type of requests can't have a body, only the path
-and optionally the headers can be specified.
+As this type of requests can't have a request body, only the
+path and optionally the headers can be specified.
 
 ``` erlang
 %% Without headers.
