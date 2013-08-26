@@ -80,20 +80,33 @@ handle_frame(Rest, State=#spdy_state{owner=Owner,
 	end;
 handle_frame(Rest, State=#spdy_state{owner=Owner,
 		socket=Socket, transport=Transport},
-		{syn_stream, StreamID, _, IsFin, IsUnidirectional,
-		_, Method, _, Host, Path, Version, Headers}) ->
+		{syn_stream, StreamID, AssocToStreamID, IsFin, IsUnidirectional,
+		_, Method, _, Host, Path, Version, Headers})
+		when AssocToStreamID =/= 0, IsUnidirectional ->
 	case get_stream_by_id(StreamID, State) of
 		false ->
-			StreamRef = make_ref(),
-			Owner ! {gun, request, self(), StreamRef,
-				Method, Host, Path, Headers},
-			handle_loop(Rest, new_stream(StreamID, StreamRef,
-				not IsFin, not IsUnidirectional, Version, State));
+			case get_stream_by_id(AssocToStreamID, State) of
+				#stream{ref=AssocToStreamRef} ->
+					StreamRef = make_ref(),
+					Owner ! {gun_push, self(), StreamRef,
+						AssocToStreamRef, Method, Host, Path, Headers},
+					handle_loop(Rest, new_stream(StreamID, StreamRef,
+						not IsFin, false, Version, State));
+				false ->
+					Transport:send(Socket,
+						cow_spdy:rst_stream(AssocToStreamID, invalid_stream)),
+					handle_loop(Rest, State)
+			end;
 		#stream{} ->
 			Transport:send(Socket,
 				cow_spdy:rst_stream(StreamID, stream_in_use)),
 			handle_loop(Rest, State)
 	end;
+handle_frame(Rest, State=#spdy_state{socket=Socket, transport=Transport},
+		{syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _}) ->
+	Transport:send(Socket,
+		cow_spdy:rst_stream(StreamID, protocol_error)),
+	handle_loop(Rest, State);
 handle_frame(Rest, State=#spdy_state{owner=Owner,
 		socket=Socket, transport=Transport},
 		{syn_reply, StreamID, IsFin, Status, _, Headers}) ->

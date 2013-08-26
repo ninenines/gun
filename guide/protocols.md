@@ -64,9 +64,9 @@ Messages by protocol
 This table lists all messages that can be received depending
 on the current protocol.
 
-| Message                          | SPDY | HTTP | Websocket |
-| -------------------------------- | ---- | ---- | --------- |
-| {gun_request, ...}              | yes  | no   | no        |
+| Message                         | SPDY | HTTP | Websocket |
+| ------------------------------- | ---- | ---- | --------- |
+| {gun_push, ...}                 | yes  | no   | no        |
 | {gun_response, ...}             | yes  | yes  | no        |
 | {gun_data, ...}                 | yes  | yes  | no        |
 | {gun_error, _, StreamRef, _}    | yes  | yes  | no        |

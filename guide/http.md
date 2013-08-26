@@ -206,3 +206,16 @@ one for the request this stream is associated with.
 Pushed streams typically feature a body. Replying to a pushed
 stream is forbidden and Gun will send an error message if
 attempted.
+
+Pushed streams can be received like this:
+
+``` erlang
+receive
+	{gun_push, Pid, PushedStreamRef, StreamRef,
+            Method, Host, Path, Headers} ->
+        %% ...
+end
+```
+
+The pushed stream gets a new identifier but you still receive
+the `StreamRef` this stream is associated to.
