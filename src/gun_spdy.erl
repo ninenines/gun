@@ -19,8 +19,6 @@
 -export([keepalive/1]).
 -export([request/6]).
 -export([request/7]).
--export([response/4]).
--export([response/5]).
 -export([data/4]).
 -export([cancel/2]).
 
@@ -182,40 +180,6 @@ request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 	]),
 	new_stream(StreamID, StreamRef, true, false, <<"HTTP/1.1">>,
 		State#spdy_state{stream_id=StreamID + 2}).
-
-response(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef},
-		StreamRef, Status, Headers) ->
-	case get_stream_by_ref(StreamRef, State) of
-		#stream{out=false} ->
-			error_stream_closed(State);
-		S = #stream{id=StreamID, version=Version} ->
-			Out = false =/= lists:keyfind(<<"content-type">>, 1, Headers),
-			Transport:send(Socket, cow_spdy:syn_reply(Zdef,
-				StreamID, not Out, Status, Version, Headers)),
-			if Out ->
-				State;
-			true ->
-				out_fin_stream(S, State)
-			end;
-		false ->
-			error_stream_not_found(State)
-	end.
-
-response(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef},
-		StreamRef, Status, Headers, Body) ->
-	case get_stream_by_ref(StreamRef, State) of
-		#stream{out=false} ->
-			error_stream_closed(State);
-		S = #stream{id=StreamID, version=Version} ->
-			Transport:send(Socket, [
-				cow_spdy:syn_reply(Zdef,
-					StreamID, false, Status, Version, Headers),
-				cow_spdy:data(S#stream.id, true, Body)
-			]),
-			out_fin_stream(S, State);
-		false ->
-			error_stream_not_found(State)
-	end.
 
 data(State=#spdy_state{socket=Socket, transport=Transport},
 		StreamRef, IsFin, Data) ->

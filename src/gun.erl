@@ -37,10 +37,6 @@
 -export([request/4]).
 -export([request/5]).
 
-%% Responses.
--export([response/4]).
--export([response/5]).
-
 %% Streaming data.
 -export([data/4]).
 
@@ -147,15 +143,6 @@ request(ServerPid, Method, Path, Headers, Body) ->
 	StreamRef = make_ref(),
 	_ = ServerPid ! {request, self(), StreamRef, Method, Path, Headers, Body},
 	StreamRef.
-
-%% Responses.
-
-response(ServerPid, StreamRef, Status, Headers) ->
-	_ = ServerPid ! {response, self(), StreamRef, Status, Headers},
-	ok.
-response(ServerPid, StreamRef, Status, Headers, Body) ->
-	_ = ServerPid ! {response, self(), StreamRef, Status, Headers, Body},
-	ok.
 
 %% Streaming data.
 
@@ -294,14 +281,6 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 		{request, Owner, StreamRef, Method, Path, Headers, Body} ->
 			ProtoState2 = Protocol:request(ProtoState,
 				StreamRef, Method, Host, Path, Headers, Body),
-			loop(State#state{protocol_state=ProtoState2});
-		{response, Owner, StreamRef, Status, Headers} ->
-			ProtoState2 = Protocol:response(ProtoState,
-				StreamRef, Status, Headers),
-			loop(State#state{protocol_state=ProtoState2});
-		{response, Owner, StreamRef, Status, Headers, Body} ->
-			ProtoState2 = Protocol:response(ProtoState,
-				StreamRef, Status, Headers, Body),
 			loop(State#state{protocol_state=ProtoState2});
 		{data, Owner, StreamRef, IsFin, Data} ->
 			ProtoState2 = Protocol:data(ProtoState,
