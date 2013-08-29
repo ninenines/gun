@@ -32,7 +32,7 @@ message.
 receive
     {gun_ws_upgrade, Pid, ok} ->
         upgrade_success(Pid);
-    {gun_ws_upgrade, Pid, error, Status, Headers} ->
+    {gun_ws_upgrade, Pid, error, IsFin, Status, Headers} ->
         exit({ws_upgrade_failed, Status, Headers});
     %% More clauses here as needed.
 after 1000 ->
