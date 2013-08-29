@@ -129,8 +129,8 @@ handle_frame(Rest, State=#spdy_state{owner=Owner,
 handle_frame(Rest, State=#spdy_state{owner=Owner},
 		{rst_stream, StreamID, Status}) ->
 	case get_stream_by_id(StreamID, State) of
-		#stream{} ->
-			Owner ! {gun_error, self(), StreamID, Status},
+		#stream{ref=StreamRef} ->
+			Owner ! {gun_error, self(), StreamRef, Status},
 			handle_loop(Rest, delete_stream(StreamID, State));
 		false ->
 			handle_loop(Rest, State)
