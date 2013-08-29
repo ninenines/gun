@@ -29,6 +29,88 @@ The default value is given next to the option name.
  -  type (ssl)
    -  Whether to use SSL, plain TCP (for HTTP/Websocket) or SPDY over TCP.
 
+Messages
+--------
+
+Calling functions from this module may result in the following
+messages being sent.
+
+### {gun_push, ServerPid, StreamRef, AssocToStreamRef,
+	Method, Host, Path, Headers}
+
+> Types:
+>  *  ServerPid = pid()
+>  *  StreamRef = AssocToStreamRef = reference()
+>  *  Method = binary()
+>  *  Host = binary()
+>  *  Path = binary()
+>  *  Headers = [{binary(), binary()}]
+>
+> A resource pushed alongside an HTTP response.
+
+### {gun_response, ServerPid, StreamRef, IsFin, Status, Headers}
+
+> Types:
+>  *  ServerPid = pid()
+>  *  StreamRef = reference()
+>  *  IsFin = fin | nofin
+>  *  Status = binary()
+>  *  Headers = [{binary(), binary()}]
+>
+> A response to an HTTP request.
+
+### {gun_data, ServerPid, StreamRef, IsFin, Data}
+
+> Types:
+>  *  ServerPid = pid()
+>  *  StreamRef = reference()
+>  *  IsFin = fin | nofin
+>  *  Data = binary()
+>
+> Data associated with a response or pushed resource.
+
+### {gun_error, ServerPid, StreamRef, Reason}
+
+> Types:
+>  *  ServerPid = pid()
+>  *  StreamRef = reference()
+>  *  Reason = any()
+>
+> An error specific to a particular stream.
+
+### {gun_error, ServerPid, Reason}
+
+> Types:
+>  *  ServerPid = pid()
+>  *  Reason = any()
+>
+> A general error.
+
+### {gun_ws_upgrade, ServerPid, ok}
+
+> Types:
+>  *  ServerPid = pid()
+>
+> Websocket upgrade success.
+
+### {gun_ws_upgrade, ServerPid, error, IsFin, Status, Headers}
+
+> Types:
+>  *  ServerPid = pid()
+>  *  IsFin = fin | nofin
+>  *  Status = binary()
+>  *  Headers = [{binary(), binary()}]
+>
+> Websocket upgrade failure, with the HTTP response received.
+
+### {gun_ws, ServerPid, Frame}
+
+> Types:
+>  *  ServerPid = pid()
+>  *  Frame = ws_frame()
+>
+> A Websocket frame just received.
+
 Exports
 -------
 
