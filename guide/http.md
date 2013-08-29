@@ -211,7 +211,7 @@ Pushed streams can be received like this:
 
 ``` erlang
 receive
-	{gun_push, Pid, PushedStreamRef, StreamRef,
+    {gun_push, Pid, PushedStreamRef, StreamRef,
             Method, Host, Path, Headers} ->
         %% ...
 end
