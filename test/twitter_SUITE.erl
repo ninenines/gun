@@ -51,7 +51,7 @@ spdy(_) ->
 	{ok, Pid} = gun:open("twitter.com", 443),
 	Ref = gun:get(Pid, "/"),
 	receive
-		{gun_response, Pid, Ref, Status, Headers} ->
+		{gun_response, Pid, Ref, nofin, Status, Headers} ->
 			ct:print("response ~p ~p", [Status, Headers]),
 			data_loop(Pid, Ref)
 	after 5000 ->

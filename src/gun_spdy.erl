@@ -115,13 +115,12 @@ handle_frame(Rest, State=#spdy_state{owner=Owner,
 			Transport:send(Socket,
 				cow_spdy:rst_stream(StreamID, stream_already_closed)),
 			handle_loop(Rest, delete_stream(StreamID, State));
-		S = #stream{ref=StreamRef} ->
-			Owner ! {gun_response, self(), StreamRef, Status, Headers},
-			if IsFin ->
-				handle_loop(Rest, in_fin_stream(S, State));
-			true ->
-				handle_loop(Rest, State)
-			end;
+		S = #stream{ref=StreamRef} when IsFin ->
+			Owner ! {gun_response, self(), StreamRef, fin, Status, Headers},
+			handle_loop(Rest, in_fin_stream(S, State));
+		#stream{ref=StreamRef} ->
+			Owner ! {gun_response, self(), StreamRef, nofin, Status, Headers},
+			handle_loop(Rest, State);
 		false ->
 			Transport:send(Socket,
 				cow_spdy:rst_stream(StreamID, invalid_stream)),

@@ -150,11 +150,15 @@ process as a message. First a response message is sent, then
 zero or more data messages. If something goes wrong, error
 messages are sent instead.
 
-You can find out whether data will be sent by checking the
-presence of the content-type or content-length header and
-making sure the length isn't 0. If you already know a body is
-going to be sent you can skip this check, however do make
-sure you have a timeout just in case something goes wrong.
+The response message will inform you whether there will be
+data messages following. If it contains `fin` then no data
+will follow. If it contains `nofin` then one or more data
+messages will arrive.
+
+When using SPDY this value is sent along the frame and simply
+passed on in the message. When using HTTP however Gun must
+guess whether data will follow by looking at the headers
+as documented in the HTTP RFC.
 
 ``` erlang
 StreamRef = gun:get(Pid, "/"),
@@ -162,7 +166,9 @@ receive
     {'DOWN', Tag, _, _, Reason} ->
         error_logger:error_msg("Oops!"),
         exit(Reason);
-    {gun_response, Pid, StreamRef, Status, Headers} ->
+    {gun_response, Pid, StreamRef, fin, Status, Headers} ->
+        no_data;
+    {gun_response, Pid, StreamRef, nofin, Status, Headers} ->
         receive_data(Pid, StreamRef)
 after 1000 ->
     exit(timeout)
