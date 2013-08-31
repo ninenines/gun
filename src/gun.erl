@@ -52,6 +52,9 @@
 %% Internals.
 -export([start_link/4]).
 -export([init/5]).
+-export([system_continue/3]).
+-export([system_terminate/4]).
+-export([system_code_change/4]).
 
 -type conn_type() :: ssl | tcp | tcp_spdy.
 -type headers() :: [{iodata(), iodata()}].
@@ -296,7 +299,7 @@ retry_loop(State=#state{parent=Parent, retry_timeout=RetryTimeout}, Retries) ->
 			connect(State, Retries);
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
-				{retry_loop, [State, Retries]})
+				{retry_loop, State, Retries})
 	end.
 
 before_loop(State=#state{keepalive=Keepalive}) ->
@@ -354,7 +357,7 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 			ok;
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
-				{loop, [State]});
+				{loop, State});
 		Any when is_tuple(Any), is_pid(element(2, Any)) ->
 			element(2, Any) ! {gun_error, self(), {notowner,
 				"Operations are restricted to the owner of the connection."}},
@@ -398,7 +401,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 			ok;
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
-				{loop, [State]});
+				{ws_loop, State});
 		Any when is_tuple(Any), is_pid(element(2, Any)) ->
 			element(2, Any) ! {gun_error, self(), {notowner,
 				"Operations are restricted to the owner of the connection."}},
@@ -406,3 +409,17 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 		Any ->
 			error_logger:error_msg("Unexpected message: ~w~n", [Any])
 	end.
+
+system_continue(_, _, {retry_loop, State, Retry}) ->
+	retry_loop(State, Retry);
+system_continue(_, _, {loop, State}) ->
+	loop(State);
+system_continue(_, _, {ws_loop, State}) ->
+	ws_loop(State).
+
+-spec system_terminate(any(), _, _, _) -> no_return().
+system_terminate(Reason, _, _, _) ->
+	exit(Reason).
+
+system_code_change(Misc, _, _, _) ->
+	{ok, Misc}.
