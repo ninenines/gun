@@ -245,7 +245,7 @@ get_stream_by_id(StreamID, #spdy_state{streams=Streams}) ->
 	end.
 
 get_stream_by_ref(StreamRef, #spdy_state{streams=Streams}) ->
-	case lists:keyfind(StreamRef, #stream.id, Streams) of
+	case lists:keyfind(StreamRef, #stream.ref, Streams) of
 		false -> false;
 		S -> S
 	end.
