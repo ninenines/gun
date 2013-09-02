@@ -148,7 +148,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >
 > Delete a resource.
@@ -159,7 +159,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >
 > Fetch a resource.
@@ -170,7 +170,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >
 > Fetch a resource's headers.
@@ -183,7 +183,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >
 > Obtain information about the capabilities of the server or a resource.
@@ -198,7 +198,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >  *  Body = iodata()
 >
@@ -220,7 +220,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >  *  Body = iodata()
 >
@@ -245,7 +245,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >  *  Body = iodata()
 >
@@ -270,7 +270,7 @@ Exports
 >  *  ServerPid = pid()
 >  *  Method = iodata()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >  *  StreamRef = reference()
 >  *  Body = iodata()
 >
@@ -327,7 +327,7 @@ Exports
 > Types:
 >  *  ServerPid = pid()
 >  *  Path = iodata()
->  *  Headers = [{iodata(), iodata()}]
+>  *  Headers = [{binary(), iodata()}]
 >
 > Upgrade the connection to Websocket.
 

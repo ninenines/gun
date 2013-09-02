@@ -57,7 +57,7 @@
 -export([system_code_change/4]).
 
 -type conn_type() :: ssl | tcp | tcp_spdy.
--type headers() :: [{iodata(), iodata()}].
+-type headers() :: [{binary(), iodata()}].
 
 -type ws_close_code() :: 1000..4999.
 -type ws_frame() :: close | ping | pong
