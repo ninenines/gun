@@ -55,8 +55,8 @@ handle_loop(Data, State=#spdy_state{zinf=Zinf}) ->
 		{true, Frame, Rest} ->
 			P = cow_spdy:parse(Frame, Zinf),
 			handle_frame(Rest, State, P);
-		{false, Rest} ->
-			State#spdy_state{buffer=Rest}
+		false ->
+			State#spdy_state{buffer=Data}
 	end.
 
 handle_frame(Rest, State=#spdy_state{owner=Owner,
