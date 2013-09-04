@@ -239,16 +239,10 @@ new_stream(StreamID, StreamRef, In, Out, Version,
 	State#spdy_state{streams=[New|Streams]}.
 
 get_stream_by_id(StreamID, #spdy_state{streams=Streams}) ->
-	case lists:keyfind(StreamID, #stream.id, Streams) of
-		false -> false;
-		S -> S
-	end.
+	lists:keyfind(StreamID, #stream.id, Streams).
 
 get_stream_by_ref(StreamRef, #spdy_state{streams=Streams}) ->
-	case lists:keyfind(StreamRef, #stream.ref, Streams) of
-		false -> false;
-		S -> S
-	end.
+	lists:keyfind(StreamRef, #stream.ref, Streams).
 
 delete_stream(StreamID, State=#spdy_state{streams=Streams}) ->
 	Streams2 = lists:keydelete(StreamID, #stream.id, Streams),
