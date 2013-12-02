@@ -21,10 +21,10 @@ PROJECT ?= $(notdir $(CURDIR))
 PKG_FILE ?= $(CURDIR)/.erlang.mk.packages.v1
 export PKG_FILE
 
-PKG_FILE_URL ?= https://raw.github.com/extend/erlang.mk/master/packages.v1.txt
+PKG_FILE_URL ?= https://raw.github.com/extend/erlang.mk/master/packages.v1.tsv
 
 define get_pkg_file
-	wget -O $(PKG_FILE) $(PKG_FILE_URL)
+	wget --no-check-certificate -O $(PKG_FILE) $(PKG_FILE_URL) || rm $(PKG_FILE)
 endef
 
 # Verbosity and tweaks.
@@ -46,8 +46,36 @@ dtl_verbose = $(dtl_verbose_$(V))
 gen_verbose_0 = @echo " GEN   " $@;
 gen_verbose = $(gen_verbose_$(V))
 
-.PHONY: all clean-all app clean deps clean-deps docs clean-docs \
-	build-tests tests build-plt dialyze
+.PHONY: rel clean-rel all clean-all app clean deps clean-deps \
+	docs clean-docs build-tests tests build-plt dialyze
+
+# Release.
+
+RELX_CONFIG ?= $(CURDIR)/relx.config
+
+ifneq ($(wildcard $(RELX_CONFIG)),)
+
+RELX ?= $(CURDIR)/relx
+export RELX
+
+RELX_URL ?= https://github.com/erlware/relx/releases/download/v0.5.2/relx
+RELX_OPTS ?=
+
+define get_relx
+	wget -O $(RELX) $(RELX_URL) || rm $(RELX)
+	chmod +x $(RELX)
+endef
+
+rel: clean-rel all $(RELX)
+	@$(RELX) -c $(RELX_CONFIG) $(RELX_OPTS)
+
+$(RELX):
+	@$(call get_relx)
+
+clean-rel:
+	@rm -rf _rel
+
+endif
 
 # Deps directory.
 
@@ -62,6 +90,9 @@ ALL_TEST_DEPS_DIRS = $(addprefix $(DEPS_DIR)/,$(TEST_DEPS))
 
 # Application.
 
+ERL_LIBS ?= $(DEPS_DIR)
+export ERL_LIBS
+
 ERLC_OPTS ?= -Werror +debug_info +warn_export_all +warn_export_vars \
 	+warn_shadow_vars +warn_obsolete_guard # +bin_opt_info +warn_missing_spec
 COMPILE_FIRST ?=
@@ -73,14 +104,14 @@ clean-all: clean clean-deps clean-docs
 	$(gen_verbose) rm -rf .$(PROJECT).plt $(DEPS_DIR) logs
 
 app: ebin/$(PROJECT).app
-	$(eval MODULES := $(shell find ebin -name \*.beam \
+	$(eval MODULES := $(shell find ebin -type f -name \*.beam \
 		| sed 's/ebin\///;s/\.beam/,/' | sed '$$s/.$$//'))
 	$(appsrc_verbose) cat src/$(PROJECT).app.src \
-		| sed 's/{modules, \[\]}/{modules, \[$(MODULES)\]}/' \
+		| sed 's/{modules,[[:space:]]*\[\]}/{modules, \[$(MODULES)\]}/' \
 		> ebin/$(PROJECT).app
 
 define compile_erl
-	$(erlc_verbose) ERL_LIBS=$(DEPS_DIR) erlc -v $(ERLC_OPTS) -o ebin/ \
+	$(erlc_verbose) erlc -v $(ERLC_OPTS) -o ebin/ \
 		-pa ebin/ -I include/ $(COMPILE_FIRST_PATHS) $(1)
 endef
 
@@ -101,9 +132,11 @@ define compile_dtl
 		init:stop()'
 endef
 
-ebin/$(PROJECT).app: src/*.erl $(wildcard src/*.core) \
-		$(wildcard src/*.xrl) $(wildcard src/*.yrl) \
-		$(wildcard templates/*.dtl)
+ebin/$(PROJECT).app: $(shell find src -type f -name \*.erl) \
+		$(shell find src -type f -name \*.core) \
+		$(shell find src -type f -name \*.xrl) \
+		$(shell find src -type f -name \*.yrl) \
+		$(shell find templates -type f -name \*.dtl 2>/dev/null)
 	@mkdir -p ebin/
 	$(if $(strip $(filter %.erl %.core,$?)), \
 		$(call compile_erl,$(filter %.erl %.core,$?)))
@@ -147,13 +180,21 @@ deps: $(ALL_DEPS_DIRS)
 	done
 
 clean-deps:
-	@for dep in $(ALL_DEPS_DIRS) ; do $(MAKE) -C $$dep clean; done
+	@for dep in $(ALL_DEPS_DIRS) ; do \
+		if [ -f $$dep/Makefile ] ; then \
+			$(MAKE) -C $$dep clean ; \
+		else \
+			echo "include $(CURDIR)/erlang.mk" | $(MAKE) -f - -C $$dep clean ; \
+		fi ; \
+	done
 
 # Documentation.
 
+EDOC_OPTS ?=
+
 docs: clean-docs
 	$(gen_verbose) erl -noshell \
-		-eval 'edoc:application($(PROJECT), ".", []), init:stop().'
+		-eval 'edoc:application($(PROJECT), ".", [$(EDOC_OPTS)]), init:stop().'
 
 clean-docs:
 	$(gen_verbose) rm -f doc/*.css doc/*.html doc/*.png doc/edoc-info
@@ -166,24 +207,39 @@ build-test-deps: $(ALL_TEST_DEPS_DIRS)
 	@for dep in $(ALL_TEST_DEPS_DIRS) ; do $(MAKE) -C $$dep; done
 
 build-tests: build-test-deps
-	$(gen_verbose) ERL_LIBS=$(DEPS_DIR) erlc -v $(ERLC_OPTS) -o test/ \
+	$(gen_verbose) erlc -v $(ERLC_OPTS) -o test/ \
 		$(wildcard test/*.erl test/*/*.erl) -pa ebin/
 
 CT_RUN = ct_run \
 	-no_auto_compile \
 	-noshell \
-	-pa ebin $(DEPS_DIR)/*/ebin \
+	-pa $(realpath ebin) $(DEPS_DIR)/*/ebin \
 	-dir test \
 	-logdir logs
 #	-cover test/cover.spec
 
 CT_SUITES ?=
-CT_SUITES_FULL = $(addsuffix _SUITE,$(CT_SUITES))
+
+define test_target
+test_$(1): ERLC_OPTS += -DTEST=1 +'{parse_transform, eunit_autoexport}'
+test_$(1): clean deps app build-tests
+	@if [ -d "test" ] ; \
+	then \
+		mkdir -p logs/ ; \
+		$(CT_RUN) -suite $(addsuffix _SUITE,$(1)) ; \
+	fi
+	$(gen_verbose) rm -f test/*.beam
+endef
+
+$(foreach test,$(CT_SUITES),$(eval $(call test_target,$(test))))
 
 tests: ERLC_OPTS += -DTEST=1 +'{parse_transform, eunit_autoexport}'
 tests: clean deps app build-tests
-	@mkdir -p logs/
-	@$(CT_RUN) -suite $(CT_SUITES_FULL)
+	@if [ -d "test" ] ; \
+	then \
+		mkdir -p logs/ ; \
+		$(CT_RUN) -suite $(addsuffix _SUITE,$(CT_SUITES)) ; \
+	fi
 	$(gen_verbose) rm -f test/*.beam
 
 # Dialyzer.
