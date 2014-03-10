@@ -16,6 +16,7 @@
 
 -export([init/3]).
 -export([handle/2]).
+-export([close/1]).
 -export([keepalive/1]).
 -export([request/6]).
 -export([request/7]).
@@ -165,7 +166,17 @@ handle_frame(_, #spdy_state{owner=Owner, socket=Socket, transport=Transport},
 		"The remote endpoint sent invalid data."}},
 	%% @todo LastGoodStreamID
 	Transport:send(Socket, cow_spdy:goaway(0, protocol_error)),
-	error.
+	close.
+
+close(#spdy_state{owner=Owner, streams=Streams}) ->
+	close_streams(Owner, Streams).
+
+close_streams(_, []) ->
+	ok;
+close_streams(Owner, [#stream{ref=StreamRef}|Tail]) ->
+	Owner ! {gun_error, self(), StreamRef, {closed,
+		"The connection was lost."}},
+	close_streams(Owner, Tail).
 
 keepalive(State=#spdy_state{socket=Socket, transport=Transport,
 		ping_id=PingID}) ->

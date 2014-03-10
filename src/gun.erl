@@ -314,7 +314,7 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 	receive
 		{OK, Socket, Data} ->
 			case Protocol:handle(Data, ProtoState) of
-				error ->
+				close ->
 					Transport:close(Socket),
 					retry_loop(State#state{socket=undefined,
 						transport=undefined, protocol=undefined}, Retry);
@@ -322,10 +322,12 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 					loop(State#state{protocol_state=ProtoState2})
 			end;
 		{Closed, Socket} ->
+			Protocol:close(ProtoState),
 			Transport:close(Socket),
 			retry_loop(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
 		{Error, Socket, _} ->
+			Protocol:close(ProtoState),
 			Transport:close(Socket),
 			retry_loop(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
