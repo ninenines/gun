@@ -261,12 +261,10 @@ connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl}, Retries) ->
 		{client, [<<"spdy/3">>, <<"http/1.1">>], <<"spdy/3">>}}],
 	case Transport:connect(Host, Port, Opts) of
 		{ok, Socket} ->
-			Protocol = gun_spdy,
-%% @todo For some reasons this function doesn't work? Bug submitted.
-%			Protocol = case ssl:negotiated_next_protocol(Socket) of
-%				{ok, <<"spdy/3">>} -> gun_spdy;
-%				_ -> gun_http
-%			end,
+			Protocol = case ssl:negotiated_next_protocol(Socket) of
+				{ok, <<"spdy/3">>} -> gun_spdy;
+				_ -> gun_http
+			end,
 			ProtoState = Protocol:init(Owner, Socket, Transport),
 			before_loop(State#state{socket=Socket, transport=Transport,
 				protocol=Protocol, protocol_state=ProtoState});
