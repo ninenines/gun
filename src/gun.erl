@@ -258,7 +258,7 @@ init(Parent, Owner, Host, Port, Opts) ->
 connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl}, Retries) ->
 	Transport = ranch_ssl,
 	Opts = [binary, {active, false}, {client_preferred_next_protocols,
-		client, [<<"spdy/3">>, <<"http/1.1">>], <<"http/1.1">>}],
+		{client, [<<"spdy/3">>, <<"http/1.1">>], <<"spdy/3">>}}],
 	case Transport:connect(Host, Port, Opts) of
 		{ok, Socket} ->
 			Protocol = gun_spdy,
