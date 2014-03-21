@@ -14,7 +14,7 @@
 
 -module(gun_http).
 
--export([init/3]).
+-export([init/4]).
 -export([handle/2]).
 -export([close/1]).
 -export([keepalive/1]).
@@ -23,12 +23,16 @@
 -export([data/4]).
 -export([cancel/2]).
 
+-type opts() :: [{version, cow_http:version()}].
+-export_type([opts/0]).
+
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked.
 
 -record(http_state, {
 	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
+	version = 'HTTP/1.1' :: cow_http:version(),
 	connection = keepalive :: keepalive | close,
 	buffer = <<>> :: binary(),
 	streams = [] :: [{reference(), boolean()}], %% ref + whether stream is alive
@@ -37,8 +41,11 @@
 	out = head :: io()
 }).
 
-init(Owner, Socket, Transport) ->
-	#http_state{owner=Owner, socket=Socket, transport=Transport}.
+init(Owner, Socket, Transport, []) ->
+	#http_state{owner=Owner, socket=Socket, transport=Transport};
+init(Owner, Socket, Transport, [{version, Version}]) ->
+	#http_state{owner=Owner, socket=Socket, transport=Transport,
+		version=Version}.
 
 %% Wait for the full response headers before trying to parse them.
 handle(Data, State=#http_state{in=head, buffer=Buffer}) ->
@@ -48,11 +55,8 @@ handle(Data, State=#http_state{in=head, buffer=Buffer}) ->
 		{_, _} -> handle_head(Data2, State#http_state{buffer= <<>>})
 	end;
 %% Everything sent to the socket until it closes is part of the response body.
-handle(Data, State=#http_state{in=body_close,
-		owner=Owner, streams=[{StreamRef, true}|_]}) ->
-	Owner ! {gun_data, self(), StreamRef, nofin, Data},
-	State;
-handle(_, State=#http_state{in=body_close, streams=[{_StreamRef, false}|_]}) ->
+handle(Data, State=#http_state{in=body_close}) ->
+	send_data_if_alive(Data, State, nofin),
 	State;
 handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 		buffer=Buffer, connection=Conn}) ->
@@ -95,7 +99,7 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 		%% More data coming.
 		DataSize < Length ->
 			send_data_if_alive(Data, State, nofin),
-			State;
+			State#http_state{in={body, Length - DataSize}};
 		%% Stream finished, no rest.
 		DataSize =:= Length ->
 			send_data_if_alive(Data, State, fin),
@@ -113,27 +117,39 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 			end
 	end.
 
-handle_head(Data, State=#http_state{owner=Owner, connection=Conn,
-		streams=[{StreamRef, IsAlive}|_]}) ->
-	{Version, Status, StatusStr, Rest} = cow_http:parse_status_line(Data),
+handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
+		connection=Conn, streams=[{StreamRef, IsAlive}|_]}) ->
+	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
+	In = io_from_headers(Version, Headers),
+	IsFin = case In of head -> fin; _ -> nofin end,
 	case IsAlive of
 		false ->
 			ok;
 		true ->
-			Owner ! {gun, response, self(), StreamRef,
-				Status, StatusStr, Headers},
+			Owner ! {gun_response, self(), StreamRef,
+				IsFin, Status, Headers},
 			ok
 	end,
 	Conn2 = if
 		Conn =:= close -> close;
 		Version =:= 'HTTP/1.0' -> close;
+		ClientVersion =:= 'HTTP/1.0' -> close;
 		true -> conn_from_headers(Headers)
 	end,
-	In = io_from_headers(Version, Headers),
 	%% We always reset in_state even if not chunked.
-	handle(Rest2, State#http_state{in=In, in_state={0, 0}, connection=Conn2}).
+	if
+		IsFin =:= fin, Conn2 =:= close ->
+			close;
+		IsFin =:= fin ->
+			handle(Rest2, end_stream(State#http_state{in=In,
+				in_state={0, 0}, connection=Conn2}));
+		true ->
+			handle(Rest2, State#http_state{in=In, in_state={0, 0}, connection=Conn2})
+	end.
 
+send_data_if_alive(<<>>, _, nofin) ->
+	ok;
 send_data_if_alive(Data, #http_state{owner=Owner,
 		streams=[{StreamRef, true}|_]}, IsFin) ->
 	Owner ! {gun_data, self(), StreamRef, IsFin, Data},
@@ -161,28 +177,37 @@ keepalive(State=#http_state{socket=Socket, transport=Transport}) ->
 	Transport:send(Socket, <<"\r\n">>),
 	State.
 
-request(State=#http_state{socket=Socket, transport=Transport, out=head},
-		StreamRef, Method, Host, Path, Headers) ->
-	Conn = conn_from_headers(Headers),
-	Out = io_from_headers('HTTP/1.1', Headers),
-	Transport:send(Socket,
-		cow_http:request(Method, Path, 'HTTP/1.1',
-			[{<<"host">>, Host}|Headers])
-	),
+request(State=#http_state{socket=Socket, transport=Transport, version=Version,
+		out=head}, StreamRef, Method, Host, Path, Headers) ->
+	Headers2 = case Version of
+		'HTTP/1.0' -> lists:keydelete(<<"transfer-encoding">>, 1, Headers);
+		'HTTP/1.1' -> Headers
+	end,
+	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
+		false -> [{<<"host">>, Host}|Headers2];
+		true -> Headers2
+	end,
+	%% We use Headers2 because this is the smallest list.
+	Conn = conn_from_headers(Headers2),
+	Out = io_from_headers(Version, Headers2),
+	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers3)),
 	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef).
 
-request(State=#http_state{socket=Socket, transport=Transport, out=head},
-		StreamRef, Method, Host, Path, Headers, Body) ->
+request(State=#http_state{socket=Socket, transport=Transport, version=Version,
+		out=head}, StreamRef, Method, Host, Path, Headers, Body) ->
 	Headers2 = lists:keydelete(<<"content-length">>, 1,
 		lists:keydelete(<<"transfer-encoding">>, 1, Headers)),
+	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
+		false -> [{<<"host">>, Host}|Headers2];
+		true -> Headers2
+	end,
+	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Headers2),
-	Transport:send(Socket,
-		cow_http:request(Method, Path, 'HTTP/1.1', [
-			{<<"host">>, Host},
+	Transport:send(Socket, [
+		cow_http:request(Method, Path, Version, [
 			{<<"content-length">>, integer_to_list(iolist_size(Body))}
-		|Headers2]),
-		Body
-	),
+		|Headers3]),
+		Body]),
 	new_stream(State#http_state{connection=Conn}, StreamRef).
 
 %% We are expecting a new stream.
@@ -192,19 +217,24 @@ data(State=#http_state{out=head}, _, _, _) ->
 data(State=#http_state{streams=[]}, _, _, _) ->
 	error_stream_not_found(State);
 %% We can only send data on the last created stream.
-data(State=#http_state{socket=Socket, transport=Transport, out=Out,
-		streams=Streams}, StreamRef, IsFin, Data) ->
+data(State=#http_state{socket=Socket, transport=Transport, version=Version,
+		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
 	case lists:last(Streams) of
 		{StreamRef, true} ->
 			DataSize = byte_size(Data),
 			case Out of
-				body_chunked when IsFin ->
-					Transport:send(Socket, [
-						integer_to_list(DataSize), <<"\r\n">>,
-						Data, <<"\r\n0\r\n\r\n">>
-					]),
+				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
+					case Data of
+						<<>> ->
+							Transport:send(Socket, <<"0\r\n\r\n">>);
+						_ ->
+							Transport:send(Socket, [
+								integer_to_list(DataSize), <<"\r\n">>,
+								Data, <<"\r\n0\r\n\r\n">>
+							])
+					end,
 					State#http_state{out=head};
-				body_chunked ->
+				body_chunked when Version =:= 'HTTP/1.1' ->
 					Transport:send(Socket, [
 						integer_to_list(DataSize), <<"\r\n">>,
 						Data, <<"\r\n">>
@@ -218,7 +248,10 @@ data(State=#http_state{socket=Socket, transport=Transport, out=Out,
 							State#http_state{out=head};
 						Length2 > 0, not IsFin ->
 							State#http_state{out={body, Length2}}
-					end
+					end;
+				body_chunked -> %% HTTP/1.0
+					Transport:send(Socket, Data),
+					State
 			end;
 		{_, _} ->
 			error_stream_not_found(State)
@@ -250,7 +283,11 @@ conn_from_headers(Headers) ->
 		false ->
 			keepalive;
 		{_, ConnHd} ->
-			cow_http_hd:parse_connection(ConnHd)
+			ConnList = cow_http_hd:parse_connection(ConnHd),
+			case lists:member(<<"keep-alive">>, ConnList) of
+				true -> keepalive;
+				false -> close
+			end
 	end.
 
 io_from_headers(Version, Headers) ->
@@ -266,9 +303,10 @@ io_from_headers(Version, Headers) ->
 				false ->
 					head;
 				{_, TE} ->
-					%% We only support chunked transfer-encoding.
-					[<<"chunked">>] = cow_http_hd:parse_transfer_encoding(TE),
-					body_chunked
+					case cow_http_hd:parse_transfer_encoding(TE) of
+						[<<"chunked">>] -> body_chunked;
+						[<<"identity">>] -> body_close
+					end
 			end
 	end.
 

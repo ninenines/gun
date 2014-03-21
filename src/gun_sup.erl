@@ -33,7 +33,6 @@ start_link() ->
 %% supervisor.
 
 init([]) ->
-	Procs = [
-		{gun, {gun, start_link, []},
-			transient, 5000, worker, [gun]}],
+	Procs = [{gun, {gun, start_link, []},
+		temporary, 5000, worker, [gun]}],
 	{ok, {{simple_one_for_one, 10, 10}, Procs}}.

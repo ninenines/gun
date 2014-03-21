@@ -75,7 +75,8 @@
 	| {text | binary | close | ping | pong, iodata()}
 	| {close, ws_close_code(), iodata()}.
 
--type opts() :: [{keepalive, pos_integer()}
+-type opts() :: [{http, gun_http:opts()}
+	| {keepalive, pos_integer()}
 	| {retry, non_neg_integer()}
 	| {retry_timeout, pos_integer()}
 	| {type, conn_type()}].
@@ -93,6 +94,7 @@
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	protocol :: module(),
+	proto_opts :: gun_http:opts(), %% @todo Make a tuple with SPDY and WS too.
 	protocol_state :: any()
 }).
 
@@ -116,6 +118,8 @@ open(Host, Port, Opts) ->
 %% @private
 open_opts([]) ->
 	ok;
+open_opts([{http, O}|Opts]) when is_list(O) ->
+	open_opts(Opts);
 open_opts([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	open_opts(Opts);
 open_opts([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
@@ -328,46 +332,44 @@ get_value(Key, Opts, Default) ->
 	end.
 
 init(Parent, Owner, Host, Port, Opts) ->
-	try
-		ok = proc_lib:init_ack(Parent, {ok, self()}),
-		Keepalive = get_value(keepalive, Opts, 5000),
-		Retry = get_value(retry, Opts, 5),
-		RetryTimeout = get_value(retry_timeout, Opts, 5000),
-		Type = get_value(type, Opts, ssl),
-		connect(#state{parent=Parent, owner=Owner, host=Host, port=Port,
-			keepalive=Keepalive, type=Type,
-			retry=Retry, retry_timeout=RetryTimeout}, Retry)
-	catch Class:Reason ->
-		Owner ! {gun_error, self(), {{Class, Reason, erlang:get_stacktrace()},
-			"An unexpected error occurred."}}
-	end.
+	ok = proc_lib:init_ack(Parent, {ok, self()}),
+	HTTPOpts = get_value(http, Opts, []),
+	Keepalive = get_value(keepalive, Opts, 5000),
+	Retry = get_value(retry, Opts, 5),
+	RetryTimeout = get_value(retry_timeout, Opts, 5000),
+	Type = get_value(type, Opts, ssl),
+	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port,
+		keepalive=Keepalive, type=Type, retry=Retry,
+		proto_opts=HTTPOpts, retry_timeout=RetryTimeout}, Retry).
 
-connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl}, Retries) ->
+connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl,
+		proto_opts=HTTPOpts}, Retries) ->
 	Transport = ranch_ssl,
 	Opts = [binary, {active, false}, {client_preferred_next_protocols,
-		{client, [<<"spdy/3">>, <<"http/1.1">>], <<"spdy/3">>}}],
+		{client, [<<"spdy/3">>, <<"http/1.1">>], <<"http/1.1">>}}],
 	case Transport:connect(Host, Port, Opts) of
 		{ok, Socket} ->
-			Protocol = case ssl:negotiated_next_protocol(Socket) of
-				{ok, <<"spdy/3">>} -> gun_spdy;
-				_ -> gun_http
+			{Protocol, ProtoOpts} = case ssl:negotiated_next_protocol(Socket) of
+				{ok, <<"spdy/3">>} -> {gun_spdy, []};
+				_ -> {gun_http, HTTPOpts}
 			end,
-			ProtoState = Protocol:init(Owner, Socket, Transport),
+			ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 			before_loop(State#state{socket=Socket, transport=Transport,
 				protocol=Protocol, protocol_state=ProtoState});
 		{error, _} ->
 			retry_loop(State, Retries - 1)
 	end;
-connect(State=#state{owner=Owner, host=Host, port=Port, type=Type}, Retries) ->
+connect(State=#state{owner=Owner, host=Host, port=Port, type=Type,
+		proto_opts=HTTPOpts}, Retries) ->
 	Transport = ranch_tcp,
 	Opts = [binary, {active, false}],
 	case Transport:connect(Host, Port, Opts) of
 		{ok, Socket} ->
-			Protocol = case Type of
-				tcp_spdy -> gun_spdy;
-				tcp -> gun_http
+			{Protocol, ProtoOpts} = case Type of
+				tcp_spdy -> {gun_spdy, []};
+				tcp -> {gun_http, HTTPOpts}
 			end,
-			ProtoState = Protocol:init(Owner, Socket, Transport),
+			ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 			before_loop(State#state{socket=Socket, transport=Transport,
 				protocol=Protocol, protocol_state=ProtoState});
 		{error, _} ->

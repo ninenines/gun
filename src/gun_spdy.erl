@@ -14,7 +14,7 @@
 
 -module(gun_spdy).
 
--export([init/3]).
+-export([init/4]).
 -export([handle/2]).
 -export([close/1]).
 -export([keepalive/1]).
@@ -43,7 +43,7 @@
 	ping_id = 1 :: non_neg_integer()
 }).
 
-init(Owner, Socket, Transport) ->
+init(Owner, Socket, Transport, []) ->
 	#spdy_state{owner=Owner, socket=Socket, transport=Transport,
 		zdef=cow_spdy:deflate_init(), zinf=cow_spdy:inflate_init()}.
 
@@ -183,6 +183,7 @@ keepalive(State=#spdy_state{socket=Socket, transport=Transport,
 	Transport:send(Socket, cow_spdy:ping(PingID)),
 	State#spdy_state{ping_id=PingID + 2}.
 
+%% @todo Allow overriding the host when doing requests.
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 		stream_id=StreamID}, StreamRef, Method, Host, Path, Headers) ->
 	Out = false =/= lists:keyfind(<<"content-type">>, 1, Headers),
@@ -192,7 +193,7 @@ request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 	new_stream(StreamID, StreamRef, true, Out, <<"HTTP/1.1">>,
 		State#spdy_state{stream_id=StreamID + 2}).
 
-%% @todo Handle Body > 16MB.
+%% @todo Handle Body > 16MB. (split it out into many frames)
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 		stream_id=StreamID}, StreamRef, Method, Host, Path, Headers, Body) ->
 	Transport:send(Socket, [
@@ -242,6 +243,7 @@ error_stream_not_found(State=#spdy_state{owner=Owner}) ->
 	State.
 
 %% Streams.
+%% @todo probably change order of args and have state first?
 
 new_stream(StreamID, StreamRef, In, Out, Version,
 		State=#spdy_state{streams=Streams}) ->
