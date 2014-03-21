@@ -418,7 +418,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 		Any when is_tuple(Any), is_pid(element(2, Any)) ->
 			element(2, Any) ! {gun_error, self(), {notowner,
 				"Operations are restricted to the owner of the connection."}},
-			loop(State);
+			ws_loop(State);
 		Any ->
 			error_logger:error_msg("Unexpected message: ~w~n", [Any])
 	end.
