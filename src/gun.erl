@@ -374,9 +374,9 @@ connect(State=#state{owner=Owner, host=Host, port=Port, type=Type}, Retries) ->
 			retry_loop(State, Retries - 1)
 	end.
 
-%% Too many failures, give up.
+%% Too many retries, give up.
 retry_loop(_, 0) ->
-	error(too_many_retries);
+	error(gone);
 retry_loop(State=#state{parent=Parent, retry_timeout=RetryTimeout}, Retries) ->
 	_ = erlang:send_after(RetryTimeout, self(), retry),
 	receive
