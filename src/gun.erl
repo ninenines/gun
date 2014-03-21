@@ -49,6 +49,9 @@
 -export([ws_upgrade/3]).
 -export([ws_send/2]).
 
+%% Debug.
+-export([dbg_send_raw/2]).
+
 %% Internals.
 -export([start_link/4]).
 -export([init/5]).
@@ -226,6 +229,13 @@ ws_send(ServerPid, Frames) ->
 	_ = ServerPid ! {ws_send, self(), Frames},
 	ok.
 
+%% Debug.
+
+-spec dbg_send_raw(pid(), iodata()) -> ok.
+dbg_send_raw(ServerPid, Data) ->
+	_ = ServerPid ! {dbg_send_raw, self(), Data},
+	ok.
+
 %% Internals.
 
 start_link(Owner, Host, Port, Opts) ->
@@ -358,6 +368,9 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{loop, State});
+		{dbg_send_raw, Owner, Data} ->
+			Transport:send(Socket, Data),
+			loop(State);
 		Any when is_tuple(Any), is_pid(element(2, Any)) ->
 			element(2, Any) ! {gun_error, self(), {notowner,
 				"Operations are restricted to the owner of the connection."}},
