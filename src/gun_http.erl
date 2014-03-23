@@ -60,9 +60,10 @@ handle(Data, State=#http_state{in=body_close}) ->
 	State;
 handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 		buffer=Buffer, connection=Conn}) ->
-	case cow_http_te:stream_chunked(<< Buffer/binary, Data/binary >>, InState) of
+	Buffer2 = << Buffer/binary, Data/binary >>,
+	case cow_http_te:stream_chunked(Buffer2, InState) of
 		more ->
-			State;
+			State#http_state{buffer=Buffer2};
 		{more, Data2, InState2} ->
 			send_data_if_alive(Data2, State, nofin),
 			State#http_state{buffer= <<>>, in_state=InState2};
