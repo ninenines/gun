@@ -345,13 +345,22 @@ init(Parent, Owner, Host, Port, Opts) ->
 connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl,
 		proto_opts=HTTPOpts}, Retries) ->
 	Transport = ranch_ssl,
-	Opts = [binary, {active, false}, {client_preferred_next_protocols,
-		{client, [<<"spdy/3">>, <<"http/1.1">>], <<"http/1.1">>}}],
+	%% R15 support.
+	HasNPN = erlang:function_exported(ssl, negotiated_next_protocol, 1),
+	Opts = [binary, {active, false}
+		|[{client_preferred_next_protocols,
+			{client, [<<"spdy/3">>, <<"http/1.1">>], <<"http/1.1">>}}
+			|| HasNPN]],
 	case Transport:connect(Host, Port, Opts) of
 		{ok, Socket} ->
-			{Protocol, ProtoOpts} = case ssl:negotiated_next_protocol(Socket) of
-				{ok, <<"spdy/3">>} -> {gun_spdy, []};
-				_ -> {gun_http, HTTPOpts}
+			{Protocol, ProtoOpts} = case HasNPN of
+				false ->
+					{gun_http, HTTPOpts};
+				true ->
+					case ssl:negotiated_next_protocol(Socket) of
+						{ok, <<"spdy/3">>} -> {gun_spdy, []};
+						_ -> {gun_http, HTTPOpts}
+					end
 			end,
 			ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 			before_loop(State#state{socket=Socket, transport=Transport,
