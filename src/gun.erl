@@ -49,6 +49,9 @@
 -export([await_body/3]).
 -export([await_body/4]).
 
+%% Flushing gun messages.
+-export([flush/1]).
+
 %% Cancelling a stream.
 -export([cancel/2]).
 
@@ -285,6 +288,44 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 			{error, Reason}
 	after Timeout ->
 		{error, timeout}
+	end.
+
+-spec flush(pid() | reference()) -> ok.
+flush(ServerPid) when is_pid(ServerPid) ->
+	flush_pid(ServerPid);
+flush(StreamRef) ->
+	flush_ref(StreamRef).
+
+flush_pid(ServerPid) ->
+	receive
+		{gun_response, ServerPid, _, _, _, _} ->
+			flush_pid(ServerPid);
+		{gun_data, ServerPid, _, _, _} ->
+			flush_pid(ServerPid);
+		{gun_push, ServerPid, _, _, _, _, _, _} ->
+			flush_pid(ServerPid);
+		{gun_error, ServerPid, _, _} ->
+			flush_pid(ServerPid);
+		{gun_error, ServerPid, _} ->
+			flush_pid(ServerPid);
+		{'DOWN', _, process, ServerPid, _} ->
+			flush_pid(ServerPid)
+	after 0 ->
+		ok
+	end.
+
+flush_ref(StreamRef) ->
+	receive
+		{gun_response, _, StreamRef, _, _, _} ->
+			flush_ref(StreamRef);
+		{gun_data, _, StreamRef, _, _} ->
+			flush_ref(StreamRef);
+		{gun_push, _, StreamRef, _, _, _, _, _} ->
+			flush_ref(StreamRef);
+		{gun_error, _, StreamRef, _} ->
+			flush_ref(StreamRef)
+	after 0 ->
+		ok
 	end.
 
 %% Cancelling a stream.
