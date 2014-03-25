@@ -202,10 +202,12 @@ request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 %% @todo Handle Body > 16MB. (split it out into many frames)
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 		stream_id=StreamID}, StreamRef, Method, Host, Path, Headers, Body) ->
+	Headers2 = lists:keystore(<<"content-length">>, 1, Headers,
+		{<<"content-length">>, integer_to_list(iolist_size(Body))}),
 	Transport:send(Socket, [
 		cow_spdy:syn_stream(Zdef,
 			StreamID, 0, false, false, 0,
-			Method, <<"https">>, Host, Path, <<"HTTP/1.1">>, Headers),
+			Method, <<"https">>, Host, Path, <<"HTTP/1.1">>, Headers2),
 		cow_spdy:data(StreamID, true, Body)
 	]),
 	new_stream(StreamID, StreamRef, true, false, <<"HTTP/1.1">>,
