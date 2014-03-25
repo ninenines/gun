@@ -245,9 +245,9 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 					Transport:send(Socket, Data),
 					Length2 = Length - DataSize,
 					if
-						Length2 =:= 0, IsFin ->
+						Length2 =:= 0, IsFin =:= fin ->
 							State#http_state{out=head};
-						Length2 > 0, not IsFin ->
+						Length2 > 0, IsFin =:= nofin ->
 							State#http_state{out={body, Length2}}
 					end;
 				body_chunked -> %% HTTP/1.0
