@@ -378,7 +378,8 @@ init(Parent, Owner, Host, Port, Opts) ->
 	Keepalive = get_value(keepalive, Opts, 5000),
 	Retry = get_value(retry, Opts, 5),
 	RetryTimeout = get_value(retry_timeout, Opts, 5000),
-	Type = get_value(type, Opts, ssl),
+	%% Default to TCP if port 80 is given, otherwise SSL.
+	Type = get_value(type, Opts, if Port =:= 80 -> tcp; true -> ssl end),
 	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port,
 		keepalive=Keepalive, type=Type, retry=Retry,
 		proto_opts=HTTPOpts, retry_timeout=RetryTimeout}, Retry).
