@@ -21,6 +21,7 @@
 		kernel,
 		stdlib,
 		ranch,
+		cowlib,
 		ssl
 	]},
 	{mod, {gun_app, []}},
