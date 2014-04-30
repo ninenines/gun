@@ -230,7 +230,7 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 							Transport:send(Socket, <<"0\r\n\r\n">>);
 						_ ->
 							Transport:send(Socket, [
-								integer_to_list(DataSize), <<"\r\n">>,
+								integer_to_list(DataSize, 16), <<"\r\n">>,
 								Data, <<"\r\n0\r\n\r\n">>
 							])
 					end,
