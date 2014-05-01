@@ -222,28 +222,24 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
 	case lists:last(Streams) of
 		{StreamRef, true} ->
-			DataSize = byte_size(Data),
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
 					case Data of
 						<<>> ->
-							Transport:send(Socket, <<"0\r\n\r\n">>);
+							Transport:send(Socket, cow_http_te:last_chunk());
 						_ ->
 							Transport:send(Socket, [
-								integer_to_list(DataSize, 16), <<"\r\n">>,
-								Data, <<"\r\n0\r\n\r\n">>
+								cow_http_te:chunk(Data),
+								cow_http_te:last_chunk()
 							])
 					end,
 					State#http_state{out=head};
 				body_chunked when Version =:= 'HTTP/1.1' ->
-					Transport:send(Socket, [
-						integer_to_list(DataSize), <<"\r\n">>,
-						Data, <<"\r\n">>
-					]),
+					Transport:send(Socket, cow_http_te:chunk(Data)),
 					State;
-				{body, Length} when DataSize =< Length ->
+				{body, Length} when byte_size(Data) =< Length ->
 					Transport:send(Socket, Data),
-					Length2 = Length - DataSize,
+					Length2 = Length - byte_size(Data),
 					if
 						Length2 =:= 0, IsFin =:= fin ->
 							State#http_state{out=head};
