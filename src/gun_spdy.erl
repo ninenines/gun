@@ -193,9 +193,10 @@ keepalive(State=#spdy_state{socket=Socket, transport=Transport,
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 		stream_id=StreamID}, StreamRef, Method, Host, Path, Headers) ->
 	Out = false =/= lists:keyfind(<<"content-type">>, 1, Headers),
+	{Host2, Headers2} = maybe_override_host(Headers, Host),
 	Transport:send(Socket, cow_spdy:syn_stream(Zdef,
 		StreamID, 0, not Out, false, 0,
-		Method, <<"https">>, Host, Path, <<"HTTP/1.1">>, Headers)),
+		Method, <<"https">>, Host2, Path, <<"HTTP/1.1">>, Headers2)),
 	new_stream(StreamID, StreamRef, true, Out, <<"HTTP/1.1">>,
 		State#spdy_state{stream_id=StreamID + 2}).
 
@@ -204,14 +205,23 @@ request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 		stream_id=StreamID}, StreamRef, Method, Host, Path, Headers, Body) ->
 	Headers2 = lists:keystore(<<"content-length">>, 1, Headers,
 		{<<"content-length">>, integer_to_list(iolist_size(Body))}),
+	{Host2, Headers3} = maybe_override_host(Headers2, Host),
 	Transport:send(Socket, [
 		cow_spdy:syn_stream(Zdef,
 			StreamID, 0, false, false, 0,
-			Method, <<"https">>, Host, Path, <<"HTTP/1.1">>, Headers2),
+			Method, <<"https">>, Host2, Path, <<"HTTP/1.1">>, Headers3),
 		cow_spdy:data(StreamID, true, Body)
 	]),
 	new_stream(StreamID, StreamRef, true, false, <<"HTTP/1.1">>,
 		State#spdy_state{stream_id=StreamID + 2}).
+
+maybe_override_host(Headers, Host) ->
+	case lists:keytake(<<"host">>, 1, Headers) of
+		{_, {_, Host2}, Headers2} ->
+			{Host2, Headers2};
+		false ->
+			{Host, Headers}
+	end.
 
 data(State=#spdy_state{socket=Socket, transport=Transport},
 		StreamRef, IsFin, Data) ->
