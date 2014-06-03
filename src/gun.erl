@@ -110,7 +110,7 @@ open(Host, Port) ->
 
 -spec open(inet:hostname(), inet:port_number(), opts())
 	-> {ok, pid()} | {error, any()}.
-open(Host, Port, Opts) ->
+open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
 	case open_opts(Opts) of
 		ok ->
 			supervisor:start_child(gun_sup, [self(), Host, Port, Opts]);
