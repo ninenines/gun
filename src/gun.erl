@@ -91,6 +91,7 @@
 	host :: inet:hostname(),
 	port :: inet:port_number(),
 	keepalive :: pos_integer(),
+	keepalive_ref :: reference(),
 	type :: conn_type(),
 	retry :: non_neg_integer(),
 	retry_timeout :: pos_integer(),
@@ -408,7 +409,7 @@ connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl,
 			before_loop(State#state{socket=Socket, transport=Transport,
 				protocol=Protocol, protocol_state=ProtoState});
 		{error, _} ->
-			retry_loop(State, Retries - 1)
+			retry(State, Retries - 1)
 	end;
 connect(State=#state{owner=Owner, host=Host, port=Port, type=Type,
 		proto_opts=HTTPOpts}, Retries) ->
@@ -424,8 +425,21 @@ connect(State=#state{owner=Owner, host=Host, port=Port, type=Type,
 			before_loop(State#state{socket=Socket, transport=Transport,
 				protocol=Protocol, protocol_state=ProtoState});
 		{error, _} ->
-			retry_loop(State, Retries - 1)
+			retry(State, Retries - 1)
 	end.
+
+retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when
+		is_reference(KeepaliveRef) ->
+	_ = erlang:cancel_timer(KeepaliveRef),
+	%% Flush if we have a keepalive message
+	receive
+		keepalive -> ok
+	after 0 ->
+		ok
+	end,
+	retry_loop(State#state{keepalive_ref=undefined}, Retries);
+retry(State, Retries) ->
+	retry_loop(State, Retries).
 
 %% Too many retries, give up.
 retry_loop(_, 0) ->
@@ -441,8 +455,8 @@ retry_loop(State=#state{parent=Parent, retry_timeout=RetryTimeout}, Retries) ->
 	end.
 
 before_loop(State=#state{keepalive=Keepalive}) ->
-	_ = erlang:send_after(Keepalive, self(), keepalive),
-	loop(State).
+	KeepaliveRef = erlang:send_after(Keepalive, self(), keepalive),
+	loop(State#state{keepalive_ref=KeepaliveRef}).
 
 loop(State=#state{parent=Parent, owner=Owner, host=Host,
 		retry=Retry, socket=Socket, transport=Transport,
@@ -454,20 +468,20 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 			case Protocol:handle(Data, ProtoState) of
 				close ->
 					Transport:close(Socket),
-					retry_loop(State#state{socket=undefined,
-						transport=undefined, protocol=undefined}, Retry);
+					retry(State#state{socket=undefined, transport=undefined,
+						protocol=undefined}, Retry);
 				ProtoState2 ->
 					loop(State#state{protocol_state=ProtoState2})
 			end;
 		{Closed, Socket} ->
 			Protocol:close(ProtoState),
 			Transport:close(Socket),
-			retry_loop(State#state{socket=undefined, transport=undefined,
+			retry(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
 		{Error, Socket, _} ->
 			Protocol:close(ProtoState),
 			Transport:close(Socket),
-			retry_loop(State#state{socket=undefined, transport=undefined,
+			retry(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
 		keepalive ->
 			ProtoState2 = Protocol:keepalive(ProtoState),
@@ -528,11 +542,11 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 			ws_loop(State#state{protocol_state=ProtoState2});
 		{Closed, Socket} ->
 			Transport:close(Socket),
-			retry_loop(State#state{socket=undefined, transport=undefined,
+			retry(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
 		{Error, Socket, _} ->
 			Transport:close(Socket),
-			retry_loop(State#state{socket=undefined, transport=undefined,
+			retry(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
 		%% @todo keepalive
 		{ws_send, Owner, Frames} when is_list(Frames) ->
