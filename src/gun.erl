@@ -483,6 +483,12 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 			Transport:close(Socket),
 			retry(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
+		{OK, _PreviousSocket, _Data} ->
+			loop(State);
+		{Closed, _PreviousSocket} ->
+			loop(State);
+		{Error, _PreviousSocket, _} ->
+			loop(State);
 		keepalive ->
 			ProtoState2 = Protocol:keepalive(ProtoState),
 			before_loop(State#state{protocol_state=ProtoState2});
