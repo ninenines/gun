@@ -535,7 +535,8 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 				"before the gun:ws_send/1 function can be used."}},
 			loop(State);
 		Any ->
-			error_logger:error_msg("Unexpected message: ~w~n", [Any])
+			error_logger:error_msg("Unexpected message: ~w~n", [Any]),
+			loop(State)
 	end.
 
 ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
