@@ -47,6 +47,9 @@ init(Owner, Socket, Transport, [{version, Version}]) ->
 	#http_state{owner=Owner, socket=Socket, transport=Transport,
 		version=Version}.
 
+%% Close when server responds and we don't have any open streams.
+handle(_, #http_state{streams=[]}) ->
+	close;
 %% Wait for the full response headers before trying to parse them.
 handle(Data, State=#http_state{in=head, buffer=Buffer}) ->
 	Data2 = << Buffer/binary, Data/binary >>,
