@@ -483,6 +483,12 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 			Transport:close(Socket),
 			retry(State#state{socket=undefined, transport=undefined,
 				protocol=undefined}, Retry);
+		{OK, _PreviousSocket, _Data} ->
+			loop(State);
+		{Closed, _PreviousSocket} ->
+			loop(State);
+		{Error, _PreviousSocket, _} ->
+			loop(State);
 		keepalive ->
 			ProtoState2 = Protocol:keepalive(ProtoState),
 			before_loop(State#state{protocol_state=ProtoState2});
@@ -529,7 +535,8 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 				"before the gun:ws_send/1 function can be used."}},
 			loop(State);
 		Any ->
-			error_logger:error_msg("Unexpected message: ~w~n", [Any])
+			error_logger:error_msg("Unexpected message: ~w~n", [Any]),
+			loop(State)
 	end.
 
 ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
