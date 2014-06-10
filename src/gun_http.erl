@@ -70,11 +70,11 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 		{more, Data2, InState2} ->
 			send_data_if_alive(Data2, State, nofin),
 			State#http_state{buffer= <<>>, in_state=InState2};
-		{more, Data2, _Length, InState2} ->
+		{more, Data2, Length, InState2} when is_integer(Length) ->
 			%% @todo See if we can recv faster than one message at a time.
 			send_data_if_alive(Data2, State, nofin),
 			State#http_state{buffer= <<>>, in_state=InState2};
-		{more, Data2, _Length, Rest, InState2} ->
+		{more, Data2, Rest, InState2} ->
 			%% @todo See if we can recv faster than one message at a time.
 			send_data_if_alive(Data2, State, nofin),
 			State#http_state{buffer=Rest, in_state=InState2};
