@@ -47,6 +47,9 @@ init(Owner, Socket, Transport, [{version, Version}]) ->
 	#http_state{owner=Owner, socket=Socket, transport=Transport,
 		version=Version}.
 
+%% Stop looping when we got no more data.
+handle(<<>>, State) ->
+	State;
 %% Close when server responds and we don't have any open streams.
 handle(_, #http_state{streams=[]}) ->
 	close;
