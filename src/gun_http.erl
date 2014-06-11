@@ -301,7 +301,7 @@ io_from_headers(Version, Headers) ->
 		_ ->
 			case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
 				false ->
-					head;
+					body_close;
 				{_, TE} ->
 					case cow_http_hd:parse_transfer_encoding(TE) of
 						[<<"chunked">>] -> body_chunked;
