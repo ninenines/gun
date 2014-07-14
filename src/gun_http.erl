@@ -180,8 +180,10 @@ close_streams(Owner, [{StreamRef, _}|Tail]) ->
 	close_streams(Owner, Tail).
 
 %% We can only keep-alive by sending an empty line in-between streams.
-keepalive(State=#http_state{socket=Socket, transport=Transport}) ->
+keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}) ->
 	Transport:send(Socket, <<"\r\n">>),
+	State;
+keepalive(State) ->
 	State.
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
