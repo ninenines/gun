@@ -99,7 +99,8 @@
 	transport :: module(),
 	protocol :: module(),
 	proto_opts :: gun_http:opts(), %% @todo Make a tuple with SPDY and WS too.
-	protocol_state :: any()
+	protocol_state :: any(),
+    ack_sent :: boolean()
 }).
 
 %% Connection.
@@ -133,6 +134,8 @@ open_opts([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
 open_opts([{type, T}|Opts])
 		when T =:= tcp; T =:= tcp_spdy; T =:= ssl ->
 	open_opts(Opts);
+open_opts([{require_connect, RC}|Opts]) when is_boolean(RC) ->
+    open_opts(Opts);
 open_opts([Opt|_]) ->
 	{error, {options, Opt}}.
 
@@ -374,7 +377,8 @@ get_value(Key, Opts, Default) ->
 	end.
 
 init(Parent, Owner, Host, Port, Opts) ->
-	ok = proc_lib:init_ack(Parent, {ok, self()}),
+    AckNoConnect = (proplists:get_value(require_connect, Opts, false) /= true),
+    AckNoConnect andalso send_ack(Parent),
 	HTTPOpts = get_value(http, Opts, []),
 	Keepalive = get_value(keepalive, Opts, 5000),
 	Retry = get_value(retry, Opts, 5),
@@ -382,8 +386,11 @@ init(Parent, Owner, Host, Port, Opts) ->
 	%% Default to TCP if port 80 is given, otherwise SSL.
 	Type = get_value(type, Opts, if Port =:= 80 -> tcp; true -> ssl end),
 	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port,
-		keepalive=Keepalive, type=Type, retry=Retry,
+		ack_sent=AckNoConnect, keepalive=Keepalive, type=Type, retry=Retry,
 		proto_opts=HTTPOpts, retry_timeout=RetryTimeout}, Retry).
+
+send_ack(Parent) ->
+    ok = proc_lib:init_ack(Parent, {ok, self()}).
 
 connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl,
 		proto_opts=HTTPOpts}, Retries) ->
@@ -454,6 +461,9 @@ retry_loop(State=#state{parent=Parent, retry_timeout=RetryTimeout}, Retries) ->
 				{retry_loop, State, Retries})
 	end.
 
+before_loop(State=#state{ack_sent=false, parent=Parent}) ->
+    send_ack(Parent),
+    before_loop(State#state{ack_sent=true});
 before_loop(State=#state{keepalive=Keepalive}) ->
 	KeepaliveRef = erlang:send_after(Keepalive, self(), keepalive),
 	loop(State#state{keepalive_ref=KeepaliveRef}).
