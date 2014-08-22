@@ -78,10 +78,14 @@
 	| {text | binary | close | ping | pong, iodata()}
 	| {close, ws_close_code(), iodata()}.
 
+%% Refer to ssloption() in the ssl module documentation.
+-type ssloption() :: {atom(), any()}.
+
 -type opts() :: [{http, gun_http:opts()}
 	| {keepalive, pos_integer()}
 	| {retry, non_neg_integer()}
 	| {retry_timeout, pos_integer()}
+	| {ssl, [ssloption()]}
 	| {type, conn_type()}].
 -export_type([opts/0]).
 
@@ -99,7 +103,8 @@
 	transport :: module(),
 	protocol :: module(),
 	proto_opts :: gun_http:opts(), %% @todo Make a tuple with SPDY and WS too.
-	protocol_state :: any()
+	protocol_state :: any(),
+	ssl_opts :: [ssloption()]
 }).
 
 %% Connection.
@@ -129,6 +134,8 @@ open_opts([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 open_opts([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	open_opts(Opts);
 open_opts([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
+	open_opts(Opts);
+open_opts([{ssl, O}|Opts]) when is_list(O) ->
 	open_opts(Opts);
 open_opts([{type, T}|Opts])
 		when T =:= tcp; T =:= tcp_spdy; T =:= ssl ->
@@ -379,21 +386,22 @@ init(Parent, Owner, Host, Port, Opts) ->
 	Keepalive = get_value(keepalive, Opts, 5000),
 	Retry = get_value(retry, Opts, 5),
 	RetryTimeout = get_value(retry_timeout, Opts, 5000),
+	SSLOpts = get_value(ssl, Opts, []),
 	%% Default to TCP if port 80 is given, otherwise SSL.
 	Type = get_value(type, Opts, if Port =:= 80 -> tcp; true -> ssl end),
 	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port,
 		keepalive=Keepalive, type=Type, retry=Retry,
-		proto_opts=HTTPOpts, retry_timeout=RetryTimeout}, Retry).
+		proto_opts=HTTPOpts, ssl_opts=SSLOpts, retry_timeout=RetryTimeout}, Retry).
 
 connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl,
-		proto_opts=HTTPOpts}, Retries) ->
+		proto_opts=HTTPOpts, ssl_opts=SSLOpts}, Retries) ->
 	Transport = ranch_ssl,
 	%% R15 support.
 	HasNPN = erlang:function_exported(ssl, negotiated_next_protocol, 1),
 	Opts = [binary, {active, false}
 		|[{client_preferred_next_protocols,
 			{client, [<<"spdy/3">>, <<"http/1.1">>], <<"http/1.1">>}}
-			|| HasNPN]],
+			|| HasNPN]] ++ SSLOpts,
 	case Transport:connect(Host, Port, Opts) of
 		{ok, Socket} ->
 			{Protocol, ProtoOpts} = case HasNPN of

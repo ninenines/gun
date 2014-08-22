@@ -11,6 +11,7 @@ Types
 ### opts() = [{keepalive, pos_integer()}
 	| {retry, non_neg_integer()}
 	| {retry_timeout, pos_integer()}
+	| {ssl, [ssloption()]}
 	| {type, ssl | tcp | tcp_spdy}].
 
 > Configuration for the connection.
@@ -26,6 +27,8 @@ The default value is given next to the option name.
    -  Number of times Gun will try to reconnect on failure before giving up.
  -  retry_timeout (5000)
    -  Time between retries in milliseconds.
+ -  ssl ([])
+   -  SSL options. Refer to ssloption() in the ssl module documentation.
  -  type (ssl)
    -  Whether to use SSL, plain TCP (for HTTP/Websocket) or SPDY over TCP.
 
