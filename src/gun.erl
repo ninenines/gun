@@ -458,7 +458,7 @@ before_loop(State=#state{keepalive=Keepalive}) ->
 	KeepaliveRef = erlang:send_after(Keepalive, self(), keepalive),
 	loop(State#state{keepalive_ref=KeepaliveRef}).
 
-loop(State=#state{parent=Parent, owner=Owner, host=Host,
+loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 		retry=Retry, socket=Socket, transport=Transport,
 		protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
@@ -494,11 +494,11 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host,
 			before_loop(State#state{protocol_state=ProtoState2});
 		{request, Owner, StreamRef, Method, Path, Headers} ->
 			ProtoState2 = Protocol:request(ProtoState,
-				StreamRef, Method, Host, Path, Headers),
+				StreamRef, Method, Host, Port, Path, Headers),
 			loop(State#state{protocol_state=ProtoState2});
 		{request, Owner, StreamRef, Method, Path, Headers, Body} ->
 			ProtoState2 = Protocol:request(ProtoState,
-				StreamRef, Method, Host, Path, Headers, Body),
+				StreamRef, Method, Host, Port, Path, Headers, Body),
 			loop(State#state{protocol_state=ProtoState2});
 		{data, Owner, StreamRef, IsFin, Data} ->
 			ProtoState2 = Protocol:data(ProtoState,
