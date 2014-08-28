@@ -18,8 +18,8 @@
 -export([handle/2]).
 -export([close/1]).
 -export([keepalive/1]).
--export([request/6]).
 -export([request/7]).
+-export([request/8]).
 -export([data/4]).
 -export([cancel/2]).
 
@@ -187,13 +187,13 @@ keepalive(State) ->
 	State.
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=head}, StreamRef, Method, Host, Path, Headers) ->
+		out=head}, StreamRef, Method, Host, Port, Path, Headers) ->
 	Headers2 = case Version of
 		'HTTP/1.0' -> lists:keydelete(<<"transfer-encoding">>, 1, Headers);
 		'HTTP/1.1' -> Headers
 	end,
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, Host}|Headers2];
+		false -> [{<<"host">>, host_str(Host, Port, Path)}|Headers2];
 		true -> Headers2
 	end,
 	%% We use Headers2 because this is the smallest list.
@@ -203,11 +203,11 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef).
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=head}, StreamRef, Method, Host, Path, Headers, Body) ->
+		out=head}, StreamRef, Method, Host, Port, Path, Headers, Body) ->
 	Headers2 = lists:keydelete(<<"content-length">>, 1,
 		lists:keydelete(<<"transfer-encoding">>, 1, Headers)),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, Host}|Headers2];
+		false -> [{<<"host">>, host_str(Host, Port, Path)}|Headers2];
 		true -> Headers2
 	end,
 	%% We use Headers2 because this is the smallest list.
@@ -218,6 +218,65 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		|Headers3]),
 		Body]),
 	new_stream(State#http_state{connection=Conn}, StreamRef).
+
+%% HTTP host header must specify host with any non-standard port as obtained
+%% from the original URI. We get it from the URI if available, otherwise
+%% we use the host/port of our original connection.
+host_str(ConnHost, ConnPort, Uri) ->
+	case host_and_port_of_uri(Uri) of
+		undefined ->
+			case ConnPort of
+				undefined -> ConnHost;
+				80 -> ConnHost;
+				_ -> lists:concat([ConnHost, ":", integer_to_list(ConnPort)])
+			end;
+		Str -> Str
+	end.
+
+host_and_port_of_uri([ $h,$t,$t,$p,$:,$/,$/ | Rest ]) ->
+	host_and_port_of_uri(Rest, "");
+host_and_port_of_uri([ $h,$t,$t,$p,$s,$:,$/,$/ | Rest ]) ->
+	host_and_port_of_uri(Rest, "");
+host_and_port_of_uri([ $H,$T,$T,$P,$:,$/,$/ | Rest ]) ->
+	host_and_port_of_uri(Rest, "");
+host_and_port_of_uri([ $H,$T,$T,$P,$S,$:,$/,$/ | Rest ]) ->
+	host_and_port_of_uri(Rest, "");
+host_and_port_of_uri(_Path) ->
+	undefined.
+
+host_and_port_of_uri([], Acc) ->
+	lists:reverse(Acc);
+host_and_port_of_uri([ $/ | _Rest ], Acc) ->
+	lists:reverse(Acc);
+host_and_port_of_uri([ Char | Rest ], Acc) ->
+	host_and_port_of_uri(Rest, [Char | Acc]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+host_str_test() ->
+	"example.com" = host_str("example.com", undefined, "asimplepath"),
+	"example.com:443" = host_str("example.com", 443, "/"),
+	"example.com" = host_str("example.com", 80, "a/simple/path"),
+	"example.com" = host_str("cdn.example.com", 3128, "http://example.com/a/resource"),
+	"foo.example.com:8080" = host_str("example.com", 3128, "http://foo.example.com:8080/a/resource"),
+	ok.
+
+host_and_port_of_uri_test() ->
+	undefined = host_and_port_of_uri("/a/simple/path"),
+	undefined = host_and_port_of_uri("a/simple/path"),
+	undefined = host_and_port_of_uri("asimplepath"),
+	undefined = host_and_port_of_uri("/asimplepath"),
+	"example.com" = host_and_port_of_uri("http://example.com"),
+	"example.com" = host_and_port_of_uri("http://example.com/"),
+	"example.com" = host_and_port_of_uri("https://example.com"),
+	"example.com" = host_and_port_of_uri("HTTP://example.com"),
+	"example.com" = host_and_port_of_uri("HTTPS://example.com"),
+	"example.com:8080" = host_and_port_of_uri("http://example.com:8080"),
+	"example.com:8080" = host_and_port_of_uri("http://example.com:8080/"),
+	"example.com:8080" = host_and_port_of_uri("http://example.com:8080/foo"),
+	"example.com:8080" = host_and_port_of_uri("http://example.com:8080/foo/"),
+	ok.
+-endif.
 
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, _, _, _) ->
