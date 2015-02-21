@@ -153,7 +153,7 @@ Exports
 >
 > Delete a resource.
 
-### get(ServerPid, Path) -> delete(ServerPid, Path, [])
+### get(ServerPid, Path) -> get(ServerPid, Path, [])
 ### get(ServerPid, Path, Headers) -> StreamRef
 
 > Types:
@@ -164,7 +164,7 @@ Exports
 >
 > Fetch a resource.
 
-### head(ServerPid, Path) -> delete(ServerPid, Path, [])
+### head(ServerPid, Path) -> head(ServerPid, Path, [])
 ### head(ServerPid, Path, Headers) -> StreamRef
 
 > Types:
@@ -177,7 +177,7 @@ Exports
 >
 > The server will not send the resource content, only headers.
 
-### options(ServerPid, Path) -> delete(ServerPid, Path, [])
+### options(ServerPid, Path) -> options(ServerPid, Path, [])
 ### options(ServerPid, Path, Headers) -> StreamRef
 
 > Types:
