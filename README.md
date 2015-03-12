@@ -19,8 +19,11 @@ the developer to focus on writing his code without worrying.
 Sponsors
 --------
 
-The development of the Gun project is sponsored
-by [LeoFS Cloud Storage](http://www.leofs.org).
+The project is currently sponsored by
+[Kato.im](https://kato.im) and [Sameroom](https://sameroom.io).
+
+The SPDY implementation was sponsored by
+[LeoFS Cloud Storage](http://www.leofs.org).
 
 Support
 -------
