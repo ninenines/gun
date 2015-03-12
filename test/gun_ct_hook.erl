@@ -1,4 +1,4 @@
-%% Copyright (c) 2013-2014, Loïc Hoguin <essen@ninenines.eu>
+%% Copyright (c) 2015, Loïc Hoguin <essen@ninenines.eu>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
@@ -12,31 +12,10 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
--module(twitter_SUITE).
--compile(export_all).
+-module(gun_ct_hook).
 
-all() ->
-	[spdy].
+-export([init/2]).
 
-spdy(_) ->
-	{ok, Pid} = gun:open("twitter.com", 443),
-	Ref = gun:get(Pid, "/"),
-	receive
-		{gun_response, Pid, Ref, nofin, Status, Headers} ->
-			ct:print("response ~p ~p", [Status, Headers]),
-			data_loop(Pid, Ref)
-	after 5000 ->
-		error(timeout)
-	end.
-
-data_loop(Pid, Ref) ->
-	receive
-		{gun_data, Pid, Ref, nofin, Data} ->
-			ct:print("data ~p", [Data]),
-			data_loop(Pid, Ref);
-		{gun_data, Pid, Ref, fin, Data} ->
-			gun:close(Pid),
-			ct:print("data ~p~nend", [Data])
-	after 5000 ->
-		error(timeout)
-	end.
+init(_, _) ->
+	ct_helper:start([gun]),
+	{ok, undefined}.
