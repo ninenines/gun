@@ -14,7 +14,7 @@ connection to the server, reopening it as soon as the server
 closes it, saving time for the requests that come in.
 
 All connections are **supervised** automatically, allowing
-the developer to focus on writing his code without worrying.
+developers to focus on writing their code without worrying.
 
 Sponsors
 --------
