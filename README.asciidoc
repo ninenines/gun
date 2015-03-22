@@ -1,0 +1,29 @@
+= Gun
+
+Gun is an Erlang HTTP client with support for HTTP/1.1, SPDY and Websocket.
+
+== Goals
+
+Gun aims to provide an *easy to use* client compatible with
+HTTP, SPDY and Websocket.
+
+Gun is *always connected*. It will maintain a permanent
+connection to the server, reopening it as soon as the server
+closes it, saving time for the requests that come in.
+
+All connections are *supervised* automatically, allowing
+developers to focus on writing their code without worrying.
+
+== Sponsors
+
+The project is currently sponsored by
+https://kato.im[Kato.im] and https://sameroom.io[Sameroom].
+
+The SPDY implementation was sponsored by
+http://www.leofs.org[LeoFS Cloud Storage].
+
+== Support
+
+* Official IRC Channel: #ninenines on irc.freenode.net
+* http://lists.ninenines.eu[Mailing Lists]
+* http://ninenines.eu/support[Commercial Support]
