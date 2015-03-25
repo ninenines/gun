@@ -18,8 +18,8 @@
 -export([handle/2]).
 -export([close/1]).
 -export([keepalive/1]).
--export([request/6]).
 -export([request/7]).
+-export([request/8]).
 -export([data/4]).
 -export([cancel/2]).
 
@@ -191,7 +191,7 @@ keepalive(State=#spdy_state{socket=Socket, transport=Transport,
 
 %% @todo Allow overriding the host when doing requests.
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
-		stream_id=StreamID}, StreamRef, Method, Host, Path, Headers) ->
+		stream_id=StreamID}, StreamRef, Method, Host, _Port, Path, Headers) ->
 	Out = false =/= lists:keyfind(<<"content-type">>, 1, Headers),
 	Transport:send(Socket, cow_spdy:syn_stream(Zdef,
 		StreamID, 0, not Out, false, 0,
@@ -201,7 +201,7 @@ request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
 
 %% @todo Handle Body > 16MB. (split it out into many frames)
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
-		stream_id=StreamID}, StreamRef, Method, Host, Path, Headers, Body) ->
+		stream_id=StreamID}, StreamRef, Method, Host, _Port, Path, Headers, Body) ->
 	Headers2 = lists:keystore(<<"content-length">>, 1, Headers,
 		{<<"content-length">>, integer_to_list(iolist_size(Body))}),
 	Transport:send(Socket, [
