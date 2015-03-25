@@ -1,35 +1,28 @@
-Introduction
-============
+== Introduction
 
-Purpose
--------
+Gun is an Erlang HTTP client with support for HTTP/1.1, SPDY and Websocket.
 
-Gun is an asynchronous SPDY, HTTP and Websocket client.
+=== Prerequisites
 
-Prerequisites
--------------
-
-Knowledge of Erlang, but also of the HTTP, SPDY and Websocket
+Knowledge of Erlang, but also of the HTTP/1.1, SPDY and Websocket
 protocols is required in order to read this guide.
 
-Supported platforms
--------------------
+=== Supported platforms
 
 Gun is tested and supported on Linux.
 
-Gun is developed for Erlang R16B+.
+Gun is developed for Erlang 17+.
 
 Gun may be compiled on earlier Erlang versions with small source code
-modifications but there is no guarantee that it will work as expected.
+modifications but there is no guarantee that it will work as intended.
 
-Conventions
------------
+=== Conventions
 
 In the HTTP protocol, the method name is case sensitive. All standard
 method names are uppercase.
 
 Header names are case insensitive. Gun converts all the header names
 to lowercase, and expects your application to provide lowercase header
-names also.
+names.
 
 The same applies to any other case insensitive value.
