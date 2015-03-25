@@ -89,8 +89,8 @@ handle_frame(Rest, State=#spdy_state{owner=Owner,
 			case get_stream_by_id(AssocToStreamID, State) of
 				#stream{ref=AssocToStreamRef} ->
 					StreamRef = make_ref(),
-					Owner ! {gun_push, self(), StreamRef,
-						AssocToStreamRef, Method, Host, Path, Headers},
+					Owner ! {gun_push, self(), AssocToStreamRef,
+						StreamRef, Method, Host, Path, Headers},
 					handle_loop(Rest, new_stream(StreamID, StreamRef,
 						not IsFin, false, Version, State));
 				false ->
