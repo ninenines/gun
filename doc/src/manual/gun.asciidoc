@@ -1,0 +1,578 @@
+= gun(3)
+
+== Name
+
+gun - asynchronous HTTP client
+
+== Description
+
+The `gun` module provides an asynchronous interface for
+connecting and communicating with Web servers over SPDY,
+HTTP or Websocket.
+
+== Types
+
+=== opts() = [opt()]
+
+Configuration for the connection.
+
+@todo Should be a map.
+
+With opt():
+
+keepalive => pos_integer()::
+	Time between pings in milliseconds.
+	Defaults to 5000.
+retry => non_neg_integer()::
+	Number of times Gun will try to reconnect on failure before giving up.
+	Defaults to 5.
+retry_timeout => pos_integer()::
+	Time between retries in milliseconds.
+	Defaults to 5000.
+type => ssl | tcp | tcp_spdy::
+	Whether to use SSL, plain TCP (for HTTP/Websocket) or SPDY over TCP.
+	The default varies depending on the port used. Port 443 defaults
+	to ssl. Port 6121 defaults to tcp_spdy (@todo). All other ports
+	default to tcp. (@todo)
+
+@todo We want to separate protocol and transport options.
+
+@todo We need to document Websocket options.
+
+== Messages
+
+Calling functions from this module may result in the following
+messages being sent.
+
+=== {gun_push, ConnPid, StreamRef, NewStreamRef, URI, Headers}
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream initiated by the owner process.
+NewStreamRef = reference():: Identifier of the stream being pushed.
+URI = binary():: URI of the resource.
+Headers = [{binary(), binary()}]:: Headers @todo
+
+A resource pushed alongside an HTTP response.
+
+This message can only be sent when the protocol is SPDY.
+
+@todo we probably want a function to know what protocol we connected
+@todo with or perhaps a message on connect that tells us that
+
+@todo I fear we also need the scheme; resource is identified by URI
+@todo Perhaps we really should send the URI entirely, because cache
+@todo relies on URI to work and this feature is for caching...
+@todo Not sure why Method is there, spec says it is only for GET
+
+=== {gun_response, ConnPid, StreamRef, IsFin, Status, Headers}
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream initiated by the owner process.
+IsFin = fin | nofin:: Whether this message terminates the response.
+Status = binary():: Status line for the response.
+Headers = [{binary(), binary()}]:: Headers sent with the response.
+
+A response to an HTTP request.
+
+=== {gun_data, ConnPid, StreamRef, IsFin, Data}
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream this data belongs to.
+IsFin = fin | nofin:: Whether this message terminates the response.
+Data = binary():: Data from the stream.
+
+Data associated with a stream.
+
+The stream in question can be either one initiated by the owner
+process or a stream initiated by the server through the push
+mechanism. In any case a `gun_response` or a `gun_push` message
+will be sent before any `gun_data` message.
+
+=== {gun_error, ConnPid, StreamRef, Reason}
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream this error relates to.
+Reason = any():: Error reason.
+
+Stream-specific error.
+
+=== {gun_error, ConnPid, Reason}
+
+ConnPid = pid():: The pid of the Gun connection process.
+Reason = any():: Error reason.
+
+General error.
+
+=== {gun_ws_upgrade, ConnPid, ok}
+
+ConnPid = pid():: The pid of the Gun connection process.
+
+Successful upgrade to the Websocket protocol.
+
+@todo Yeah we need the headers.
+
+=== {gun_ws_upgrade, ConnPid, error, IsFin, Status, Headers}
+
+ConnPid = pid():: The pid of the Gun connection process.
+IsFin = fin | nofin:: Whether this message terminates the response.
+Status = binary():: Status line for the response.
+Headers = [{binary(), binary()}]:: Headers sent with the response.
+
+Failed upgrade to the Websocket protocol.
+
+=== {gun_ws, ConnPid, Frame}
+
+ConnPid = pid():: The pid of the Gun connection process.
+Frame = @todo:: Frame.
+
+Websocket frame.
+
+== Exports
+
+=== open(Host, Port) -> open(Host, Port, [])
+
+Alias of `gun:open/3`.
+
+=== open(Host, Port, Opts) -> {ok, ConnPid} | {error, Reason}
+
+Host = inet:hostname():: Host to connect to.
+Port = inet:port_number():: Port to connect to.
+Opts = opts():: Options for this connection.
+ConnPid = pid():: The pid of the Gun connection process.
+Reason = any():: Error reason. @todo really any?
+
+Open a connection to the given host and port.
+
+=== close(ConnPid) -> ok
+
+ConnPid = pid():: The pid of the Gun connection process.
+
+Brutally close the connection.
+
+=== shutdown(ConnPid) -> ok
+
+ConnPid = pid():: The pid of the Gun connection process.
+
+Gracefully close the connection.
+
+A monitor can be used to be notified when the connection is
+effectively closed.
+
+=== delete(ConnPid, Path) -> delete(ConnPid, Path, [])
+
+Alias of `gun:delete/3`.
+
+=== delete(ConnPid, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Delete a resource.
+
+=== get(ConnPid, Path) -> get(ConnPid, Path, [])
+
+Alias of `gun:get/3`.
+
+=== get(ConnPid, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Get a resource.
+
+=== head(ConnPid, Path) -> head(ConnPid, Path, [])
+
+Alias of `gun:head/3`.
+
+=== head(ConnPid, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Get headers of a resource.
+
+This function performs the same operation as `get/{2,3}` except
+the server will not send the resource representation, only the
+response's status line and headers.
+
+While servers should send the same headers they would if the
+request was a GET, like `content-length`, it is not always
+the case and differences may exist.
+
+=== options(ConnPid, Path) -> options(ConnPid, Path, [])
+
+Alias of `gun:options/3`.
+
+=== options(ConnPid, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Obtain information about the capabilities of the server or of a resource.
+
+The special path `"*"` can be used to obtain information about
+the server as a whole. Any other path will return information
+about the resource only.
+
+=== patch(ConnPid, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Request that a set of changes be applied to the resource.
+
+This function expects either `content-length` or `content-type`
+to be set to know a body is going to be sent afterwards.
+Gun will assume the request has no body otherwise. It is
+highly recommended to set both when possible.
+
+The body sent in this request should be a patch document
+with instructions on how to update the resource.
+
+You can use the `gun:data/4` function to send the body, if any.
+
+=== patch(ConnPid, Path, Headers, Body) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+Body = iodata():: Body of the request.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Request that a set of changes be applied to the resource.
+
+It is highly recommended to set the `content-type` header
+to inform the server what media type the body contains.
+Gun will automatically set the `content-length` header.
+
+The body sent in this request should be a patch document
+with instructions on how to update the resource.
+
+The complete request is sent when calling this function.
+It is not possible to stream more of the body after
+calling it.
+
+=== post(ConnPid, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Process the enclosed representation according to the resource's own semantics.
+
+This function expects either `content-length` or `content-type`
+to be set to know a body is going to be sent afterwards.
+Gun will assume the request has no body otherwise. It is
+highly recommended to set both when possible.
+
+The body sent in this request will be processed
+according to the resource's own semantics. A new
+resource may be created as a result, and may be
+located at a different URI.
+
+You can use the `gun:data/4` function to send the body, if any.
+
+=== post(ConnPid, Path, Headers, Body) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+Body = iodata():: Body of the request.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Process the enclosed representation according to the resource's own semantics.
+
+It is highly recommended to set the `content-type` header
+to inform the server what media type the body contains.
+Gun will automatically set the `content-length` header.
+
+The body sent in this request will be processed
+according to the resource's own semantics. A new
+resource may be created as a result, and may be
+located at a different URI.
+
+The complete request is sent when calling this function.
+It is not possible to stream more of the body after
+calling it.
+
+=== put(ConnPid, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Create or replace a resource.
+
+The body of the request is the entire representation of the resource.
+
+This function expects either `content-length` or `content-type`
+to be set to know a body is going to be sent afterwards.
+Gun will assume the request has no body otherwise. It is
+highly recommended to set both when possible.
+
+You can use the `gun:data/4` function to send the body, if any.
+
+=== put(ConnPid, Path, Headers, Body) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+Body = iodata():: Body of the request.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Create or replace a resource.
+
+The body of the request is the entire representation of the resource.
+
+It is highly recommended to set the `content-type` header
+to inform the server what media type the body contains.
+Gun will automatically set the `content-length` header.
+
+The complete request is sent when calling this function.
+It is not possible to stream more of the body after
+calling it.
+
+=== request(ConnPid, Method, Path, Headers) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Method = iodata():: Request method.
+Path = iodata():: Path of the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Perform the given request.
+
+This is a general purpose function that should only be used
+when existing method-specific functions don't apply.
+
+This function expects either `content-length` or `content-type`
+to be set to know a body is going to be sent afterwards.
+Gun will assume the request has no body otherwise. It is
+highly recommended to set both when possible.
+
+You can use the `gun:data/4` function to send the body, if any.
+
+=== request(ConnPid, Method, Path, Headers, Body) -> StreamRef
+
+ConnPid = pid():: The pid of the Gun connection process.
+Method = iodata():: Request method.
+Path = iodata():: Path of the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+Body = iodata():: Body of the request.
+StreamRef = reference():: Identifier of the stream for this request.
+
+Perform the given request.
+
+This is a general purpose function that should only be used
+when existing method-specific functions don't apply.
+
+It is highly recommended to set the `content-type` header
+to inform the server what media type the body contains.
+Gun will automatically set the `content-length` header.
+
+The complete request is sent when calling this function.
+It is not possible to stream more of the body after
+calling it.
+
+=== data(ConnPid, StreamRef, IsFin, Data) -> ok
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream this data belongs to.
+IsFin = fin | nofin:: Whether this message terminates the request.
+Data = iodata():: Data to be sent with the request.
+
+Stream the body of a request.
+
+@todo empty chunks
+
+This function can only be used if the request identified by
+`StreamRef` came with headers indicating the presence of a
+body and that body not being given when creating the request.
+
+All calls to this function must use `nofin` except for the
+last which must use `fin` to indicate the end of the request
+body.
+
+Empty data is allowed regardless of the value of `IsFin`.
+Gun will not send empty data chunks unless required to
+indicate the request body is finished, however.
+
+=== await(ConnPid, StreamRef) -> await(ConnPid, StreamRef, 5000, MonitorRef)
+
+Alias of `gun:await/4`.
+
+A monitor `MonitorRef` is automatically created for the duration of
+this call and an error will be returned if the Gun connection process
+terminates.
+
+=== await(ConnPid, StreamRef, MonitorRef) -> await(ConnPid, StreamRef, 5000, MonitorRef)
+
+Alias of `gun:await/4`.
+
+=== await(ConnPid, StreamRef, Timeout) -> await(ConnPid, StreamRef, Timeout, MonitorRef)
+
+Alias of `gun:await/4`.
+
+A monitor `MonitorRef` is automatically created for the duration of
+this call and an error will be returned if the Gun connection process
+terminates.
+
+=== await(ConnPid, StreamRef, Timeout, MonitorRef) -> tuple() -- see below
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream to await messages from.
+Timeout = timeout():: How long this function will wait for messages.
+MonitorRef = reference():: Monitor reference for the Gun connection process.
+
+Wait for a response message.
+
+This function can be used when a synchronous handling of
+responses is desired. It will only return when a message
+for the given stream is received, on error or on timeout.
+
+The return values are described in the next few subsections.
+
+==== {response, IsFin, Status, Headers}
+
+IsFin = fin | nofin:: Whether this message terminates the response.
+Status = binary():: Status line for the response.
+Headers = [{binary(), binary()}]:: Headers sent with the response.
+
+Equivalent of a `gun_response` message.
+
+==== {data, IsFin, Data}
+
+IsFin = fin | nofin:: Whether this message terminates the response.
+Data = binary():: Data from the stream.
+
+Equivalent of a `gun_data` message.
+
+==== {push, NewStreamRef, URI, Headers}
+
+NewStreamRef = reference():: Identifier of the stream being pushed.
+URI = binary():: URI of the resource.
+Headers = [{binary(), binary()}]:: Headers @todo
+
+Equivalent of a `gun_push` message.
+
+@todo Same changes as gun_push
+
+==== {error, Reason}
+
+Reason = any():: Error reason. @todo any?
+
+Equivalent of a `gun_error` message.
+
+@todo I think we want to distinguish a stream error, a general error,
+@todo a DOWN and a timeout error
+
+=== await_body(ConnPid, StreamRef) -> await_body(ConnPid, StreamRef, 5000, MonitorRef)
+
+Alias of `gun:await_body/4`.
+
+A monitor `MonitorRef` is automatically created for the duration of
+this call and an error will be returned if the Gun connection process
+terminates.
+
+=== await_body(ConnPid, StreamRef, MonitorRef) -> await_body(ConnPid, StreamRef, 5000, MonitorRef)
+
+Alias of `gun:await_body/4`.
+
+=== await_body(ConnPid, StreamRef, Timeout) -> await_body(ConnPid, StreamRef, Timeout, MonitorRef)
+
+Alias of `gun:await_body/4`.
+
+A monitor `MonitorRef` is automatically created for the duration of
+this call and an error will be returned if the Gun connection process
+terminates.
+
+=== await_body(ConnPid, StreamRef, Timeout, MonitorRef) -> {ok, Body} | {error, Reason}
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream to await messages from.
+Timeout = timeout():: How long this function will wait for each message.
+MonitorRef = reference():: Monitor reference for the Gun connection process.
+Body = binary():: Body for the given stream.
+Reason = any():: Error reason. @todo any?
+
+Wait for a response body.
+
+This function can be used when a synchronous handling of
+responses is desired. It will only return when it has
+finished fetching the entire response body.
+
+The timeout value is *per message*. The actual function call
+can last much longer for large bodies.
+
+@todo I think we want to distinguish a stream error, a general error,
+@todo a DOWN and a timeout error
+
+@todo guide might be a little incorrect about await/await_body
+
+=== flush(ConnPid) -> ok
+
+ConnPid = pid():: The pid of the Gun connection process.
+
+Flush all messages from the Gun connection process from the mailbox.
+
+=== flush(StreamRef) -> ok
+
+StreamRef = reference():: Stream identifier.
+
+Flush all messages related to the given stream.
+
+=== cancel(ConnPid, StreamRef) -> ok
+
+ConnPid = pid():: The pid of the Gun connection process.
+StreamRef = reference():: Identifier of the stream to cancel.
+
+Cancel the given stream.
+
+HTTP/1.1 streams can't be cancelled. Gun will simply silence
+the stream and stop relaying messages.
+
+@todo Depending on the length
+@todo of a response Gun may also attempt to reconnect rather than
+@todo receive the entire response body.
+
+SPDY streams can however be cancelled at any time.
+
+=== ws_upgrade(ConnPid, Path) -> ws_upgrade(ConnPid, Path, [], #{})
+
+Alias of `gun:ws_upgrade/4`.
+
+=== ws_upgrade(ConnPid, Path, Headers) -> ws_upgrade(ConnPid, Path, Headers, #{})
+
+Alias of `gun:ws_upgrade/4`.
+
+=== ws_upgrade(ConnPid, Path, Headers, Opts) -> ok
+
+ConnPid = pid():: The pid of the Gun connection process.
+Path = iodata():: Path to the resource.
+Headers = [{binary(), iodata()}]:: Additional request headers.
+Opts = map():: Options for the Websocket connection.
+
+Request the connection to be upgraded to the Websocket protocol.
+
+@todo Only possible for HTTP.
+
+=== ws_send(ConnPid, Frames) -> ok
+
+ConnPid = pid():: The pid of the Gun connection process.
+Frames = @todo:: @todo
+
+Send one or more Websocket frames.
+
+This function can only be used following a successful `ws_upgrade` call.
