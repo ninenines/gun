@@ -289,12 +289,16 @@ You can also use Gun in a synchronous manner by using the _await_
 functions.
 
 The `gun:await/{2,3,4}` function will wait until it receives
-a response. The `gun:await/2` call will automatically monitor
-the process and use a timeout of 5000. The monitor and the
-timeout can be passed by using `gun:await/3` or `gun:await/4`.
+a response to, a pushed resource related to, or data from
+the given stream.
+
+When calling `gun:await/{2,3}` and not passing a monitor
+reference, one is automatically created for you for the
+duration of the call.
 
 The `gun:await_body/{2,3,4}` works similarly, but returns the
-body received.
+body received. Both functions can be combined to receive the
+response and its body sequentially.
 
 .Receiving a response using await
 
