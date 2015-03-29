@@ -342,11 +342,11 @@ cancel(ServerPid, StreamRef) ->
 
 -spec ws_upgrade(pid(), iodata()) -> reference().
 ws_upgrade(ServerPid, Path) ->
-	ws_upgrade(ServerPid, Path, [], []).
+	ws_upgrade(ServerPid, Path, [], #{}).
 
 -spec ws_upgrade(pid(), iodata(), headers()) -> reference().
 ws_upgrade(ServerPid, Path, Headers) ->
-	ws_upgrade(ServerPid, Path, Headers, []).
+	ws_upgrade(ServerPid, Path, Headers, #{}).
 
 -spec ws_upgrade(pid(), iodata(), headers(), ws_opts()) -> reference().
 ws_upgrade(ServerPid, Path, Headers, Opts) ->
