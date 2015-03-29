@@ -189,29 +189,43 @@ keepalive(State=#spdy_state{socket=Socket, transport=Transport,
 	Transport:send(Socket, cow_spdy:ping(PingID)),
 	State#spdy_state{ping_id=PingID + 2}.
 
-%% @todo Allow overriding the host when doing requests.
+%% @todo Always https scheme?
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
-		stream_id=StreamID}, StreamRef, Method, Host, _Port, Path, Headers) ->
-	Out = false =/= lists:keyfind(<<"content-type">>, 1, Headers),
+		stream_id=StreamID}, StreamRef, Method, Host, Port, Path, Headers) ->
+	{Host2, Headers2} = prepare_request(Headers, Host, Port),
+	Out = (false =/= lists:keyfind(<<"content-type">>, 1, Headers2))
+		orelse (false =/= lists:keyfind(<<"content-length">>, 1, Headers2)),
 	Transport:send(Socket, cow_spdy:syn_stream(Zdef,
 		StreamID, 0, not Out, false, 0,
-		Method, <<"https">>, Host, Path, <<"HTTP/1.1">>, Headers)),
+		Method, <<"https">>, Host2, Path, <<"HTTP/1.1">>, Headers2)),
 	new_stream(StreamID, StreamRef, true, Out, <<"HTTP/1.1">>,
 		State#spdy_state{stream_id=StreamID + 2}).
 
 %% @todo Handle Body > 16MB. (split it out into many frames)
+%% @todo Always https scheme?
 request(State=#spdy_state{socket=Socket, transport=Transport, zdef=Zdef,
-		stream_id=StreamID}, StreamRef, Method, Host, _Port, Path, Headers, Body) ->
-	Headers2 = lists:keystore(<<"content-length">>, 1, Headers,
-		{<<"content-length">>, integer_to_list(iolist_size(Body))}),
+		stream_id=StreamID}, StreamRef, Method, Host, Port, Path, Headers, Body) ->
+	{Host2, Headers2} = prepare_request(Headers, Host, Port),
+	Headers3 = lists:keystore(<<"content-length">>, 1, Headers2,
+		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
 	Transport:send(Socket, [
 		cow_spdy:syn_stream(Zdef,
 			StreamID, 0, false, false, 0,
-			Method, <<"https">>, Host, Path, <<"HTTP/1.1">>, Headers2),
+			Method, <<"https">>, Host2, Path, <<"HTTP/1.1">>, Headers3),
 		cow_spdy:data(StreamID, true, Body)
 	]),
 	new_stream(StreamID, StreamRef, true, false, <<"HTTP/1.1">>,
 		State#spdy_state{stream_id=StreamID + 2}).
+
+prepare_request(Headers, Host, Port) ->
+	Headers2 = lists:keydelete(<<"keep-alive">>, 1,
+		lists:keydelete(<<"proxy-connection">>, 1,
+			lists:keydelete(<<"transfer-encoding">>, 1,
+				lists:keydelete(<<"connection">>, 1, Headers)))),
+	case lists:keytake(<<"host">>, 1, Headers2) of
+		false -> {[Host, $:, integer_to_binary(Port)], Headers2};
+		{value, {_, Host1}, Headers3} -> {Host1, Headers3}
+	end.
 
 data(State=#spdy_state{socket=Socket, transport=Transport},
 		StreamRef, IsFin, Data) ->

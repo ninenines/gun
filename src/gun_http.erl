@@ -135,7 +135,7 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 		{101, {websocket, _, WsKey, WsExtensions, WsProtocols, WsOpts}} ->
 			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsProtocols, WsOpts);
 		_ ->
-			In = io_from_headers(Version, Headers),
+			In = response_io_from_headers(Version, Headers),
 			IsFin = case In of head -> fin; _ -> nofin end,
 			case IsAlive of
 				false ->
@@ -153,7 +153,7 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 				Conn =:= close -> close;
 				Version =:= 'HTTP/1.0' -> close;
 				ClientVersion =:= 'HTTP/1.0' -> close;
-				true -> conn_from_headers(Headers)
+				true -> conn_from_headers(Version, Headers)
 			end,
 			%% We always reset in_state even if not chunked.
 			if
@@ -200,18 +200,14 @@ keepalive(State) ->
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, Method, Host, Port, Path, Headers) ->
-	Headers2 = case Version of
-		'HTTP/1.0' -> lists:keydelete(<<"transfer-encoding">>, 1, Headers);
-		'HTTP/1.1' -> Headers
-	end,
+	Headers2 = lists:keydelete(<<"transfer-encoding">>, 1, Headers),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
 		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2];
 		true -> Headers2
 	end,
 	%% We use Headers2 because this is the smallest list.
-	Conn = conn_from_headers(Headers2),
-	%% @todo This should probably also check for content-type like SPDY.
-	Out = io_from_headers(Version, Headers2),
+	Conn = conn_from_headers(Version, Headers2),
+	Out = request_io_from_headers(Headers2),
 	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers3)),
 	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef).
 
@@ -224,10 +220,10 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		true -> Headers2
 	end,
 	%% We use Headers2 because this is the smallest list.
-	Conn = conn_from_headers(Headers2),
+	Conn = conn_from_headers(Version, Headers2),
 	Transport:send(Socket, [
 		cow_http:request(Method, Path, Version, [
-			{<<"content-length">>, integer_to_list(iolist_size(Body))}
+			{<<"content-length">>, integer_to_binary(iolist_size(Body))}
 		|Headers3]),
 		Body]),
 	new_stream(State#http_state{connection=Conn}, StreamRef).
@@ -296,8 +292,10 @@ error_stream_not_found(State=#http_state{owner=Owner}) ->
 
 %% Headers information retrieval.
 
-conn_from_headers(Headers) ->
+conn_from_headers(Version, Headers) ->
 	case lists:keyfind(<<"connection">>, 1, Headers) of
+		false when Version =:= 'HTTP/1.0' ->
+			close;
 		false ->
 			keepalive;
 		{_, ConnHd} ->
@@ -308,7 +306,20 @@ conn_from_headers(Headers) ->
 			end
 	end.
 
-io_from_headers(Version, Headers) ->
+request_io_from_headers(Headers) ->
+	case lists:keyfind(<<"content-length">>, 1, Headers) of
+		{_, <<"0">>} ->
+			head;
+		{_, Length} ->
+			{body, cow_http_hd:parse_content_length(Length)};
+		_ ->
+			case lists:keymember(<<"content-type">>, 1, Headers) of
+				true -> body_chunked;
+				false -> head
+			end
+	end.
+
+response_io_from_headers(Version, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, <<"0">>} ->
 			head;
@@ -369,9 +380,12 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
 		{<<"sec-websocket-key">>, Key}
 		|ExtHeaders
 	],
+	IsSecure = Transport:secure(),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2];
-		true -> Headers2
+		true -> Headers2;
+		false when Port =:= 80, not IsSecure -> [{<<"host">>, Host}|Headers2];
+		false when Port =:= 443, IsSecure -> [{<<"host">>, Host}|Headers2];
+		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2]
 	end,
 	Transport:send(Socket, cow_http:request(<<"GET">>, Path, 'HTTP/1.1', Headers3)),
 	new_stream(State#http_state{connection=keepalive, out=head},
