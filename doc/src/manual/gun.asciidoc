@@ -12,30 +12,62 @@ HTTP or Websocket.
 
 == Types
 
-=== opts() = [opt()]
+=== opts() = map()
 
 Configuration for the connection.
 
-@todo Should be a map.
+The following keys are defined:
 
-With opt():
-
-keepalive => pos_integer()::
-	Time between pings in milliseconds.
-	Defaults to 5000.
+http_opts => gun:http_opts()::
+	Options specific to the HTTP protocol. See below.
+protocols => [http | spdy]::
+	Ordered list of preferred protocols. When the transport is tcp,
+	this list must contain exactly one protocol. When the transport
+	is ssl, this list must contain at least one protocol and will be
+	used using the NPN protocol negotiation method. When the server
+	does not support NPN then http will always be used. Defaults to
+	[http] when the transport is tcp, and [spdy, http] when the
+	transport is ssl.
 retry => non_neg_integer()::
 	Number of times Gun will try to reconnect on failure before giving up.
 	Defaults to 5.
 retry_timeout => pos_integer()::
-	Time between retries in milliseconds.
-	Defaults to 5000.
-type => ssl | tcp | tcp_spdy::
-	Whether to use SSL, plain TCP (for HTTP/Websocket) or SPDY over TCP.
-	The default varies depending on the port used. Port 443 defaults
-	to ssl. Port 6121 defaults to tcp_spdy (@todo). All other ports
-	default to tcp. (@todo)
+	Time between retries in milliseconds. Defaults to 5000.
+spdy_opts => gun:spdy_opts()::
+	Options specific to the SPDY protocol. See below.
+trace => boolean()::
+	Whether to enable `dbg` tracing of the connection process. Should
+	only be used during debugging. Defaults to false.
+transport => tcp | ssl::
+	Whether to use SSL or plain TCP. The default varies depending on the
+	port used. Port 443 defaults to ssl. All other ports default to tcp.
+transport_opts => proplists:proplist()::
+	Transport options. They are TCP options or SSL options depending on
+	the selected transport.
 
-@todo We want to separate protocol and transport options.
+=== http_opts() = map()
+
+Configuration for the HTTP protocol.
+
+The following keys are defined:
+
+keepalive => pos_integer()::
+	Time between pings in milliseconds. Since the HTTP protocol has
+	no standardized way to ping the server, Gun will simply send an
+	empty line when the connection is idle. Gun only makes a best
+	effort here as servers usually have configurable limits to drop
+	idle connections. Defaults to 5000.
+version => 'HTTP/1.1' | 'HTTP/1.0'::
+	HTTP version to use. Defaults to 'HTTP/1.1'.
+
+=== spdy_opts() = map()
+
+Configuration for the SPDY protocol.
+
+The following keys are defined:
+
+keepalive => pos_integer()::
+	Time between pings in milliseconds. Defaults to 5000.
 
 @todo We need to document Websocket options.
 

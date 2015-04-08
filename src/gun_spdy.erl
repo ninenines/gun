@@ -14,6 +14,7 @@
 
 -module(gun_spdy).
 
+-export([check_options/1]).
 -export([init/4]).
 -export([handle/2]).
 -export([close/1]).
@@ -43,7 +44,15 @@
 	ping_id = 1 :: non_neg_integer()
 }).
 
-init(Owner, Socket, Transport, []) ->
+check_options(Opts) ->
+	do_check_options(map:to_list(Opts)).
+
+do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
+	do_check_options(Opts);
+do_check_options([Opt|_]) ->
+	{error, {options, {spdy, Opt}}}.
+
+init(Owner, Socket, Transport, _Opts) ->
 	#spdy_state{owner=Owner, socket=Socket, transport=Transport,
 		zdef=cow_spdy:deflate_init(), zinf=cow_spdy:inflate_init()}.
 

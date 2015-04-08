@@ -140,7 +140,7 @@ log_output() ->
 	ok.
 
 connect(Path) ->
-	{ok, Pid} = gun:open("127.0.0.1", 33080, [{type, tcp}, {retry, 0}]),
+	{ok, Pid} = gun:open("127.0.0.1", 33080, #{retry=>0}),
 	Ref = monitor(process, Pid),
 	gun:ws_upgrade(Pid, Path, [], #{compress => true}),
 	receive

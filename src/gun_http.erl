@@ -14,6 +14,7 @@
 
 -module(gun_http).
 
+-export([check_options/1]).
 -export([init/4]).
 -export([handle/2]).
 -export([close/1]).
@@ -23,9 +24,6 @@
 -export([data/4]).
 -export([cancel/2]).
 -export([ws_upgrade/7]).
-
--type opts() :: [{version, cow_http:version()}].
--export_type([opts/0]).
 
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked.
 
@@ -44,11 +42,19 @@
 	out = head :: io()
 }).
 
-init(Owner, Socket, Transport, []) ->
-	#http_state{owner=Owner, socket=Socket, transport=Transport};
-init(Owner, Socket, Transport, [{version, Version}]) ->
-	#http_state{owner=Owner, socket=Socket, transport=Transport,
-		version=Version}.
+check_options(Opts) ->
+	do_check_options(map:to_list(Opts)).
+
+do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
+	do_check_options(Opts);
+do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
+	do_check_options(Opts);
+do_check_options([Opt|_]) ->
+	{error, {options, {http, Opt}}}.
+
+init(Owner, Socket, Transport, Opts) ->
+	Version = maps:get(version, Opts, 'HTTP/1.1'),
+	#http_state{owner=Owner, socket=Socket, transport=Transport, version=Version}.
 
 %% Stop looping when we got no more data.
 handle(<<>>, State) ->

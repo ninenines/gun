@@ -71,7 +71,6 @@
 -export([system_terminate/4]).
 -export([system_code_change/4]).
 
--type conn_type() :: ssl | tcp | tcp_spdy.
 -type headers() :: [{binary(), iodata()}].
 
 -type ws_close_code() :: 1000..4999.
@@ -79,12 +78,14 @@
 	| {text | binary | close | ping | pong, iodata()}
 	| {close, ws_close_code(), iodata()}.
 
--type opts() :: [{http, gun_http:opts()}
-	| {keepalive, pos_integer()}
-	| {retry, non_neg_integer()}
-	| {retry_timeout, pos_integer()}
-	| {type, conn_type()}].
+-type opts() :: map().
 -export_type([opts/0]).
+
+-type http_opts() :: map().
+-export_type([http_opts/0]).
+
+-type spdy_opts() :: map().
+-export_type([spdy_opts/0]).
 
 -type ws_opts() :: [{compress, boolean()}].
 
@@ -93,15 +94,11 @@
 	owner :: pid(),
 	host :: inet:hostname(),
 	port :: inet:port_number(),
-	keepalive :: pos_integer(),
+	opts :: opts(),
 	keepalive_ref :: reference(),
-	type :: conn_type(),
-	retry :: non_neg_integer(),
-	retry_timeout :: pos_integer(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	protocol :: module(),
-	proto_opts :: gun_http:opts(), %% @todo Make a tuple with SPDY too.
 	protocol_state :: any()
 }).
 
@@ -110,34 +107,77 @@
 -spec open(inet:hostname(), inet:port_number())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port) ->
-	open(Host, Port, []).
+	open(Host, Port, #{}).
 
 -spec open(inet:hostname(), inet:port_number(), opts())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
-	case open_opts(Opts) of
+	case check_options(maps:to_list(Opts)) of
 		ok ->
-			supervisor:start_child(gun_sup, [self(), Host, Port, Opts]);
-		Error ->
-			Error
+			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
+				OK = {ok, ServerPid} ->
+					consider_tracing(ServerPid, Opts),
+					OK;
+				StartError ->
+					StartError
+			end;
+		CheckError ->
+			CheckError
 	end.
 
-%% @private
-open_opts([]) ->
+check_options([]) ->
 	ok;
-open_opts([{http, O}|Opts]) when is_list(O) ->
-	open_opts(Opts);
-open_opts([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
-	open_opts(Opts);
-open_opts([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
-	open_opts(Opts);
-open_opts([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
-	open_opts(Opts);
-open_opts([{type, T}|Opts])
-		when T =:= tcp; T =:= tcp_spdy; T =:= ssl ->
-	open_opts(Opts);
-open_opts([Opt|_]) ->
+check_options([{http_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
+	case gun_http:check_options(map:to_list(ProtoOpts)) of
+		ok ->
+			check_options(Opts);
+		Error ->
+			Error
+	end;
+check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
+	Len = length(L),
+	case length(lists:usort(L)) of
+		Len when Len > 0 ->
+			Check = lists:usort([(P =:= http) orelse (P =:= spdy) || P <- L]),
+			case Check of
+				[true] ->
+					check_options(Opts);
+				_ ->
+					{error, {options, Opt}}
+			end;
+		_ ->
+			{error, {options, Opt}}
+	end;
+check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
+	check_options(Opts);
+check_options([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
+	check_options(Opts);
+check_options([{spdy_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
+	case gun_spdy:check_options(map:to_list(ProtoOpts)) of
+		ok ->
+			check_options(Opts);
+		Error ->
+			Error
+	end;
+check_options([{trace, B}|Opts]) when B =:= true; B =:= false ->
+	check_options(Opts);
+check_options([{transport, T}|Opts]) when T =:= tcp; T =:= ssl ->
+	check_options(Opts);
+check_options([{transport_opts, L}|Opts]) when is_list(L) ->
+	check_options(Opts);
+check_options([Opt|_]) ->
 	{error, {options, Opt}}.
+
+consider_tracing(ServerPid, #{trace := true}) ->
+	dbg:start(),
+	dbg:tracer(),
+	dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
+	dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
+	dbg:tpl(gun_spdy, [{'_', [], [{return_trace}]}]),
+	dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
+	dbg:p(ServerPid, all);
+consider_tracing(_, _) ->
+	ok.
 
 -spec close(pid()) -> ok.
 close(ServerPid) ->
@@ -372,68 +412,58 @@ start_link(Owner, Host, Port, Opts) ->
 	proc_lib:start_link(?MODULE, init,
 		[self(), Owner, Host, Port, Opts]).
 
-%% @doc Faster alternative to proplists:get_value/3.
-%% @private
-get_value(Key, Opts, Default) ->
-	case lists:keyfind(Key, 1, Opts) of
-		{_, Value} -> Value;
-		_ -> Default
-	end.
-
 init(Parent, Owner, Host, Port, Opts) ->
 	ok = proc_lib:init_ack(Parent, {ok, self()}),
-	HTTPOpts = get_value(http, Opts, []),
-	Keepalive = get_value(keepalive, Opts, 5000),
-	Retry = get_value(retry, Opts, 5),
-	RetryTimeout = get_value(retry_timeout, Opts, 5000),
-	%% Default to TCP if port 80 is given, otherwise SSL.
-	Type = get_value(type, Opts, if Port =:= 80 -> tcp; true -> ssl end),
-	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port,
-		keepalive=Keepalive, type=Type, retry=Retry,
-		proto_opts=HTTPOpts, retry_timeout=RetryTimeout}, Retry).
+	Retry = maps:get(retry, Opts, 5),
+	Transport = case maps:get(transport, Opts, default_transport(Port)) of
+		tcp -> ranch_tcp;
+		ssl -> ranch_ssl
+	end,
+	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts, transport=Transport}, Retry).
 
-connect(State=#state{owner=Owner, host=Host, port=Port, type=ssl,
-		proto_opts=HTTPOpts}, Retries) ->
-	Transport = ranch_ssl,
-	%% R15 support.
-	HasNPN = erlang:function_exported(ssl, negotiated_next_protocol, 1),
-	Opts = [binary, {active, false}
-		|[{client_preferred_next_protocols,
-			{client, [<<"spdy/3">>, <<"http/1.1">>], <<"http/1.1">>}}
-			|| HasNPN]],
-	case Transport:connect(Host, Port, Opts) of
+default_transport(443) -> ssl;
+default_transport(_) -> tcp.
+
+connect(State=#state{owner=Owner, host=Host, port=Port, opts=Opts, transport=Transport=ranch_ssl}, Retries) ->
+	Protocols = lists:flatten([case P of
+		http -> <<"http/1.1">>;
+		spdy -> [<<"spdy/3.1">>, <<"spdy/3">>]
+	end || P <- maps:get(protocols, Opts, [spdy, http])]),
+	TransportOpts = [binary, {active, false},
+		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
+		|maps:get(transport_opts, Opts, [])],
+	case Transport:connect(Host, Port, TransportOpts) of
 		{ok, Socket} ->
-			{Protocol, ProtoOpts} = case HasNPN of
-				false ->
-					{gun_http, HTTPOpts};
-				true ->
-					case ssl:negotiated_next_protocol(Socket) of
-						{ok, <<"spdy/3">>} -> {gun_spdy, []};
-						_ -> {gun_http, HTTPOpts}
-					end
+			{Protocol, ProtoOptsKey} = case ssl:negotiated_next_protocol(Socket) of
+				{ok, <<"spdy/3", _/bits>>} -> {gun_spdy, spdy_opts};
+				_ -> {gun_http, http_opts}
 			end,
+			ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
 			ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 			before_loop(State#state{socket=Socket, transport=Transport,
 				protocol=Protocol, protocol_state=ProtoState});
 		{error, _} ->
 			retry(State, Retries - 1)
 	end;
-connect(State=#state{owner=Owner, host=Host, port=Port, type=Type,
-		proto_opts=HTTPOpts}, Retries) ->
-	Transport = ranch_tcp,
-	Opts = [binary, {active, false}],
-	case Transport:connect(Host, Port, Opts) of
+connect(State=#state{owner=Owner, host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
+	TransportOpts = [binary, {active, false}
+		|maps:get(transport_opts, Opts, [])],
+	case Transport:connect(Host, Port, TransportOpts) of
 		{ok, Socket} ->
-			{Protocol, ProtoOpts} = case Type of
-				tcp_spdy -> {gun_spdy, []};
-				tcp -> {gun_http, HTTPOpts}
+			{Protocol, ProtoOptsKey} = case maps:get(protocols, Opts, [http]) of
+				[http] -> {gun_http, http_opts};
+				[spdy] -> {gun_spdy, spdy_opts}
 			end,
+			ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
 			ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 			before_loop(State#state{socket=Socket, transport=Transport,
 				protocol=Protocol, protocol_state=ProtoState});
 		{error, _} ->
 			retry(State, Retries - 1)
 	end.
+
+retry(State=#state{opts=Opts}) ->
+	retry(State, maps:get(retry, Opts, 5)).
 
 %% Exit normally if the retry functionality has been disabled.
 retry(_, 0) ->
@@ -453,8 +483,8 @@ retry(State, Retries) ->
 %% Too many retries, give up.
 retry_loop(_, 0) ->
 	error(gone);
-retry_loop(State=#state{parent=Parent, retry_timeout=RetryTimeout}, Retries) ->
-	_ = erlang:send_after(RetryTimeout, self(), retry),
+retry_loop(State=#state{parent=Parent, opts=Opts}, Retries) ->
+	_ = erlang:send_after(maps:get(retry_timeout, Opts, 5000), self(), retry),
 	receive
 		retry ->
 			connect(State, Retries);
@@ -463,13 +493,18 @@ retry_loop(State=#state{parent=Parent, retry_timeout=RetryTimeout}, Retries) ->
 				{retry_loop, State, Retries})
 	end.
 
-before_loop(State=#state{keepalive=Keepalive}) ->
+before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
+	ProtoOptsKey = case Protocol of
+		gun_http -> http_opts;
+		gun_spdy -> spdy_opts
+	end,
+	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
+	Keepalive = maps:get(keepalive, ProtoOpts, 5000),
 	KeepaliveRef = erlang:send_after(Keepalive, self(), keepalive),
 	loop(State#state{keepalive_ref=KeepaliveRef}).
 
 loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
-		retry=Retry, socket=Socket, transport=Transport,
-		protocol=Protocol, protocol_state=ProtoState}) ->
+		socket=Socket, transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
 	Transport:setopts(Socket, [{active, once}]),
 	receive
@@ -478,7 +513,7 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 				close ->
 					Transport:close(Socket),
 					retry(State#state{socket=undefined, transport=undefined,
-						protocol=undefined}, Retry);
+						protocol=undefined});
 				{upgrade, Protocol2, ProtoState2} ->
 					ws_loop(State#state{protocol=Protocol2, protocol_state=ProtoState2});
 			ProtoState2 ->
@@ -488,12 +523,12 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 			Protocol:close(ProtoState),
 			Transport:close(Socket),
 			retry(State#state{socket=undefined, transport=undefined,
-				protocol=undefined}, Retry);
+				protocol=undefined});
 		{Error, Socket, _} ->
 			Protocol:close(ProtoState),
 			Transport:close(Socket),
 			retry(State#state{socket=undefined, transport=undefined,
-				protocol=undefined}, Retry);
+				protocol=undefined});
 		{OK, _PreviousSocket, _Data} ->
 			loop(State);
 		{Closed, _PreviousSocket} ->
@@ -518,8 +553,8 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 		{cancel, Owner, StreamRef} ->
 			ProtoState2 = Protocol:cancel(ProtoState, StreamRef),
 			loop(State#state{protocol_state=ProtoState2});
-		{ws_upgrade, Owner, StreamRef, Path, Headers, Opts} when Protocol =/= gun_spdy ->
-			ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, Opts),
+		{ws_upgrade, Owner, StreamRef, Path, Headers, WsOpts} when Protocol =/= gun_spdy ->
+			ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, WsOpts),
 			loop(State#state{protocol_state=ProtoState2});
 			%% @todo can fail if http/1.0
 		{shutdown, Owner} ->
@@ -549,7 +584,7 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 			loop(State)
 	end.
 
-ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
+ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
 		transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
 	ok = Transport:setopts(Socket, [{active, once}]),
@@ -558,16 +593,16 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 			case Protocol:handle(Data, ProtoState) of
 				close ->
 					Transport:close(Socket),
-					retry(State#state{socket=undefined, transport=undefined, protocol=undefined}, Retry);
+					retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
 				ProtoState2 ->
 					ws_loop(State#state{protocol_state=ProtoState2})
 			end;
 		{Closed, Socket} ->
 			Transport:close(Socket),
-			retry(State#state{socket=undefined, transport=undefined, protocol=undefined}, Retry);
+			retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
 		{Error, Socket, _} ->
 			Transport:close(Socket),
-			retry(State#state{socket=undefined, transport=undefined, protocol=undefined}, Retry);
+			retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
 		%% Ignore any previous HTTP keep-alive.
 		keepalive ->
 			ws_loop(State);
@@ -577,7 +612,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, retry=Retry, socket=Socket,
 			case Protocol:send(Frame, ProtoState) of
 				close ->
 					Transport:close(Socket),
-					retry(State#state{socket=undefined, transport=undefined, protocol=undefined}, Retry);
+					retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
 				ProtoState2 ->
 					ws_loop(State#state{protocol_state=ProtoState2})
 			end;
