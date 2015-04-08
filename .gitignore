@@ -1,0 +1,5 @@
+.erlang.mk.packages.v2
+deps
+ebin
+logs
+test/*.beam
