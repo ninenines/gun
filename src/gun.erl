@@ -128,7 +128,7 @@ open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
 check_options([]) ->
 	ok;
 check_options([{http_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
-	case gun_http:check_options(map:to_list(ProtoOpts)) of
+	case gun_http:check_options(ProtoOpts) of
 		ok ->
 			check_options(Opts);
 		Error ->
@@ -153,7 +153,7 @@ check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 check_options([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
 	check_options(Opts);
 check_options([{spdy_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
-	case gun_spdy:check_options(map:to_list(ProtoOpts)) of
+	case gun_spdy:check_options(ProtoOpts) of
 		ok ->
 			check_options(Opts);
 		Error ->
