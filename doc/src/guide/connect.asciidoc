@@ -52,6 +52,20 @@ form of a map.
 [source,erlang]
 {ok, ConnPid} = gun:open("example.org", 8443, #{transport=>ssl}).
 
+=== Connection up and down messages
+
+When Gun successfully connects to the server, it sends a
+`gun_up` message with the protocol that has been selected
+for the connection.
+
+When the connection is lost, Gun will send a `gun_down`
+message indicating the current protocol, the reason the
+connection was lost and two list of stream references.
+
+The first list indicates open streams that _may_ have been
+processed by the server. The second list indicates open
+streams that the server did not process.
+
 === Monitoring the connection process
 
 @todo Gun should detect the owner process being killed

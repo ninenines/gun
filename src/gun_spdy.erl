@@ -15,6 +15,7 @@
 -module(gun_spdy).
 
 -export([check_options/1]).
+-export([name/0]).
 -export([init/4]).
 -export([handle/2]).
 -export([close/1]).
@@ -23,6 +24,7 @@
 -export([request/8]).
 -export([data/4]).
 -export([cancel/2]).
+-export([down/1]).
 
 -record(stream, {
 	id :: non_neg_integer(),
@@ -51,6 +53,8 @@ do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
 do_check_options([Opt|_]) ->
 	{error, {options, {spdy, Opt}}}.
+
+name() -> spdy.
 
 init(Owner, Socket, Transport, _Opts) ->
 	#spdy_state{owner=Owner, socket=Socket, transport=Transport,
@@ -262,6 +266,11 @@ cancel(State=#spdy_state{socket=Socket, transport=Transport},
 		false ->
 			error_stream_not_found(State)
 	end.
+
+%% @todo Add unprocessed streams when GOAWAY handling is done.
+down(#spdy_state{streams=Streams}) ->
+	KilledStreams = [Ref || #stream{ref=Ref} <- Streams],
+	{KilledStreams, []}.
 
 error_stream_closed(State=#spdy_state{owner=Owner}) ->
 	Owner ! {gun_error, self(), {badstate,

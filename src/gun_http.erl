@@ -15,6 +15,7 @@
 -module(gun_http).
 
 -export([check_options/1]).
+-export([name/0]).
 -export([init/4]).
 -export([handle/2]).
 -export([close/1]).
@@ -23,6 +24,7 @@
 -export([request/8]).
 -export([data/4]).
 -export([cancel/2]).
+-export([down/1]).
 -export([ws_upgrade/7]).
 
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked.
@@ -51,6 +53,8 @@ do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
 	do_check_options(Opts);
 do_check_options([Opt|_]) ->
 	{error, {options, {http, Opt}}}.
+
+name() -> http.
 
 init(Owner, Socket, Transport, Opts) ->
 	Version = maps:get(version, Opts, 'HTTP/1.1'),
@@ -285,6 +289,14 @@ cancel(State, StreamRef) ->
 		false ->
 			error_stream_not_found(State)
 	end.
+
+%% HTTP does not provide any way to figure out what streams are unprocessed.
+down(#http_state{streams=Streams}) ->
+	KilledStreams = [case Ref of
+		{websocket, Ref2, _, _, _} -> Ref2;
+		_ -> Ref
+	end || {Ref, _} <- Streams],
+	{KilledStreams, []}.
 
 error_stream_closed(State=#http_state{owner=Owner}) ->
 	Owner ! {gun_error, self(), {badstate,

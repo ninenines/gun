@@ -76,6 +76,57 @@ keepalive => pos_integer()::
 Calling functions from this module may result in the following
 messages being sent.
 
+=== {gun_up, ConnPid, Protocol}
+
+ConnPid = pid():: The pid of the Gun connection process.
+Protocol = http | spdy:: The protocol selected for this connection.
+
+The connection is up.
+
+This message informs the owner process that the connection or
+reconnection completed.
+
+The protocol selected during the connection is sent in this
+message. It can be used to determine the capabilities of the
+server.
+
+Gun will now start processing the messages it received while
+waiting for the connection to be up. If this is a reconnection,
+then this may not be desirable for all requests. Those requests
+should be cancelled when the connection goes down, and any
+subsequent messages ignored.
+
+=== {gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams}
+
+ConnPid = pid():: The pid of the Gun connection process.
+Protocol = http | spdy | ws:: The protocol in use when the connection was lost.
+Reason = normal | closed | {error, atom()}:: The reason for the loss of the connection.
+KilledStreams = [reference()]:: List of streams that have been brutally terminated.
+UnprocessedStreams = [reference()]:: List of streams that have not been processed by the server.
+
+The connection is down.
+
+This message informs the owner process that the connection is
+currently down. Gun will automatically attempt to reconnect
+depending on the `retry` and `retry_timeout` options.
+
+The reason of the termination is there for debugging purposes
+only. You should not rely on this value to know what streams
+were processed or completed.
+
+The _killed streams_ are the active streams that did not complete
+before the closing of the connection. Whether they can be retried
+safely depends on the protocol used and the idempotence property
+of the requests.
+
+The _unprocessed streams_ are streams that the server did not
+start processing yet. They may be retried safely depending on
+what streams were killed before.
+
+When the connection goes back up, Gun will not attempt to retry
+requests. It will also not upgrade to Websocket automatically
+if that was the protocol in use when the connection was lost.
+
 === {gun_push, ConnPid, StreamRef, NewStreamRef, URI, Headers}
 
 ConnPid = pid():: The pid of the Gun connection process.

@@ -14,9 +14,11 @@
 
 -module(gun_ws).
 
+-export([name/0]).
 -export([init/5]).
 -export([handle/2]).
 -export([send/2]).
+-export([down/1]).
 
 -record(payload, {
 	type = undefined :: cow_ws:frame_type(),
@@ -39,6 +41,8 @@
 	utf8_state = 0 :: cow_ws:utf8_state(),
 	extensions = #{} :: cow_ws:extensions()
 }).
+
+name() -> ws.
 
 %% @todo Protocols
 init(Owner, Socket, Transport, Extensions, _Protocols) ->
@@ -123,3 +127,7 @@ send(Frame, State=#ws_state{socket=Socket, transport=Transport, extensions=Exten
 		{close, _, _} -> close;
 		_ -> State
 	end.
+
+%% Websocket has no concept of streams.
+down(_) ->
+	{[], []}.

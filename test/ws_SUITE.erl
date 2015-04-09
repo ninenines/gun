@@ -120,6 +120,8 @@ loop(Pid, Ref) ->
 		{gun_ws, Pid, Frame} ->
 			gun:ws_send(Pid, Frame),
 			loop(Pid, Ref);
+		{gun_down, Pid, ws, _, _, _} ->
+			close(Pid, Ref);
 		{'DOWN', Ref, process, Pid, normal} ->
 			close(Pid, Ref);
 		Msg ->
@@ -141,6 +143,12 @@ log_output() ->
 
 connect(Path) ->
 	{ok, Pid} = gun:open("127.0.0.1", 33080, #{retry=>0}),
+	receive
+		{gun_up, Pid, http} ->
+			ok
+	after 1000 ->
+		error(open_timeout)
+	end,
 	Ref = monitor(process, Pid),
 	gun:ws_upgrade(Pid, Path, [], #{compress => true}),
 	receive
@@ -156,19 +164,7 @@ connect(Path) ->
 close(Pid, Ref) ->
 	demonitor(Ref),
 	gun:close(Pid),
-	flush(Pid).
-
-flush(Pid) ->
-	receive
-		{gun_ws, Pid, _} ->
-			flush(Pid);
-		{gun_ws_upgrade, Pid, _} ->
-			flush(Pid);
-		{'DOWN', _, process, Pid, _} ->
-			flush(Pid)
-	after 0 ->
-		ok
-	end.
+	gun:flush(Pid).
 
 terminate() ->
 	Res = os:cmd("killall wstest"),
