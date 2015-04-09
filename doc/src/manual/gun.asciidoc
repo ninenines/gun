@@ -139,9 +139,6 @@ A resource pushed alongside an HTTP response.
 
 This message can only be sent when the protocol is SPDY.
 
-@todo we probably want a function to know what protocol we connected
-@todo with or perhaps a message on connect that tells us that
-
 @todo I fear we also need the scheme; resource is identified by URI
 @todo Perhaps we really should send the URI entirely, because cache
 @todo relies on URI to work and this feature is for caching...
@@ -649,7 +646,7 @@ Opts = map():: Options for the Websocket connection.
 
 Request the connection to be upgraded to the Websocket protocol.
 
-@todo Only possible for HTTP.
+This function can only be used when the current protocol is `http`.
 
 === ws_send(ConnPid, Frames) -> ok
 

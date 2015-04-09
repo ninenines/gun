@@ -14,8 +14,6 @@ HTTP/1.1 connections can be upgraded to Websocket, so you might
 need to restrict the protocol to HTTP/1.1 if you are planning
 to use Websocket over TLS.
 
-@todo add option to disable specific protocols
-
 You must use the `gun_ws:upgrade/{2,3}` function to upgrade
 to Websocket. This function can be called anytime after connection,
 so you can send HTTP requests before upgrading to Websocket.

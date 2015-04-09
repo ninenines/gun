@@ -132,11 +132,6 @@ know it in advance, although this is not required. If it
 is not set, HTTP/1.1 will use the chunked transfer-encoding,
 and SPDY will continue normally as it is chunked by design.
 
-@todo Stop relying on transfer encoding header in Gun
-
-@todo SPDY needs to remove invalid headers, and to detect
-a body if content-length is set
-
 .POST "/organizations/ninenines" with delayed body
 
 [source,erlang]
