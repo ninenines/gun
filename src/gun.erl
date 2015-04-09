@@ -463,7 +463,8 @@ connect(State=#state{owner=Owner, host=Host, port=Port, opts=Opts, transport=Tra
 	end.
 
 retry(State=#state{opts=Opts}) ->
-	retry(State, maps:get(retry, Opts, 5)).
+	retry(State#state{socket=undefined, protocol=undefined, protocol_state=undefined},
+		maps:get(retry, Opts, 5)).
 
 %% Exit normally if the retry functionality has been disabled.
 retry(_, 0) ->
@@ -512,8 +513,7 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 			case Protocol:handle(Data, ProtoState) of
 				close ->
 					Transport:close(Socket),
-					retry(State#state{socket=undefined, transport=undefined,
-						protocol=undefined});
+					retry(State);
 				{upgrade, Protocol2, ProtoState2} ->
 					ws_loop(State#state{protocol=Protocol2, protocol_state=ProtoState2});
 			ProtoState2 ->
@@ -522,13 +522,11 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 		{Closed, Socket} ->
 			Protocol:close(ProtoState),
 			Transport:close(Socket),
-			retry(State#state{socket=undefined, transport=undefined,
-				protocol=undefined});
+			retry(State);
 		{Error, Socket, _} ->
 			Protocol:close(ProtoState),
 			Transport:close(Socket),
-			retry(State#state{socket=undefined, transport=undefined,
-				protocol=undefined});
+			retry(State);
 		{OK, _PreviousSocket, _Data} ->
 			loop(State);
 		{Closed, _PreviousSocket} ->
@@ -593,16 +591,16 @@ ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
 			case Protocol:handle(Data, ProtoState) of
 				close ->
 					Transport:close(Socket),
-					retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
+					retry(State);
 				ProtoState2 ->
 					ws_loop(State#state{protocol_state=ProtoState2})
 			end;
 		{Closed, Socket} ->
 			Transport:close(Socket),
-			retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
+			retry(State);
 		{Error, Socket, _} ->
 			Transport:close(Socket),
-			retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
+			retry(State);
 		%% Ignore any previous HTTP keep-alive.
 		keepalive ->
 			ws_loop(State);
@@ -612,7 +610,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
 			case Protocol:send(Frame, ProtoState) of
 				close ->
 					Transport:close(Socket),
-					retry(State#state{socket=undefined, transport=undefined, protocol=undefined});
+					retry(State);
 				ProtoState2 ->
 					ws_loop(State#state{protocol_state=ProtoState2})
 			end;
