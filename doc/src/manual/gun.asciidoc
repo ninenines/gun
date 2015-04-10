@@ -194,22 +194,12 @@ Reason = any():: Error reason.
 
 General error.
 
-=== {gun_ws_upgrade, ConnPid, ok}
+=== {gun_ws_upgrade, ConnPid, ok, Headers}
 
 ConnPid = pid():: The pid of the Gun connection process.
-
-Successful upgrade to the Websocket protocol.
-
-@todo Yeah we need the headers.
-
-=== {gun_ws_upgrade, ConnPid, error, IsFin, Status, Headers}
-
-ConnPid = pid():: The pid of the Gun connection process.
-IsFin = fin | nofin:: Whether this message terminates the response.
-Status = binary():: Status line for the response.
 Headers = [{binary(), binary()}]:: Headers sent with the response.
 
-Failed upgrade to the Websocket protocol.
+Successful upgrade to the Websocket protocol.
 
 === {gun_ws, ConnPid, Frame}
 

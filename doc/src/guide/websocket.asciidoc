@@ -40,17 +40,25 @@ The fourth argument is those same options. This function call
 will crash if the options are incorrect, unlike when passing
 them through `gun:open/{2,3}`.
 
-The success or failure of this operation will be sent as a
-message.
+When the upgrade succeeds, a `gun_ws_upgrade` message is sent.
+If the server does not understand Websocket or refused the
+upgrade, a `gun_response` message is sent. If Gun couldn't
+perform the upgrade due to an error (for example attempting
+to upgrade to Websocket on an HTTP/1.0 connection) then a
+`gun_error` message is sent.
 
-@todo hmm we want the headers to be sent in the gun_ws_upgrade ok message too
+When the server does not understand Websocket, it may send
+a meaningful response which should be processed. In the
+following example we however ignore it:
 
 [source,erlang]
 receive
-	{gun_ws_upgrade, ConnPid, ok} ->
+	{gun_ws_upgrade, ConnPid, ok, Headers} ->
 		upgrade_success(ConnPid);
-	{gun_ws_upgrade, ConnPid, error, IsFin, Status, Headers} ->
+	{gun_response, ConnPid, _, _, Status, Headers} ->
 		exit({ws_upgrade_failed, Status, Headers});
+	{gun_error, ConnPid, StreamRef, Reason} ->
+		exit({ws_upgrade_failed, Reason});
 	%% More clauses here as needed.
 after 1000 ->
 	exit(timeout);

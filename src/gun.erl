@@ -393,7 +393,7 @@ flush_pid(ServerPid) ->
 			flush_pid(ServerPid);
 		{gun_error, ServerPid, _} ->
 			flush_pid(ServerPid);
-		{gun_ws_upgrade, ServerPid, _} ->
+		{gun_ws_upgrade, ServerPid, _, _} ->
 			flush_pid(ServerPid);
 		{gun_ws, ServerPid, _} ->
 			flush_pid(ServerPid);

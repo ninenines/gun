@@ -16,7 +16,7 @@
 
 -export([check_options/1]).
 -export([name/0]).
--export([init/5]).
+-export([init/6]).
 -export([handle/2]).
 -export([send/2]).
 -export([down/1]).
@@ -56,8 +56,8 @@ do_check_options([Opt|_]) ->
 name() -> ws.
 
 %% @todo Protocols
-init(Owner, Socket, Transport, Extensions, _Protocols) ->
-	Owner ! {gun_ws_upgrade, self(), ok},
+init(Owner, Socket, Transport, Headers, Extensions, _Protocols) ->
+	Owner ! {gun_ws_upgrade, self(), ok, Headers},
 	{upgrade, ?MODULE, #ws_state{owner=Owner, socket=Socket, transport=Transport, extensions=Extensions}}.
 
 %% Do not handle anything if we received a close frame.

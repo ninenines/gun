@@ -143,16 +143,11 @@ log_output() ->
 
 connect(Path) ->
 	{ok, Pid} = gun:open("127.0.0.1", 33080, #{retry=>0}),
-	receive
-		{gun_up, Pid, http} ->
-			ok
-	after 1000 ->
-		error(open_timeout)
-	end,
+	{ok, http} = gun:await_up(Pid),
 	Ref = monitor(process, Pid),
 	gun:ws_upgrade(Pid, Path, [], #{compress => true}),
 	receive
-		{gun_ws_upgrade, Pid, ok} ->
+		{gun_ws_upgrade, Pid, ok, _} ->
 			ok;
 		Msg ->
 			ct:print("Unexpected message ~p", [Msg]),

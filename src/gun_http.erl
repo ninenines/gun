@@ -452,11 +452,11 @@ ws_validate_extensions(_, _, _, _) ->
 	close.
 
 %% @todo Validate protocols.
-ws_handshake_protocols(Buffer, State, _Headers, Extensions, _GunProtocols = []) ->
+ws_handshake_protocols(Buffer, State, Headers, Extensions, _GunProtocols = []) ->
 	Protocols = [],
-	ws_handshake_end(Buffer, State, Extensions, Protocols).
+	ws_handshake_end(Buffer, State, Headers, Extensions, Protocols).
 
-ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Transport}, Extensions, Protocols) ->
+ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Transport}, Headers, Extensions, Protocols) ->
 	%% Send ourselves the remaining buffer, if any.
 	_ = case Buffer of
 		<<>> ->
@@ -465,4 +465,4 @@ ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Trans
 			{OK, _, _} = Transport:messages(),
 			self() ! {OK, Socket, Buffer}
 	end,
-	gun_ws:init(Owner, Socket, Transport, Extensions, Protocols).
+	gun_ws:init(Owner, Socket, Transport, Headers, Extensions, Protocols).
