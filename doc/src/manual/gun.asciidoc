@@ -69,7 +69,16 @@ The following keys are defined:
 keepalive => pos_integer()::
 	Time between pings in milliseconds. Defaults to 5000.
 
-@todo We need to document Websocket options.
+=== ws_opts() = map()
+
+Configuration for the Websocket protocol.
+
+The following keys are defined:
+
+compress => boolean()::
+	Whether to enable permessage-deflate compression. This does
+	not guarantee that compression will be used as it is the
+	server that ultimately decides. Defaults to false.
 
 == Messages
 
