@@ -14,7 +14,7 @@ HTTP/1.1 connections can be upgraded to Websocket, so you might
 need to restrict the protocol to HTTP/1.1 if you are planning
 to use Websocket over TLS.
 
-You must use the `gun_ws:upgrade/{2,3}` function to upgrade
+You must use the `gun_ws:upgrade/{2,3,4}` function to upgrade
 to Websocket. This function can be called anytime after connection,
 so you can send HTTP requests before upgrading to Websocket.
 
@@ -33,6 +33,12 @@ if needed. For example you can request a custom sub-protocol.
 gun:ws_upgrade(ConnPid, "/websocket", [
 	{<<"sec-websocket-protocol">>, "mychat"}
 ]).
+
+You can pass the Websocket options as part of the `gun:open/{2,3}`
+call when opening the connection, or using the `gun:ws_upgrade/4`.
+The fourth argument is those same options. This function call
+will crash if the options are incorrect, unlike when passing
+them through `gun:open/{2,3}`.
 
 The success or failure of this operation will be sent as a
 message.

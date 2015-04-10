@@ -169,6 +169,13 @@ check_options([{transport, T}|Opts]) when T =:= tcp; T =:= ssl ->
 	check_options(Opts);
 check_options([{transport_opts, L}|Opts]) when is_list(L) ->
 	check_options(Opts);
+check_options([{ws_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
+	case gun_ws:check_options(ProtoOpts) of
+		ok ->
+			check_options(Opts);
+		Error ->
+			Error
+	end;
 check_options([Opt|_]) ->
 	{error, {options, Opt}}.
 
@@ -421,14 +428,17 @@ cancel(ServerPid, StreamRef) ->
 
 -spec ws_upgrade(pid(), iodata()) -> reference().
 ws_upgrade(ServerPid, Path) ->
-	ws_upgrade(ServerPid, Path, [], #{}).
+	ws_upgrade(ServerPid, Path, []).
 
 -spec ws_upgrade(pid(), iodata(), headers()) -> reference().
 ws_upgrade(ServerPid, Path, Headers) ->
-	ws_upgrade(ServerPid, Path, Headers, #{}).
+	StreamRef = make_ref(),
+	_ = ServerPid ! {ws_upgrade, self(), StreamRef, Path, Headers},
+	StreamRef.
 
 -spec ws_upgrade(pid(), iodata(), headers(), ws_opts()) -> reference().
 ws_upgrade(ServerPid, Path, Headers, Opts) ->
+	ok = gun_ws:check_options(Opts),
 	StreamRef = make_ref(),
 	_ = ServerPid ! {ws_upgrade, self(), StreamRef, Path, Headers, Opts},
 	StreamRef.
@@ -545,7 +555,7 @@ before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
 	KeepaliveRef = erlang:send_after(Keepalive, self(), keepalive),
 	loop(State#state{keepalive_ref=KeepaliveRef}).
 
-loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
+loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts,
 		socket=Socket, transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
 	Transport:setopts(Socket, [{active, once}]),
@@ -592,6 +602,10 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 		{cancel, Owner, StreamRef} ->
 			ProtoState2 = Protocol:cancel(ProtoState, StreamRef),
 			loop(State#state{protocol_state=ProtoState2});
+		{ws_upgrade, Owner, StreamRef, Path, Headers} when Protocol =/= gun_spdy ->
+			WsOpts = maps:get(ws_opts, Opts, #{}),
+			ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, WsOpts),
+			loop(State#state{protocol_state=ProtoState2});
 		{ws_upgrade, Owner, StreamRef, Path, Headers, WsOpts} when Protocol =/= gun_spdy ->
 			ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, WsOpts),
 			loop(State#state{protocol_state=ProtoState2});
@@ -605,11 +619,11 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 		{dbg_send_raw, Owner, Data} ->
 			Transport:send(Socket, Data),
 			loop(State);
-		Any when is_tuple(Any), is_pid(element(2, Any)) ->
-			element(2, Any) ! {gun_error, self(), {notowner,
-				"Operations are restricted to the owner of the connection."}},
-			loop(State);
 		{ws_upgrade, _, StreamRef, _, _} ->
+			Owner ! {gun_error, self(), StreamRef, {badstate,
+				"Websocket is only supported over HTTP/1.1."}},
+			loop(State);
+		{ws_upgrade, _, StreamRef, _, _, _} ->
 			Owner ! {gun_error, self(), StreamRef, {badstate,
 				"Websocket is only supported over HTTP/1.1."}},
 			loop(State);
@@ -617,6 +631,10 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port,
 			Owner ! {gun_error, self(), {badstate,
 				"Connection needs to be upgraded to Websocket "
 				"before the gun:ws_send/1 function can be used."}},
+			loop(State);
+		Any when is_tuple(Any), is_pid(element(2, Any)) ->
+			element(2, Any) ! {gun_error, self(), {notowner,
+				"Operations are restricted to the owner of the connection."}},
 			loop(State);
 		Any ->
 			error_logger:error_msg("Unexpected message: ~w~n", [Any]),

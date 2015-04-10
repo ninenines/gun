@@ -14,6 +14,7 @@
 
 -module(gun_ws).
 
+-export([check_options/1]).
 -export([name/0]).
 -export([init/5]).
 -export([handle/2]).
@@ -41,6 +42,16 @@
 	utf8_state = 0 :: cow_ws:utf8_state(),
 	extensions = #{} :: cow_ws:extensions()
 }).
+
+check_options(Opts) ->
+	do_check_options(maps:to_list(Opts)).
+
+do_check_options([]) ->
+	ok;
+do_check_options([{compress, B}|Opts]) when B =:= true; B =:= false ->
+	do_check_options(Opts);
+do_check_options([Opt|_]) ->
+	{error, {options, {spdy, Opt}}}.
 
 name() -> ws.
 

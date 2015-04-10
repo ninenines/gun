@@ -18,7 +18,7 @@ Configuration for the connection.
 
 The following keys are defined:
 
-http_opts => gun:http_opts()::
+http_opts => http_opts()::
 	Options specific to the HTTP protocol. See below.
 protocols => [http | spdy]::
 	Ordered list of preferred protocols. When the transport is tcp,
@@ -33,7 +33,7 @@ retry => non_neg_integer()::
 	Defaults to 5.
 retry_timeout => pos_integer()::
 	Time between retries in milliseconds. Defaults to 5000.
-spdy_opts => gun:spdy_opts()::
+spdy_opts => spdy_opts()::
 	Options specific to the SPDY protocol. See below.
 trace => boolean()::
 	Whether to enable `dbg` tracing of the connection process. Should
@@ -44,6 +44,8 @@ transport => tcp | ssl::
 transport_opts => proplists:proplist()::
 	Transport options. They are TCP options or SSL options depending on
 	the selected transport.
+ws_opts => ws_opts()::
+	Options specific to the Websocket protocol. See below.
 
 === http_opts() = map()
 
@@ -640,18 +642,20 @@ SPDY streams can however be cancelled at any time.
 
 === ws_upgrade(ConnPid, Path) -> ws_upgrade(ConnPid, Path, [], #{})
 
-Alias of `gun:ws_upgrade/4`.
+Alias of `gun:ws_upgrade/3`.
 
-=== ws_upgrade(ConnPid, Path, Headers) -> ws_upgrade(ConnPid, Path, Headers, #{})
+=== ws_upgrade(ConnPid, Path, Headers) -> ok
 
-Alias of `gun:ws_upgrade/4`.
+Similar to `gun:ws_upgrade/4`, except `WsOpts` is taken from
+the options given in the `gun:open/{2,3}` call when opening
+the connection.
 
-=== ws_upgrade(ConnPid, Path, Headers, Opts) -> ok
+=== ws_upgrade(ConnPid, Path, Headers, WsOpts) -> ok
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
-Opts = map():: Options for the Websocket connection.
+WsOpts = map():: Options for the Websocket connection.
 
 Request the connection to be upgraded to the Websocket protocol.
 
