@@ -52,11 +52,24 @@ form of a map.
 [source,erlang]
 {ok, ConnPid} = gun:open("example.org", 8443, #{transport=>ssl}).
 
-=== Connection up and down messages
+=== Waiting for the connection to be established
 
 When Gun successfully connects to the server, it sends a
 `gun_up` message with the protocol that has been selected
 for the connection.
+
+Gun provides the functions `gun:await_up/{1,2,3}` that wait
+for the `gun_up` message. They can optionally take a monitor
+reference and/or timeout value. If no monitor is provided,
+one will be created for the duration of the function call.
+
+.Synchronous opening of a connection
+
+[source,erlang]
+{ok, ConnPid} = gun:open("example.org", 443),
+{ok, Protocol} = gun:await_up(ConnPid).
+
+=== Handling connection loss
 
 When the connection is lost, Gun will send a `gun_down`
 message indicating the current protocol, the reason the

@@ -48,6 +48,9 @@
 -export([await_body/2]).
 -export([await_body/3]).
 -export([await_body/4]).
+-export([await_up/1]).
+-export([await_up/2]).
+-export([await_up/3]).
 
 %% Flushing gun messages.
 -export([flush/1]).
@@ -327,6 +330,33 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 			{error, Reason};
 		{gun_error, ServerPid, Reason} ->
 			{error, Reason};
+		{'DOWN', MRef, process, ServerPid, Reason} ->
+			{error, Reason}
+	after Timeout ->
+		{error, timeout}
+	end.
+
+-spec await_up(pid()) -> {ok, http | spdy} | {error, atom()}.
+await_up(ServerPid) ->
+	MRef = monitor(process, ServerPid),
+	Res = await_up(ServerPid, 5000, MRef),
+	demonitor(MRef, [flush]),
+	Res.
+
+-spec await_up(pid(), reference() | timeout()) -> {ok, http | spdy} | {error, atom()}.
+await_up(ServerPid, MRef) when is_reference(MRef) ->
+	await_up(ServerPid, 5000, MRef);
+await_up(ServerPid, Timeout) ->
+	MRef = monitor(process, ServerPid),
+	Res = await_up(ServerPid, Timeout, MRef),
+	demonitor(MRef, [flush]),
+	Res.
+
+-spec await_up(pid(), timeout(), reference()) -> {ok, http | spdy} | {error, atom()}.
+await_up(ServerPid, Timeout, MRef) ->
+	receive
+		{gun_up, ServerPid, Protocol} ->
+			{ok, Protocol};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
 			{error, Reason}
 	after Timeout ->
