@@ -29,7 +29,7 @@
 
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked.
 
--type websocket_info() :: {websocket, reference(), binary(), [], []}. %% key, extensions, protocols
+-type websocket_info() :: {websocket, reference(), binary(), [binary()], [], gun:ws_opts()}. %% key, extensions, protocols, options
 
 -record(http_state, {
 	owner :: pid(),
@@ -47,6 +47,8 @@
 check_options(Opts) ->
 	do_check_options(maps:to_list(Opts)).
 
+do_check_options([]) ->
+	ok;
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
 do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
@@ -152,7 +154,7 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 					ok;
 				true ->
 					StreamRef2 = case StreamRef of
-						{websocket, SR, _, _, _} -> SR;
+						{websocket, SR, _, _, _, _} -> SR;
 						_ -> StreamRef
 					end,
 					Owner ! {gun_response, self(), StreamRef2,
@@ -293,7 +295,7 @@ cancel(State, StreamRef) ->
 %% HTTP does not provide any way to figure out what streams are unprocessed.
 down(#http_state{streams=Streams}) ->
 	KilledStreams = [case Ref of
-		{websocket, Ref2, _, _, _} -> Ref2;
+		{websocket, Ref2, _, _, _, _} -> Ref2;
 		_ -> Ref
 	end || {Ref, _} <- Streams],
 	{KilledStreams, []}.

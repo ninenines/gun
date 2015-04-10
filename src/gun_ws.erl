@@ -112,8 +112,9 @@ dispatch(Rest, State=#ws_state{owner=Owner, frag_state=FragState, frag_buffer=So
 
 close(Reason, State) ->
 	case Reason of
-		Normal when Normal =:= stop; Normal =:= timeout ->
-			send({close, 1000, <<>>}, State);
+%% @todo We need to send a close frame from gun:ws_loop on close.
+%		Normal when Normal =:= stop; Normal =:= timeout ->
+%			send({close, 1000, <<>>}, State);
 		{error, badframe} ->
 			send({close, 1002, <<>>}, State);
 		{error, badencoding} ->

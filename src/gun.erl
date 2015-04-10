@@ -90,7 +90,8 @@
 -type spdy_opts() :: map().
 -export_type([spdy_opts/0]).
 
--type ws_opts() :: [{compress, boolean()}].
+-type ws_opts() :: map().
+-export_type([ws_opts/0]).
 
 -record(state, {
 	parent :: pid(),
