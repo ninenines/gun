@@ -18,4 +18,5 @@
 
 init(_, _) ->
 	ct_helper:start([gun]),
+	ct_helper:make_certs_in_ets(),
 	{ok, undefined}.
