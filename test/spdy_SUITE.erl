@@ -61,6 +61,51 @@ goaway_on_shutdown(_) ->
 	wait(),
 	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
 
+%% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
+data_on_non_existing_stream(_) ->
+	doc("DATA frames received for non-existing streams must be rejected with "
+		"an INVALID_STREAM stream error. (spdy-protocol-draft3-1 2.2.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	spdy_server:send(ServerPid, [
+		{data, 1, true, <<"Hello world!">>}
+	]),
+	wait(),
+	[{rst_stream, 1, invalid_stream}] = spdy_server:stop(ServerPid).
+
+%% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
+data_on_non_existing_stream_after_goaway(_) ->
+	%% Note: this is not explicitly written in the specification.
+	%% However the HTTP/2 draft tells us that we can discard frames
+	%% with identifiers higher than the identified last stream,
+	%% which falls under this case. (draft-ietf-httpbis-http2-17 6.8)
+	doc("DATA frames received for non-existing streams after a GOAWAY has been "
+		"sent must be ignored. (spdy-protocol-draft3-1 2.2.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	gun:shutdown(ConnPid),
+	spdy_server:send(ServerPid, [
+		{data, 1, true, <<"Hello world!">>}
+	]),
+	wait(),
+	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+
+%% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
+data_before_syn_reply(_) ->
+	doc("A DATA frame received before a SYN_REPLY must be rejected "
+		"with a PROTOCOL_ERROR stream error.  (spdy-protocol-draft3-1 2.2.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [
+		{data, 1, true, <<"Hello world!">>},
+		{syn_reply, 1, false, <<"200">>, <<"HTTP/1.1">>, []}
+	]),
+	wait(),
+	[_, {rst_stream, 1, protocol_error}] = spdy_server:stop(ServerPid).
 
 streamid_is_odd(_) ->
 	doc("Client-initiated Stream-ID must be an odd number. (spdy-protocol-draft3-1 2.3.2)"),
