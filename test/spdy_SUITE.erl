@@ -17,25 +17,16 @@
 
 -import(ct_helper, [doc/1]).
 
+%% ct.
+
 all() -> [{group, spdy31}].
 
 groups() -> [{spdy31, [parallel], ct_helper:all(?MODULE)}].
 
-goaway_on_close(_) ->
-	doc("Send a GOAWAY when the client closes the connection (spdy-protocol-draft3-1 2.1)"),
-	{ok, ServerPid, Port} = spdy_server:start_link(),
-	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
-	{ok, spdy} = gun:await_up(ConnPid),
-	gun:close(ConnPid),
-	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+%% Helper functions.
 
-goaway_on_shutdown(_) ->
-	doc("Send a GOAWAY when the client closes the connection (spdy-protocol-draft3-1 2.1)"),
-	{ok, ServerPid, Port} = spdy_server:start_link(),
-	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
-	{ok, spdy} = gun:await_up(ConnPid),
-	gun:shutdown(ConnPid),
-	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+wait() ->
+	receive after 500 -> ok end.
 
 do_req_resp(ConnPid, ServerPid, ServerStreamID) ->
 	StreamRef = gun:get(ConnPid, "/"),
@@ -49,6 +40,27 @@ do_req_resp(ConnPid, ServerPid, ServerStreamID) ->
 		exit(timeout)
 	end,
 	ok.
+
+%% SPDY/3.1 test suite.
+
+goaway_on_close(_) ->
+	doc("Send a GOAWAY when the client closes the connection (spdy-protocol-draft3-1 2.1)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	gun:close(ConnPid),
+	wait(),
+	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+
+goaway_on_shutdown(_) ->
+	doc("Send a GOAWAY when the client closes the connection (spdy-protocol-draft3-1 2.1)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	gun:shutdown(ConnPid),
+	wait(),
+	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+
 
 streamid_is_odd(_) ->
 	doc("Client-initiated Stream-ID must be an odd number. (spdy-protocol-draft3-1 2.3.2)"),
@@ -64,9 +76,12 @@ reject_streamid_0(_) ->
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
 	{ok, spdy} = gun:await_up(ConnPid),
-	StreamRef = gun:get(ConnPid, "/"),
-	spdy_server:send(ServerPid, [{syn_reply, 0, true, <<"200">>, <<"HTTP/1.1">>, []}]),
-	receive after 500 -> ok end,
+	_ = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [
+		{syn_stream, 0, 1, true, true, 0, <<"GET">>, <<"https">>, ["localhost:", integer_to_binary(Port)], "/a", <<"HTTP/1.1">>, []},
+		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
+	]),
+	wait(),
 	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
 
 streamid_increases_monotonically(_) ->
@@ -78,3 +93,19 @@ streamid_increases_monotonically(_) ->
 	[do_req_resp(ConnPid, ServerPid, N) || N <- Expected],
 	Rec = spdy_server:stop(ServerPid),
 	Expected = [StreamID || {syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _} <- Rec].
+
+syn_stream_decreasing_streamid(_) ->
+	doc("Reject a decreasing Stream-ID with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.3.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	Host = ["localhost:", integer_to_binary(Port)],
+	spdy_server:send(ServerPid, [
+		{syn_stream, 2, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/a", <<"HTTP/1.1">>, []},
+		{syn_stream, 6, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/b", <<"HTTP/1.1">>, []},
+		{syn_stream, 4, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/c", <<"HTTP/1.1">>, []},
+		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
+	]),
+	wait(),
+	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
