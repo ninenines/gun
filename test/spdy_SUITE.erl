@@ -186,3 +186,20 @@ stream_duplicate_streamid(_) ->
 	]),
 	wait(),
 	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
+
+no_sending_frames_after_flag_fin(_) ->
+	doc("Do not send frames after sending FLAG_FIN. (spdy-protocol-draft3-1 2.3.6)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	%% Send a POST frame with no content header so that Gun sets FLAG_FIN,
+	%% then try sending data. Gun should reject this second call.
+	StreamRef = gun:post(ConnPid, "/", []),
+	gun:data(ConnPid, StreamRef, false, <<"Hello world!">>),
+	receive {gun_error, ConnPid, StreamRef, _} ->
+		ok
+	after 5000 ->
+		exit(timeout)
+	end,
+	wait(),
+	[{syn_stream, _, _, _, _, _, _, _, _, _, _, _}] = spdy_server:stop(ServerPid).

@@ -246,7 +246,7 @@ data(State=#spdy_state{socket=Socket, transport=Transport},
 		StreamRef, IsFin, Data) ->
 	case get_stream_by_ref(StreamRef, State) of
 		#stream{out=false} ->
-			error_stream_closed(State);
+			error_stream_closed(State, StreamRef);
 		S = #stream{} ->
 			IsFin2 = IsFin =:= fin,
 			Transport:send(Socket, cow_spdy:data(S#stream.id, IsFin2, Data)),
@@ -256,7 +256,7 @@ data(State=#spdy_state{socket=Socket, transport=Transport},
 				State
 			end;
 		false ->
-			error_stream_not_found(State)
+			error_stream_not_found(State, StreamRef)
 	end.
 
 cancel(State=#spdy_state{socket=Socket, transport=Transport},
@@ -266,7 +266,7 @@ cancel(State=#spdy_state{socket=Socket, transport=Transport},
 			Transport:send(Socket, cow_spdy:rst_stream(StreamID, cancel)),
 			delete_stream(StreamID, State);
 		false ->
-			error_stream_not_found(State)
+			error_stream_not_found(State, StreamRef)
 	end.
 
 %% @todo Add unprocessed streams when GOAWAY handling is done.
@@ -274,13 +274,13 @@ down(#spdy_state{streams=Streams}) ->
 	KilledStreams = [Ref || #stream{ref=Ref} <- Streams],
 	{KilledStreams, []}.
 
-error_stream_closed(State=#spdy_state{owner=Owner}) ->
-	Owner ! {gun_error, self(), {badstate,
+error_stream_closed(State=#spdy_state{owner=Owner}, StreamRef) ->
+	Owner ! {gun_error, self(), StreamRef, {badstate,
 		"The stream has already been closed."}},
 	State.
 
-error_stream_not_found(State=#spdy_state{owner=Owner}) ->
-	Owner ! {gun_error, self(), {badstate,
+error_stream_not_found(State=#spdy_state{owner=Owner}, StreamRef) ->
+	Owner ! {gun_error, self(), StreamRef, {badstate,
 		"The stream cannot be found."}},
 	State.
 

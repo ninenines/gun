@@ -241,11 +241,11 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 	new_stream(State#http_state{connection=Conn}, StreamRef).
 
 %% We are expecting a new stream.
-data(State=#http_state{out=head}, _, _, _) ->
-	error_stream_closed(State);
+data(State=#http_state{out=head}, StreamRef, _, _) ->
+	error_stream_closed(State, StreamRef);
 %% There are no active streams.
-data(State=#http_state{streams=[]}, _, _, _) ->
-	error_stream_not_found(State);
+data(State=#http_state{streams=[]}, StreamRef, _, _) ->
+	error_stream_not_found(State, StreamRef);
 %% We can only send data on the last created stream.
 data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
@@ -280,7 +280,7 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 					State
 			end;
 		{_, _} ->
-			error_stream_not_found(State)
+			error_stream_not_found(State, StreamRef)
 	end.
 
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
@@ -289,7 +289,7 @@ cancel(State, StreamRef) ->
 		true ->
 			cancel_stream(State, StreamRef);
 		false ->
-			error_stream_not_found(State)
+			error_stream_not_found(State, StreamRef)
 	end.
 
 %% HTTP does not provide any way to figure out what streams are unprocessed.
@@ -300,13 +300,13 @@ down(#http_state{streams=Streams}) ->
 	end || {Ref, _} <- Streams],
 	{KilledStreams, []}.
 
-error_stream_closed(State=#http_state{owner=Owner}) ->
-	Owner ! {gun_error, self(), {badstate,
+error_stream_closed(State=#http_state{owner=Owner}, StreamRef) ->
+	Owner ! {gun_error, self(), StreamRef, {badstate,
 		"The stream has already been closed."}},
 	State.
 
-error_stream_not_found(State=#http_state{owner=Owner}) ->
-	Owner ! {gun_error, self(), {badstate,
+error_stream_not_found(State=#http_state{owner=Owner}, StreamRef) ->
+	Owner ! {gun_error, self(), StreamRef, {badstate,
 		"The stream cannot be found."}},
 	State.
 
