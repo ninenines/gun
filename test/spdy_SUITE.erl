@@ -67,7 +67,7 @@ streamid_is_odd(_) ->
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
 	{ok, spdy} = gun:await_up(ConnPid),
-	[do_req_resp(ConnPid, ServerPid, N * 2 - 1) || N <- lists:seq(1, 5)],
+	[do_req_resp(ConnPid, ServerPid, N) || N <- lists:seq(1, 5, 2)],
 	Rec = spdy_server:stop(ServerPid),
 	true = length(Rec) =:= length([ok || {syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _} <- Rec, StreamID rem 2 =:= 1]).
 
@@ -94,6 +94,23 @@ streamid_increases_monotonically(_) ->
 	Rec = spdy_server:stop(ServerPid),
 	Expected = [StreamID || {syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _} <- Rec].
 
+streamid_does_not_wrap(_) ->
+	doc("Stream-ID must not wrap. Reconnect when all Stream-IDs are exhausted. (spdy-protocol-draft3-1 2.3.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	MaxClientStreamID = 2147483647,
+	sys:replace_state(ConnPid, fun({loop, State}) ->
+		%% Replace the next stream_id value to the maximum allowed value.
+		{loop, setelement(11, State, setelement(9, element(11, State), MaxClientStreamID))}
+	end),
+	do_req_resp(ConnPid, ServerPid, MaxClientStreamID),
+	%% Gun has exhausted all Stream-IDs and should now reconnect.
+	{ok, spdy} = gun:await_up(ConnPid),
+	%% Check that the next request is on a new connection.
+	_ = gun:get(ConnPid, "/"),
+	[{syn_stream, 1, _, _, _, _, _, _, _, _, _, _}] = spdy_server:stop(ServerPid).
+
 syn_stream_decreasing_streamid(_) ->
 	doc("Reject a decreasing Stream-ID with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.3.2)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
@@ -105,6 +122,21 @@ syn_stream_decreasing_streamid(_) ->
 		{syn_stream, 2, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/a", <<"HTTP/1.1">>, []},
 		{syn_stream, 6, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/b", <<"HTTP/1.1">>, []},
 		{syn_stream, 4, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/c", <<"HTTP/1.1">>, []},
+		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
+	]),
+	wait(),
+	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
+
+stream_duplicate_streamid(_) ->
+	doc("Reject duplicate Stream-ID with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.3.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	Host = ["localhost:", integer_to_binary(Port)],
+	spdy_server:send(ServerPid, [
+		{syn_stream, 2, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/a", <<"HTTP/1.1">>, []},
+		{syn_stream, 2, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/b", <<"HTTP/1.1">>, []},
 		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
 	]),
 	wait(),
