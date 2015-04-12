@@ -20,6 +20,7 @@ all() ->
 
 spdy(_) ->
 	{ok, Pid} = gun:open("twitter.com", 443),
+	{ok, spdy} = gun:await_up(Pid),
 	Ref = gun:get(Pid, "/"),
 	receive
 		{gun_response, Pid, Ref, nofin, Status, Headers} ->
