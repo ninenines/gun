@@ -43,7 +43,11 @@ do_req_resp(ConnPid, ServerPid, ServerStreamID) ->
 		{syn_reply, ServerStreamID, false, <<"200">>, <<"HTTP/1.1">>, []},
 		{data, ServerStreamID, true, <<"Hello world!">>}
 	]),
-	_ = gun:await(ConnPid, StreamRef),
+	receive {gun_response, _, StreamRef, _, _, _} ->
+		ok
+	after 5000 ->
+		exit(timeout)
+	end,
 	ok.
 
 streamid_is_odd(_) ->
@@ -54,6 +58,16 @@ streamid_is_odd(_) ->
 	[do_req_resp(ConnPid, ServerPid, N * 2 - 1) || N <- lists:seq(1, 5)],
 	Rec = spdy_server:stop(ServerPid),
 	true = length(Rec) =:= length([ok || {syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _} <- Rec, StreamID rem 2 =:= 1]).
+
+reject_streamid_0(_) ->
+	doc("The Stream-ID 0 is not valid and must be rejected with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.3.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [{syn_reply, 0, true, <<"200">>, <<"HTTP/1.1">>, []}]),
+	receive after 500 -> ok end,
+	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
 
 streamid_increases_monotonically(_) ->
 	doc("The Stream-ID must increase monotonically. (spdy-protocol-draft3-1 2.3.2)"),
