@@ -18,6 +18,7 @@
 %% API.
 -export([start_link/0]).
 -export([stop/1]).
+-export([send/2]).
 
 %% gen_server.
 -export([init/1]).
@@ -34,6 +35,7 @@
 	recording = [] :: recording(),
 	state_name = listen :: listen | record,
 	socket = undefined :: ssl:sslsocket(),
+	zdef = undefined :: zlib:zstream(),
 	zinf = undefined :: zlib:zstream(),
 	buffer = <<>> :: binary()
 }).
@@ -53,6 +55,9 @@ start_link() ->
 stop(Pid) ->
 	gen_server:call(Pid, stop).
 
+send(Pid, Frames) ->
+	gen_server:call(Pid, {send, Frames}).
+
 %% gen_server.
 
 init([Owner]) ->
@@ -62,8 +67,13 @@ init([Owner]) ->
 	{ok, {_, Port}} = ssl:sockname(LSocket),
 	Owner ! {port, self(), Port},
 	self() ! listen,
-	{ok, #state{owner=Owner, socket=LSocket}}.
+	Zdef = cow_spdy:deflate_init(),
+	Zinf = cow_spdy:inflate_init(),
+	{ok, #state{owner=Owner, socket=LSocket, zdef=Zdef, zinf=Zinf}}.
 
+handle_call({send, Frames}, {Owner, _}, State=#state{owner=Owner, socket=Socket, zdef=Zdef}) ->
+	do_send(Frames, Socket, Zdef),
+	{reply, ok, State};
 handle_call(stop, {Owner, _}, State=#state{owner=Owner, recording=Recording}) ->
 	{stop, normal, lists:reverse(Recording), State};
 handle_call(_Request, _From, State) ->
@@ -85,6 +95,23 @@ handle_info({ssl, Socket, Data}, State=#state{state_name=record, socket=Socket, 
 handle_info(_Info, State) ->
 	{noreply, State}.
 
+terminate(_Reason, _State) ->
+	ok.
+
+code_change(_OldVsn, State, _Extra) ->
+	{ok, State}.
+
+%% Internal.
+
+do_send([], _, _) ->
+	ok;
+do_send([{syn_reply, StreamID, IsFin, Status, Version, Headers}|Tail], Socket, Zdef) ->
+	ssl:send(Socket, cow_spdy:syn_reply(Zdef, StreamID, IsFin, Status, Version, Headers)),
+	do_send(Tail, Socket, Zdef);
+do_send([{data, StreamID, IsFin, Data}|Tail], Socket, Zdef) ->
+	ssl:send(Socket, cow_spdy:data(StreamID, IsFin, Data)),
+	do_send(Tail, Socket, Zdef).
+
 handle_data(Data, State=#state{recording=Recording, zinf=Zinf}) ->
 	case cow_spdy:split(Data) of
 		{true, ParsedFrame, Rest} ->
@@ -93,9 +120,3 @@ handle_data(Data, State=#state{recording=Recording, zinf=Zinf}) ->
 		false ->
 			State#state{buffer=Data}
 	end.
-
-terminate(_Reason, _State) ->
-	ok.
-
-code_change(_OldVsn, State, _Extra) ->
-	{ok, State}.

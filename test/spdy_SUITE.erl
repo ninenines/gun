@@ -21,7 +21,7 @@ all() -> [{group, spdy31}].
 
 groups() -> [{spdy31, [parallel], ct_helper:all(?MODULE)}].
 
-goaway_on_close(Config) ->
+goaway_on_close(_) ->
 	doc("Send a GOAWAY when the client closes the connection (spdy-protocol-draft3-1 2.1)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
@@ -29,10 +29,38 @@ goaway_on_close(Config) ->
 	gun:close(ConnPid),
 	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
 
-goaway_on_shutdown(Config) ->
+goaway_on_shutdown(_) ->
 	doc("Send a GOAWAY when the client closes the connection (spdy-protocol-draft3-1 2.1)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
 	{ok, spdy} = gun:await_up(ConnPid),
 	gun:shutdown(ConnPid),
 	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+
+do_req_resp(ConnPid, ServerPid, ServerStreamID) ->
+	StreamRef = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [
+		{syn_reply, ServerStreamID, false, <<"200">>, <<"HTTP/1.1">>, []},
+		{data, ServerStreamID, true, <<"Hello world!">>}
+	]),
+	_ = gun:await(ConnPid, StreamRef),
+	ok.
+
+streamid_is_odd(_) ->
+	doc("Client-initiated Stream-ID must be an odd number. (spdy-protocol-draft3-1 2.3.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	[do_req_resp(ConnPid, ServerPid, N * 2 - 1) || N <- lists:seq(1, 5)],
+	Rec = spdy_server:stop(ServerPid),
+	true = length(Rec) =:= length([ok || {syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _} <- Rec, StreamID rem 2 =:= 1]).
+
+streamid_increases_monotonically(_) ->
+	doc("The Stream-ID must increase monotonically. (spdy-protocol-draft3-1 2.3.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	Expected = [1, 3, 5, 7, 9],
+	[do_req_resp(ConnPid, ServerPid, N) || N <- Expected],
+	Rec = spdy_server:stop(ServerPid),
+	Expected = [StreamID || {syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _} <- Rec].
