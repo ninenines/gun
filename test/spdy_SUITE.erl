@@ -301,3 +301,15 @@ dont_send_rst_stream_on_rst_stream(_) ->
 	%% No RST_STREAM was received; only SYN_STREAM.
 	[_] = spdy_server:stop(ServerPid),
 	not_down().
+
+coalesce_multiple_identical_rst_stream(_) ->
+	doc("Do not send multiple identical RST_STREAM in succession. (spdy-protocol-draft3-1 2.4.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	spdy_server:send(ServerPid, [
+		{data, 1, true, <<"Hello ">>},
+		{data, 1, true, <<"world!">>}
+	]),
+	wait(),
+	[{rst_stream, 1, invalid_stream}] = spdy_server:stop(ServerPid).
