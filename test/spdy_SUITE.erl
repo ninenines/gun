@@ -330,5 +330,4 @@ syn_stream_ignore_unknown_flags(_) ->
 		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
 	]),
 	wait(),
-	[_] = spdy_server:stop(ServerPid),
-	down().
+	[_] = spdy_server:stop(ServerPid).
