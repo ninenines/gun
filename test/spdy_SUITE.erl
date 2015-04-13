@@ -154,6 +154,7 @@ streamid_increases_monotonically(_) ->
 	{ok, spdy} = gun:await_up(ConnPid),
 	Expected = [1, 3, 5, 7, 9],
 	[do_req_resp(ConnPid, ServerPid, N) || N <- Expected],
+	wait(),
 	Rec = spdy_server:stop(ServerPid),
 	Expected = [StreamID || {syn_stream, StreamID, _, _, _, _, _, _, _, _, _, _} <- Rec].
 
