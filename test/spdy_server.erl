@@ -19,6 +19,7 @@
 -export([start_link/0]).
 -export([stop/1]).
 -export([send/2]).
+-export([send_raw/2]).
 
 %% gen_server.
 -export([init/1]).
@@ -58,6 +59,9 @@ stop(Pid) ->
 send(Pid, Frames) ->
 	gen_server:call(Pid, {send, Frames}).
 
+send_raw(Pid, Data) ->
+	gen_server:call(Pid, {send_raw, Data}).
+
 %% gen_server.
 
 init([Owner]) ->
@@ -73,6 +77,9 @@ init([Owner]) ->
 
 handle_call({send, Frames}, {Owner, _}, State=#state{owner=Owner, socket=Socket, zdef=Zdef}) ->
 	do_send(Frames, Socket, Zdef),
+	{reply, ok, State};
+handle_call({send_raw, Data}, {Owner, _}, State=#state{owner=Owner, socket=Socket}) ->
+	ssl:send(Socket, Data),
 	{reply, ok, State};
 handle_call(stop, {Owner, _}, State=#state{owner=Owner, recording=Recording}) ->
 	{stop, normal, lists:reverse(Recording), State};

@@ -91,7 +91,7 @@ reject_data_on_non_existing_stream(_) ->
 	[{rst_stream, 1, invalid_stream}] = spdy_server:stop(ServerPid).
 
 %% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
-reject_data_on_non_existing_stream_after_goaway(_) ->
+ignore_data_on_non_existing_stream_after_goaway(_) ->
 	%% Note: this is not explicitly written in the specification.
 	%% However the HTTP/2 draft tells us that we can discard frames
 	%% with identifiers higher than the identified last stream,
@@ -285,7 +285,7 @@ goaway_last_good_streamid(_) ->
 		{syn_reply, 0, true, <<"200">>, <<"HTTP/1.1">>, []}
 	]),
 	wait(),
-	[{goaway, 6, protocol_error}] = spdy_server:stop(ServerPid),
+	[_, {goaway, 6, protocol_error}] = spdy_server:stop(ServerPid),
 	down().
 
 dont_send_rst_stream_on_rst_stream(_) ->
@@ -313,3 +313,22 @@ coalesce_multiple_identical_rst_stream(_) ->
 	]),
 	wait(),
 	[{rst_stream, 1, invalid_stream}] = spdy_server:stop(ServerPid).
+
+%% @todo I am not sure how to adequately test that we don't send bad flags.
+syn_stream_ignore_unknown_flags(_) ->
+	doc("Unknown flags must be ignored. (spdy-protocol-draft3-1 2.6.1)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	%% Build a SYN_STREAM frame with all flag bits set to 1.
+	<< Before:32/bits, _:8, After/bits >> = iolist_to_binary(cow_spdy:syn_stream(cow_spdy:deflate_init(),
+		2, 1, true, true, 0, <<"GET">>, <<"https">>, ["localhost:", integer_to_binary(Port)], "/a", <<"HTTP/1.1">>, [])),
+	Frame = << Before/bits, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, After/bits >>,
+	spdy_server:send_raw(ServerPid, Frame),
+	spdy_server:send(ServerPid, [
+		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
+	]),
+	wait(),
+	[_] = spdy_server:stop(ServerPid),
+	down().
