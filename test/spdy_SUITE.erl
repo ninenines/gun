@@ -62,7 +62,7 @@ goaway_on_shutdown(_) ->
 	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
 
 %% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
-data_on_non_existing_stream(_) ->
+reject_data_on_non_existing_stream(_) ->
 	doc("DATA frames received for non-existing streams must be rejected with "
 		"an INVALID_STREAM stream error. (spdy-protocol-draft3-1 2.2.2)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
@@ -75,7 +75,7 @@ data_on_non_existing_stream(_) ->
 	[{rst_stream, 1, invalid_stream}] = spdy_server:stop(ServerPid).
 
 %% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
-data_on_non_existing_stream_after_goaway(_) ->
+reject_data_on_non_existing_stream_after_goaway(_) ->
 	%% Note: this is not explicitly written in the specification.
 	%% However the HTTP/2 draft tells us that we can discard frames
 	%% with identifiers higher than the identified last stream,
@@ -93,7 +93,7 @@ data_on_non_existing_stream_after_goaway(_) ->
 	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
 
 %% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
-data_before_syn_reply(_) ->
+reject_data_before_syn_reply(_) ->
 	doc("A DATA frame received before a SYN_REPLY must be rejected "
 		"with a PROTOCOL_ERROR stream error.  (spdy-protocol-draft3-1 2.2.2)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
@@ -156,7 +156,7 @@ streamid_does_not_wrap(_) ->
 	_ = gun:get(ConnPid, "/"),
 	[{syn_stream, 1, _, _, _, _, _, _, _, _, _, _}] = spdy_server:stop(ServerPid).
 
-syn_stream_decreasing_streamid(_) ->
+reject_syn_stream_decreasing_streamid(_) ->
 	doc("Reject a decreasing Stream-ID with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.3.2)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
@@ -172,7 +172,7 @@ syn_stream_decreasing_streamid(_) ->
 	wait(),
 	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
 
-stream_duplicate_streamid(_) ->
+reject_stream_duplicate_streamid(_) ->
 	doc("Reject duplicate Stream-ID with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.3.2)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
@@ -187,7 +187,7 @@ stream_duplicate_streamid(_) ->
 	wait(),
 	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
 
-no_sending_frames_after_flag_fin(_) ->
+dont_send_frames_after_flag_fin(_) ->
 	doc("Do not send frames after sending FLAG_FIN. (spdy-protocol-draft3-1 2.3.6)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
@@ -216,6 +216,7 @@ allow_window_update_after_flag_fin(_) ->
 	wait(),
 	[{syn_stream, _, _, _, _, _, _, _, _, _, _, _}] = spdy_server:stop(ServerPid).
 
+%% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
 reject_data_on_half_closed_stream(_) ->
 	doc("Data frames sent on a half-closed stream must be rejected "
 		"with a STREAM_ALREADY_CLOSED stream error. (spdy-protocol-draft3-1 2.3.6)"),
