@@ -367,3 +367,18 @@ syn_reply_ignore_unknown_flags(_) ->
 	spdy_server:send_raw(ServerPid, Frame),
 	wait(),
 	[_] = spdy_server:stop(ServerPid).
+
+reject_duplicate_syn_reply(_) ->
+	doc("Reception of multiple SYN_REPLY for the same Stream-ID must "
+		"be rejected with a STREAM_IN_USE stream error. (spdy-protocol-draft3-1 2.6.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	Host = ["localhost:", integer_to_binary(Port)],
+	spdy_server:send(ServerPid, [
+		{syn_reply, 1, false, <<"200">>, <<"HTTP/1.1">>, []},
+		{syn_reply, 1, false, <<"200">>, <<"HTTP/1.1">>, []}
+	]),
+	wait(),
+	[_, {rst_stream, 1, stream_in_use}] = spdy_server:stop(ServerPid).
