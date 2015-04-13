@@ -222,7 +222,9 @@ reject_data_on_half_closed_stream(_) ->
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
 	{ok, spdy} = gun:await_up(ConnPid),
-	_ = gun:get(ConnPid, "/"),
+	%% Send a POST frame with a content header so that Gun leaves this
+	%% stream alive after the server sends the reply.
+	_ = gun:post(ConnPid, "/", [{<<"content-length">>, <<"5">>}]),
 	spdy_server:send(ServerPid, [
 		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []},
 		{data, 1, true, <<"Hello world!">>}
