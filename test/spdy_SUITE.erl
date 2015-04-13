@@ -232,3 +232,19 @@ reject_data_on_half_closed_stream(_) ->
 	]),
 	wait(),
 	[_, {rst_stream, 1, stream_already_closed}] = spdy_server:stop(ServerPid).
+
+%% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
+reject_data_on_closed_stream(_) ->
+	doc("Data frames sent on a closed stream must be rejected "
+		"with a PROTOCOL_ERROR stream error. (spdy-protocol-draft3-1 2.3.7)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	%% Send a GET frame so that the stream is closed when the server replies.
+	_ = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [
+		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []},
+		{data, 1, true, <<"Hello world!">>}
+	]),
+	wait(),
+	[_, {rst_stream, 1, protocol_error}] = spdy_server:stop(ServerPid).
