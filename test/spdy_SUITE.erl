@@ -28,6 +28,13 @@ groups() -> [{spdy31, [parallel], ct_helper:all(?MODULE)}].
 wait() ->
 	receive after 500 -> ok end.
 
+down() ->
+	receive {gun_down, ConnPid, _, _, _, _} ->
+		ok
+	after 5000 ->
+		exit(timeout)
+	end.
+
 do_req_resp(ConnPid, ServerPid, ServerStreamID) ->
 	StreamRef = gun:get(ConnPid, "/"),
 	spdy_server:send(ServerPid, [
@@ -50,7 +57,8 @@ goaway_on_close(_) ->
 	{ok, spdy} = gun:await_up(ConnPid),
 	gun:close(ConnPid),
 	wait(),
-	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+	[{goaway, 0, ok}] = spdy_server:stop(ServerPid),
+	down().
 
 goaway_on_shutdown(_) ->
 	doc("Send a GOAWAY when the client closes the connection (spdy-protocol-draft3-1 2.1)"),
@@ -59,7 +67,8 @@ goaway_on_shutdown(_) ->
 	{ok, spdy} = gun:await_up(ConnPid),
 	gun:shutdown(ConnPid),
 	wait(),
-	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+	[{goaway, 0, ok}] = spdy_server:stop(ServerPid),
+	down().
 
 %% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
 reject_data_on_non_existing_stream(_) ->
@@ -90,7 +99,8 @@ reject_data_on_non_existing_stream_after_goaway(_) ->
 		{data, 1, true, <<"Hello world!">>}
 	]),
 	wait(),
-	[{goaway, 0, ok}] = spdy_server:stop(ServerPid).
+	[{goaway, 0, ok}] = spdy_server:stop(ServerPid),
+	down().
 
 %% @todo This probably applies to HEADERS frame or SYN_STREAM from server push.
 reject_data_before_syn_reply(_) ->
@@ -127,7 +137,8 @@ reject_streamid_0(_) ->
 		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
 	]),
 	wait(),
-	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
+	[_, {goaway, 0, protocol_error}] = spdy_server:stop(ServerPid),
+	down().
 
 streamid_increases_monotonically(_) ->
 	doc("The Stream-ID must increase monotonically. (spdy-protocol-draft3-1 2.3.2)"),
@@ -170,7 +181,8 @@ reject_syn_stream_decreasing_streamid(_) ->
 		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
 	]),
 	wait(),
-	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
+	[_, {goaway, 0, protocol_error}] = spdy_server:stop(ServerPid),
+	down().
 
 reject_stream_duplicate_streamid(_) ->
 	doc("Reject duplicate Stream-ID with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.3.2)"),
@@ -185,7 +197,8 @@ reject_stream_duplicate_streamid(_) ->
 		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
 	]),
 	wait(),
-	[_, {goaway, 1, protocol_error}] = spdy_server:stop(ServerPid).
+	[_, {goaway, 2, protocol_error}] = spdy_server:stop(ServerPid),
+	down().
 
 dont_send_frames_after_flag_fin(_) ->
 	doc("Do not send frames after sending FLAG_FIN. (spdy-protocol-draft3-1 2.3.6)"),
