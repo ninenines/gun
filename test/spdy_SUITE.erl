@@ -261,3 +261,22 @@ reject_data_on_closed_stream(_) ->
 	]),
 	wait(),
 	[_, {rst_stream, 1, protocol_error}] = spdy_server:stop(ServerPid).
+
+%% @todo We need to test that we do the right thing when the server sends a GOAWAY.
+goaway_last_good_streamid(_) ->
+	doc("The GOAWAY frame must contain the Stream-ID of the last recently "
+		"received stream from the remote endpoint. (spdy-protocol-draft3-1 2.4.1)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	Host = ["localhost:", integer_to_binary(Port)],
+	spdy_server:send(ServerPid, [
+		{syn_stream, 2, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/a", <<"HTTP/1.1">>, []},
+		{syn_stream, 4, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/c", <<"HTTP/1.1">>, []},
+		{syn_stream, 6, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/b", <<"HTTP/1.1">>, []},
+		{syn_reply, 0, true, <<"200">>, <<"HTTP/1.1">>, []}
+	]),
+	wait(),
+	[{goaway, 6, protocol_error}] = spdy_server:stop(ServerPid),
+	down().
