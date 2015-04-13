@@ -29,10 +29,17 @@ wait() ->
 	receive after 500 -> ok end.
 
 down() ->
-	receive {gun_down, ConnPid, _, _, _, _} ->
+	receive {gun_down, _, _, _, _, _} ->
 		ok
 	after 5000 ->
 		exit(timeout)
+	end.
+
+not_down() ->
+	receive {gun_down, _, _, _, _, _} ->
+		exit(down)
+	after 0 ->
+		ok
 	end.
 
 do_req_resp(ConnPid, ServerPid, ServerStreamID) ->
@@ -280,3 +287,17 @@ goaway_last_good_streamid(_) ->
 	wait(),
 	[{goaway, 6, protocol_error}] = spdy_server:stop(ServerPid),
 	down().
+
+dont_send_rst_stream_on_rst_stream(_) ->
+	doc("An endpoint must not send an RST_STREAM in response to an RST_STREAM. (spdy-protocol-draft3-1 2.4.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [
+		{rst_stream, 1, refused_stream}
+	]),
+	wait(),
+	%% No RST_STREAM was received; only SYN_STREAM.
+	[_] = spdy_server:stop(ServerPid),
+	not_down().
