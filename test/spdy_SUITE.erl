@@ -203,3 +203,29 @@ no_sending_frames_after_flag_fin(_) ->
 	end,
 	wait(),
 	[{syn_stream, _, _, _, _, _, _, _, _, _, _, _}] = spdy_server:stop(ServerPid).
+
+allow_window_update_after_flag_fin(_) ->
+	doc("WINDOW_UPDATE is allowed when the stream is half-closed. (spdy-protocol-draft3-1 2.3.6)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [
+		{window_update, 1, 1024}
+	]),
+	wait(),
+	[{syn_stream, _, _, _, _, _, _, _, _, _, _, _}] = spdy_server:stop(ServerPid).
+
+reject_data_on_half_closed_stream(_) ->
+	doc("Data frames sent on a half-closed stream must be rejected "
+		"with a STREAM_ALREADY_CLOSED stream error. (spdy-protocol-draft3-1 2.3.6)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	spdy_server:send(ServerPid, [
+		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []},
+		{data, 1, true, <<"Hello world!">>}
+	]),
+	wait(),
+	[_, {rst_stream, 1, stream_already_closed}] = spdy_server:stop(ServerPid).

@@ -113,6 +113,9 @@ do_send([{syn_stream, StreamID, AssocToStreamID, IsFin, IsUnidirectional, Priori
 do_send([{syn_reply, StreamID, IsFin, Status, Version, Headers}|Tail], Socket, Zdef) ->
 	ssl:send(Socket, cow_spdy:syn_reply(Zdef, StreamID, IsFin, Status, Version, Headers)),
 	do_send(Tail, Socket, Zdef);
+do_send([{window_update, StreamID, DeltaWindowSize}|Tail], Socket, Zdef) ->
+%% @todo	ssl:send(Socket, cow_spdy:window_update(StreamID, DeltaWindowSize)),
+	do_send(Tail, Socket, Zdef);
 do_send([{data, StreamID, IsFin, Data}|Tail], Socket, Zdef) ->
 	ssl:send(Socket, cow_spdy:data(StreamID, IsFin, Data)),
 	do_send(Tail, Socket, Zdef).
