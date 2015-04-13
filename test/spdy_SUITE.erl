@@ -317,6 +317,9 @@ coalesce_multiple_identical_rst_stream(_) ->
 
 %% @todo I am not sure how to adequately test that we don't send bad flags.
 syn_stream_ignore_unknown_flags(_) ->
+	%% Note: this is not explicitly written in the specification.
+	%% However the HTTP/2 draft tells us to ignore unknown flags.
+	%% (draft-ietf-httpbis-http2-17 4.1)
 	doc("Unknown flags must be ignored. (spdy-protocol-draft3-1 2.6.1)"),
 	{ok, ServerPid, Port} = spdy_server:start_link(),
 	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
@@ -327,8 +330,40 @@ syn_stream_ignore_unknown_flags(_) ->
 		2, 1, true, true, 0, <<"GET">>, <<"https">>, ["localhost:", integer_to_binary(Port)], "/a", <<"HTTP/1.1">>, [])),
 	Frame = << Before/bits, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, After/bits >>,
 	spdy_server:send_raw(ServerPid, Frame),
+	wait(),
+	[_] = spdy_server:stop(ServerPid).
+
+reject_associated_to_streamid_0(_) ->
+	doc("A non-zero Associated-To-Stream-ID sent by the server must "
+		"be rejected with a PROTOCOL_ERROR session error. (spdy-protocol-draft3-1 2.6.1)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	Host = ["localhost:", integer_to_binary(Port)],
 	spdy_server:send(ServerPid, [
+		{syn_stream, 2, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/a", <<"HTTP/1.1">>, []},
+		{syn_stream, 4, 1, true, true, 0, <<"GET">>, <<"https">>, Host, "/c", <<"HTTP/1.1">>, []},
+		{syn_stream, 6, 0, true, true, 0, <<"GET">>, <<"https">>, Host, "/b", <<"HTTP/1.1">>, []},
 		{syn_reply, 1, true, <<"200">>, <<"HTTP/1.1">>, []}
 	]),
+	wait(),
+	[_, {goaway, 4, protocol_error}] = spdy_server:stop(ServerPid),
+	down().
+
+syn_reply_ignore_unknown_flags(_) ->
+	%% Note: this is not explicitly written in the specification.
+	%% However the HTTP/2 draft tells us to ignore unknown flags.
+	%% (draft-ietf-httpbis-http2-17 4.1)
+	doc("Unknown flags must be ignored. (spdy-protocol-draft3-1 2.6.2)"),
+	{ok, ServerPid, Port} = spdy_server:start_link(),
+	{ok, ConnPid} = gun:open("localhost", Port, #{transport=>ssl}),
+	{ok, spdy} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	%% Build a SYN_REPLY frame with all flag bits set to 1.
+	<< Before:32/bits, _:8, After/bits >> = iolist_to_binary(cow_spdy:syn_reply(cow_spdy:deflate_init(),
+		1, true, <<"200">>, <<"HTTP/1.1">>, [])),
+	Frame = << Before/bits, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, 1:1, After/bits >>,
+	spdy_server:send_raw(ServerPid, Frame),
 	wait(),
 	[_] = spdy_server:stop(ServerPid).
