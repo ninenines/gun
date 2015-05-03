@@ -220,7 +220,11 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
 	Out = request_io_from_headers(Headers2),
-	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers3)),
+	Headers4 = case Out of
+		body_chunked -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers3];
+		_ -> Headers3
+	end,
+	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers4)),
 	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef).
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
