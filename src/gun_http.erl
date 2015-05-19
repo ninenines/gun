@@ -42,7 +42,7 @@
 	in = head :: io(),
 	in_state :: {non_neg_integer(), non_neg_integer()},
 	out = head :: io(),
-  method :: binary()
+	method :: binary()
 }).
 
 check_options(Opts) ->
