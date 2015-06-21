@@ -42,6 +42,28 @@ connect_timeout_infinity(_) ->
 		error(timeout)
 	end.
 
+detect_owner_gone(_) ->
+	Self = self(),
+	spawn(fun() ->
+		{ok, ConnPid} = gun:open("google.com", 80),
+		Self ! {conn, ConnPid},
+		gun:await_up(ConnPid)
+	end),
+	Pid = receive
+		{conn, C} ->
+			C
+	after 1000 ->
+		error(timeout)
+	end,
+	Ref = monitor(process, Pid),
+	receive
+		{'DOWN', Ref, process, Pid, {owner_gone, _}} ->
+			ok
+	after 1000 ->
+		true = erlang:is_process_alive(Pid),
+		error(timeout)
+	end.
+
 gone_reason(_) ->
 	doc("The last connection failure must be propagated."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
