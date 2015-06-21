@@ -96,6 +96,7 @@
 -record(state, {
 	parent :: pid(),
 	owner :: pid(),
+	owner_ref :: reference(),
 	host :: inet:hostname(),
 	port :: inet:port_number(),
 	opts :: opts(),
@@ -468,7 +469,8 @@ init(Parent, Owner, Host, Port, Opts) ->
 		tcp -> ranch_tcp;
 		ssl -> ranch_ssl
 	end,
-	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts, transport=Transport}, Retry).
+	OwnerRef = erlang:monitor(process, Owner),
+	connect(#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, port=Port, opts=Opts, transport=Transport}, Retry).
 
 default_transport(443) -> ssl;
 default_transport(_) -> tcp.
@@ -555,11 +557,13 @@ before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
 	KeepaliveRef = erlang:send_after(Keepalive, self(), keepalive),
 	loop(State#state{keepalive_ref=KeepaliveRef}).
 
-loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts,
+loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, port=Port, opts=Opts,
 		socket=Socket, transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
 	Transport:setopts(Socket, [{active, once}]),
 	receive
+	    {'DOWN', OwnerRef, process, Owner, _Info} ->
+			supervisor:terminate_child(gun_sup, self());
 		{OK, Socket, Data} ->
 			case Protocol:handle(Data, ProtoState) of
 				close ->
