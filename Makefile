@@ -8,7 +8,7 @@ CT_OPTS += -pa test -ct_hooks gun_ct_hook [] -boot start_sasl
 PLT_APPS = ssl
 CI_OTP = OTP-17.0.2 OTP-17.1.2 OTP-17.2.2 OTP-17.3.4 OTP-17.4.1 OTP-17.5.3
 
-CT_SUITES = twitter
+CT_SUITES = twitter gun
 
 # Dependencies.
 
