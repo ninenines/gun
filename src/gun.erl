@@ -562,8 +562,9 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, por
 	{OK, Closed, Error} = Transport:messages(),
 	Transport:setopts(Socket, [{active, once}]),
 	receive
-	    {'DOWN', OwnerRef, process, Owner, _Info} ->
-			supervisor:terminate_child(gun_sup, self());
+		{'DOWN', OwnerRef, process, Owner, _Info} ->
+			self() ! {shutdown, Owner},
+			loop(State);
 		{OK, Socket, Data} ->
 			case Protocol:handle(Data, ProtoState) of
 				close ->
