@@ -405,7 +405,7 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
 		|ExtHeaders
 	],
 	IsSecure = Transport:secure(),
-	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
+	Headers3 = Headers ++ case lists:keymember(<<"host">>, 1, Headers) of
 		true -> Headers2;
 		false when Port =:= 80, not IsSecure -> [{<<"host">>, Host}|Headers2];
 		false when Port =:= 443, IsSecure -> [{<<"host">>, Host}|Headers2];
