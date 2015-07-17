@@ -147,7 +147,7 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 		{101, {websocket, _, WsKey, WsExtensions, WsProtocols, WsOpts}} ->
 			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsProtocols, WsOpts);
 		_ ->
-			In = response_io_from_headers(Version, Headers),
+			In = response_io_from_headers(Version, Status, Headers),
 			IsFin = case In of head -> fin; _ -> nofin end,
 			case IsAlive of
 				false ->
@@ -343,7 +343,7 @@ request_io_from_headers(Headers) ->
 			end
 	end.
 
-response_io_from_headers(Version, Headers) ->
+response_io_from_headers(Version, Status, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, <<"0">>} ->
 			head;
@@ -351,6 +351,8 @@ response_io_from_headers(Version, Headers) ->
 			{body, cow_http_hd:parse_content_length(Length)};
 		_ when Version =:= 'HTTP/1.0' ->
 			body_close;
+		_ when Status =:= 204 ->
+			head;
 		_ ->
 			case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
 				false ->
