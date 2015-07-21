@@ -483,7 +483,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		|maps:get(transport_opts, Opts, [])],
 	case Transport:connect(Host, Port, TransportOpts) of
 		{ok, Socket} ->
-			{Protocol, ProtoOptsKey} = case ssl:negotiated_next_protocol(Socket) of
+			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
 				{ok, <<"spdy/3", _/bits>>} -> {gun_spdy, spdy_opts};
 				_ -> {gun_http, http_opts}
 			end,
