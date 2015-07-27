@@ -402,7 +402,7 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
 		{<<"upgrade">>, <<"websocket">>},
 		{<<"sec-websocket-version">>, <<"13">>},
 		{<<"sec-websocket-key">>, Key}
-		|ExtHeaders
+		|Headers ++ ExtHeaders
 	],
 	IsSecure = Transport:secure(),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
