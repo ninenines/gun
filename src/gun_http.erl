@@ -41,7 +41,8 @@
 	streams = [] :: [{reference() | websocket_info(), boolean()}], %% ref + whether stream is alive
 	in = head :: io(),
 	in_state :: {non_neg_integer(), non_neg_integer()},
-	out = head :: io()
+	out = head :: io(),
+	method :: binary()
 }).
 
 check_options(Opts) ->
@@ -140,14 +141,15 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 	end.
 
 handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
-		connection=Conn, streams=[{StreamRef, IsAlive}|_]}) ->
+		connection=Conn, streams=[{StreamRef, IsAlive}|_], method=Method}) ->
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
+
 	case {Status, StreamRef} of
 		{101, {websocket, _, WsKey, WsExtensions, WsProtocols, WsOpts}} ->
 			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsProtocols, WsOpts);
 		_ ->
-			In = response_io_from_headers(Version, Headers),
+			In = response_io_from_headers(Method, Version, Headers),
 			IsFin = case In of head -> fin; _ -> nofin end,
 			case IsAlive of
 				false ->
@@ -225,7 +227,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		_ -> Headers3
 	end,
 	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers4)),
-	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef).
+	new_stream(State#http_state{connection=Conn, out=Out, method=Method}, StreamRef).
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, Method, Host, Port, Path, Headers, Body) ->
@@ -242,7 +244,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{<<"content-length">>, integer_to_binary(iolist_size(Body))}
 		|Headers3]),
 		Body]),
-	new_stream(State#http_state{connection=Conn}, StreamRef).
+	new_stream(State#http_state{connection=Conn, method = Method}, StreamRef).
 
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, StreamRef, _, _) ->
@@ -343,7 +345,10 @@ request_io_from_headers(Headers) ->
 			end
 	end.
 
-response_io_from_headers(Version, Headers) ->
+response_io_from_headers(<<"HEAD">>, _Version, _Headers) ->
+  head;
+
+response_io_from_headers(_Method, Version, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, <<"0">>} ->
 			head;
