@@ -147,7 +147,7 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 		{101, {websocket, _, WsKey, WsExtensions, WsProtocols, WsOpts}} ->
 			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsProtocols, WsOpts);
 		_ ->
-			In = response_io_from_headers(Version, Headers),
+			In = response_io_from_headers(Version, Status, Headers),
 			IsFin = case In of head -> fin; _ -> nofin end,
 			case IsAlive of
 				false ->
@@ -343,7 +343,9 @@ request_io_from_headers(Headers) ->
 			end
 	end.
 
-response_io_from_headers(Version, Headers) ->
+response_io_from_headers(_, 204, _) ->
+	head;
+response_io_from_headers(Version, Status, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, <<"0">>} ->
 			head;
