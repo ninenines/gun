@@ -40,7 +40,7 @@ init_per_group(autobahn, Config) ->
 	end.
 
 end_per_group(_, _) ->
-	oK.
+	ok.
 
 %% Tests.
 
