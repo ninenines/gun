@@ -390,11 +390,12 @@ ws_upgrade(#http_state{version='HTTP/1.0'}, _, _, _, _, _, _) ->
 	error; %% @todo
 ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
 		StreamRef, Host, Port, Path, Headers, WsOpts) ->
-	%% @todo Add option for setting protocol.
-	{ExtHeaders, GunExtensions} = case maps:get(compress, WsOpts, false) of
-		true -> {[{<<"sec-websocket-extensions">>, <<"permessage-deflate; client_max_window_bits; server_max_window_bits=15">>}],
+	{Headers1, GunExtensions} = case maps:get(compress, WsOpts, false) of
+		true -> {[{<<"sec-websocket-extensions">>,
+				<<"permessage-deflate; client_max_window_bits; server_max_window_bits=15">>}
+			|Headers],
 			[<<"permessage-deflate">>]};
-		false -> {[], []}
+		false -> {Headers, []}
 	end,
 	Key = cow_ws:key(),
 	Headers2 = [
@@ -402,7 +403,7 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
 		{<<"upgrade">>, <<"websocket">>},
 		{<<"sec-websocket-version">>, <<"13">>},
 		{<<"sec-websocket-key">>, Key}
-		|ExtHeaders
+		|Headers1
 	],
 	IsSecure = Transport:secure(),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
