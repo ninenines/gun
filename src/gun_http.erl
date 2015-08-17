@@ -345,7 +345,7 @@ request_io_from_headers(Headers) ->
 
 response_io_from_headers(_, 204, _) ->
 	head;
-response_io_from_headers(Version, Status, Headers) ->
+response_io_from_headers(Version, _Status, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, <<"0">>} ->
 			head;
