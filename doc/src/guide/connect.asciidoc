@@ -112,7 +112,7 @@ process exits.
 [source,erlang]
 receive
 	%% Receive Gun messages here...
-	{DOWN', Mref, process, ConnPid, Reason} ->
+	{'DOWN', Mref, process, ConnPid, Reason} ->
 		error_logger:error_msg("Oops!"),
 		exit(Reason);
 end.
