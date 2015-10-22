@@ -58,7 +58,7 @@ receive
 	{gun_response, ConnPid, _, _, Status, Headers} ->
 		exit({ws_upgrade_failed, Status, Headers});
 	{gun_error, ConnPid, StreamRef, Reason} ->
-		exit({ws_upgrade_failed, Reason});
+		exit({ws_upgrade_failed, Reason})
 	%% More clauses here as needed.
 after 1000 ->
 	exit(timeout);
