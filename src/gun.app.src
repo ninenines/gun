@@ -18,7 +18,7 @@
 	{modules, []},
 	{registered, [gun_sup]},
 	{maintainers, ["essen"]},
-	{licenses, ["AS IS"]},
+	{licenses, ["ISC"]},
 	{links, [{"Github", "https://github.com/ninenines/gun"}]},
 	{build_tools, ["make", "rebar"]},
 	{applications, [
