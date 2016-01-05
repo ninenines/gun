@@ -17,6 +17,10 @@
 	{vsn, "1.0.0-pre.1"},
 	{modules, []},
 	{registered, [gun_sup]},
+	{maintainers, ["essen"]},
+	{licenses, ["ISC"]},
+	{links, [{"Github", "https://github.com/ninenines/gun"}]},
+	{build_tools, ["make", "rebar"]},
 	{applications, [
 		kernel,
 		stdlib,
