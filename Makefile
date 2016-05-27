@@ -11,7 +11,7 @@ CI_OTP = OTP-18.0.2
 # Dependencies.
 
 DEPS = cowlib ranch
-dep_cowlib = git https://github.com/ninenines/cowlib 1.3.0
+dep_cowlib = git https://github.com/ninenines/cowlib master
 dep_ranch = git https://github.com/ninenines/ranch 1.1.0
 
 TEST_DEPS = ct_helper

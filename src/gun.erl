@@ -87,6 +87,9 @@
 -type http_opts() :: map().
 -export_type([http_opts/0]).
 
+-type http2_opts() :: map().
+-export_type([http2_opts/0]).
+
 -type spdy_opts() :: map().
 -export_type([spdy_opts/0]).
 
@@ -138,11 +141,18 @@ check_options([{http_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 		Error ->
 			Error
 	end;
+check_options([{http2_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
+	case gun_http2:check_options(ProtoOpts) of
+		ok ->
+			check_options(Opts);
+		Error ->
+			Error
+	end;
 check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 	Len = length(L),
 	case length(lists:usort(L)) of
 		Len when Len > 0 ->
-			Check = lists:usort([(P =:= http) orelse (P =:= spdy) || P <- L]),
+			Check = lists:usort([(P =:= http) orelse (P =:= http2) orelse (P =:= spdy) || P <- L]),
 			case Check of
 				[true] ->
 					check_options(Opts);
@@ -184,6 +194,7 @@ consider_tracing(ServerPid, #{trace := true}) ->
 	dbg:tracer(),
 	dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
+	dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_spdy, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
 	dbg:p(ServerPid, all);
@@ -344,14 +355,14 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 		{error, timeout}
 	end.
 
--spec await_up(pid()) -> {ok, http | spdy} | {error, atom()}.
+-spec await_up(pid()) -> {ok, http | http2 | spdy} | {error, atom()}.
 await_up(ServerPid) ->
 	MRef = monitor(process, ServerPid),
 	Res = await_up(ServerPid, 5000, MRef),
 	demonitor(MRef, [flush]),
 	Res.
 
--spec await_up(pid(), reference() | timeout()) -> {ok, http | spdy} | {error, atom()}.
+-spec await_up(pid(), reference() | timeout()) -> {ok, http | http2 | spdy} | {error, atom()}.
 await_up(ServerPid, MRef) when is_reference(MRef) ->
 	await_up(ServerPid, 5000, MRef);
 await_up(ServerPid, Timeout) ->
@@ -360,7 +371,7 @@ await_up(ServerPid, Timeout) ->
 	demonitor(MRef, [flush]),
 	Res.
 
--spec await_up(pid(), timeout(), reference()) -> {ok, http | spdy} | {error, atom()}.
+-spec await_up(pid(), timeout(), reference()) -> {ok, http | http2 | spdy} | {error, atom()}.
 await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
@@ -424,6 +435,9 @@ cancel(ServerPid, StreamRef) ->
 	_ = ServerPid ! {cancel, self(), StreamRef},
 	ok.
 
+%% @todo Allow upgrading an HTTP/1.1 connection to HTTP/2.
+%% http2_upgrade
+
 %% Websocket.
 
 -spec ws_upgrade(pid(), iodata()) -> reference().
@@ -476,14 +490,17 @@ default_transport(_) -> tcp.
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_ssl}, Retries) ->
 	Protocols = lists:flatten([case P of
 		http -> <<"http/1.1">>;
+		http2 -> <<"h2">>;
 		spdy -> [<<"spdy/3.1">>, <<"spdy/3">>]
-	end || P <- maps:get(protocols, Opts, [spdy, http])]),
+	end || P <- maps:get(protocols, Opts, [http2, spdy, http])]),
 	TransportOpts = [binary, {active, false},
+		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 		|maps:get(transport_opts, Opts, [])],
 	case Transport:connect(Host, Port, TransportOpts) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
+				{ok, <<"h2">>} -> {gun_http2, http2_opts};
 				{ok, <<"spdy/3", _/bits>>} -> {gun_spdy, spdy_opts};
 				_ -> {gun_http, http_opts}
 			end,
@@ -498,6 +515,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retr
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case maps:get(protocols, Opts, [http]) of
 				[http] -> {gun_http, http_opts};
+				[http2] -> {gun_http2, http2_opts};
 				[spdy] -> {gun_spdy, spdy_opts}
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
@@ -546,8 +564,10 @@ retry_loop(State=#state{parent=Parent, opts=Opts}, Retries) ->
 	end.
 
 before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
+	%% @todo Might not be worth checking every time?
 	ProtoOptsKey = case Protocol of
 		gun_http -> http_opts;
+		gun_http2 -> http2_opts;
 		gun_spdy -> spdy_opts
 	end,
 	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
@@ -567,7 +587,7 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts,
 					down(State, normal);
 				{upgrade, Protocol2, ProtoState2} ->
 					ws_loop(State#state{protocol=Protocol2, protocol_state=ProtoState2});
-			ProtoState2 ->
+				ProtoState2 ->
 					loop(State#state{protocol_state=ProtoState2})
 			end;
 		{Closed, Socket} ->
@@ -602,11 +622,13 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts,
 		{cancel, Owner, StreamRef} ->
 			ProtoState2 = Protocol:cancel(ProtoState, StreamRef),
 			loop(State#state{protocol_state=ProtoState2});
-		{ws_upgrade, Owner, StreamRef, Path, Headers} when Protocol =/= gun_spdy ->
+		%% @todo Maybe make an interface in the protocol module instead of checking on protocol name.
+		%% An interface would also make sure that HTTP/1.0 can't upgrade.
+		{ws_upgrade, Owner, StreamRef, Path, Headers} when Protocol =:= gun_http ->
 			WsOpts = maps:get(ws_opts, Opts, #{}),
 			ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, WsOpts),
 			loop(State#state{protocol_state=ProtoState2});
-		{ws_upgrade, Owner, StreamRef, Path, Headers, WsOpts} when Protocol =/= gun_spdy ->
+		{ws_upgrade, Owner, StreamRef, Path, Headers, WsOpts} when Protocol =:= gun_http ->
 			ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, WsOpts),
 			loop(State#state{protocol_state=ProtoState2});
 			%% @todo can fail if http/1.0

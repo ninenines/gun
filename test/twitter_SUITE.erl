@@ -16,11 +16,24 @@
 -compile(export_all).
 
 all() ->
-	[spdy].
+	[http, http2, spdy].
+
+http(_) ->
+	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [http]}),
+	{ok, http} = gun:await_up(Pid),
+	common(Pid).
+
+http2(_) ->
+	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(Pid),
+	common(Pid).
 
 spdy(_) ->
-	{ok, Pid} = gun:open("twitter.com", 443),
+	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [spdy]}),
 	{ok, spdy} = gun:await_up(Pid),
+	common(Pid).
+
+common(Pid) ->
 	Ref = gun:get(Pid, "/"),
 	receive
 		{gun_response, Pid, Ref, nofin, Status, Headers} ->
