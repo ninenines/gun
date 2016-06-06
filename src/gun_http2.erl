@@ -141,8 +141,8 @@ frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 %	%% @todo Handle priority.
 %	State;
 %% @todo RST_STREAM frame.
-%frame(State, {rst_stream, StreamID, Reason}) ->
-%	stream_reset(State, StreamID, {stream_error, Reason, 'Stream reset requested by client.'});
+frame({rst_stream, StreamID, Reason}, State) ->
+	stream_reset(State, StreamID, {stream_error, Reason, 'Stream reset by server.'});
 %% SETTINGS frame.
 frame({settings, _Settings}, State=#http2_state{socket=Socket, transport=Transport}) ->
 	%% @todo Apply SETTINGS.
