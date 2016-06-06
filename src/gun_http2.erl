@@ -250,7 +250,7 @@ data(State=#http2_state{socket=Socket, transport=Transport},
 		#stream{local=fin} ->
 			error_stream_closed(State, StreamRef);
 		S = #stream{} ->
-			Transport:send(Socket, cow_spdy:data(S#stream.id, IsFin, Data)),
+			Transport:send(Socket, cow_http2:data(S#stream.id, IsFin, Data)),
 			local_fin(S, State, IsFin);
 		false ->
 			error_stream_not_found(State, StreamRef)
