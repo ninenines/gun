@@ -197,7 +197,7 @@ close_streams(Owner, [#stream{ref=StreamRef}|Tail]) ->
 	close_streams(Owner, Tail).
 
 keepalive(State=#http2_state{socket=Socket, transport=Transport}) ->
-	Transport:send(Socket, cow_http2:ping(<< 0:64 >>)),
+	Transport:send(Socket, cow_http2:ping(0)),
 	State.
 
 %% @todo Shouldn't always be HTTPS scheme. We need to properly keep track of it.
