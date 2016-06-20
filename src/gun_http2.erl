@@ -200,10 +200,9 @@ keepalive(State=#http2_state{socket=Socket, transport=Transport}) ->
 	Transport:send(Socket, cow_http2:ping(0)),
 	State.
 
-%% @todo Shouldn't always be HTTPS scheme. We need to properly keep track of it.
 request(State=#http2_state{socket=Socket, transport=Transport, encode_state=EncodeState0,
 		stream_id=StreamID}, StreamRef, Method, Host, Port, Path, Headers) ->
-	{HeaderBlock, EncodeState} = prepare_headers(EncodeState0, Method, Host, Port, Path, Headers),
+	{HeaderBlock, EncodeState} = prepare_headers(EncodeState0, Transport, Method, Host, Port, Path, Headers),
 	IsFin = case (false =/= lists:keyfind(<<"content-type">>, 1, Headers))
 			orelse (false =/= lists:keyfind(<<"content-length">>, 1, Headers)) of
 		true -> nofin;
@@ -214,12 +213,11 @@ request(State=#http2_state{socket=Socket, transport=Transport, encode_state=Enco
 		State#http2_state{stream_id=StreamID + 2, encode_state=EncodeState}).
 
 %% @todo Handle Body > 16MB. (split it out into many frames)
-%% @todo Shouldn't always be HTTPS scheme. We need to properly keep track of it.
 request(State=#http2_state{socket=Socket, transport=Transport, encode_state=EncodeState0,
 		stream_id=StreamID}, StreamRef, Method, Host, Port, Path, Headers0, Body) ->
 	Headers = lists:keystore(<<"content-length">>, 1, Headers0,
 		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
-	{HeaderBlock, EncodeState} = prepare_headers(EncodeState0, Method, Host, Port, Path, Headers),
+	{HeaderBlock, EncodeState} = prepare_headers(EncodeState0, Transport, Method, Host, Port, Path, Headers),
 	Transport:send(Socket, [
 		cow_http2:headers(StreamID, nofin, HeaderBlock),
 		cow_http2:data(StreamID, fin, Body)
@@ -227,7 +225,7 @@ request(State=#http2_state{socket=Socket, transport=Transport, encode_state=Enco
 	new_stream(StreamID, StreamRef, nofin, fin,
 		State#http2_state{stream_id=StreamID + 2, encode_state=EncodeState}).
 
-prepare_headers(EncodeState, Method, Host, Port, Path, Headers0) ->
+prepare_headers(EncodeState, Transport, Method, Host, Port, Path, Headers0) ->
 	%% @todo We also must remove any header found in the connection header.
 	Headers1 =
 		lists:keydelete(<<"host">>, 1,
@@ -238,7 +236,10 @@ prepare_headers(EncodeState, Method, Host, Port, Path, Headers0) ->
 		lists:keydelete(<<"upgrade">>, 1, Headers0)))))),
 	Headers = [
 		{<<":method">>, Method},
-		{<<":scheme">>, <<"https">>},
+		{<<":scheme">>, case Transport:secure() of
+			true -> <<"https">>;
+			false -> <<"http">>
+		end},
 		{<<":authority">>, [Host, $:, integer_to_binary(Port)]},
 		{<<":path">>, Path}
 	|Headers1],
