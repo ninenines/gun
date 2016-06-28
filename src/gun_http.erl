@@ -38,7 +38,8 @@
 	version = 'HTTP/1.1' :: cow_http:version(),
 	connection = keepalive :: keepalive | close,
 	buffer = <<>> :: binary(),
-	streams = [] :: [{reference() | websocket_info(), boolean()}], %% ref + whether stream is alive
+	%% Stream reference, request method and whether the stream is alive.
+	streams = [] :: [{reference() | websocket_info(), binary(), boolean()}],
 	in = head :: io(),
 	in_state :: {non_neg_integer(), non_neg_integer()},
 	out = head :: io()
@@ -140,14 +141,14 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 	end.
 
 handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
-		connection=Conn, streams=[{StreamRef, IsAlive}|_]}) ->
+		connection=Conn, streams=[{StreamRef, Method, IsAlive}|_]}) ->
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
 	case {Status, StreamRef} of
 		{101, {websocket, _, WsKey, WsExtensions, WsProtocols, WsOpts}} ->
 			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsProtocols, WsOpts);
 		_ ->
-			In = response_io_from_headers(Version, Status, Headers),
+			In = response_io_from_headers(Method, Version, Status, Headers),
 			IsFin = case In of head -> fin; _ -> nofin end,
 			case IsAlive of
 				false ->
@@ -181,8 +182,9 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 
 send_data_if_alive(<<>>, _, nofin) ->
 	ok;
+%% @todo What if we receive data when the HEAD method was used?
 send_data_if_alive(Data, #http_state{owner=Owner,
-		streams=[{StreamRef, true}|_]}, IsFin) ->
+		streams=[{StreamRef, _, true}|_]}, IsFin) ->
 	Owner ! {gun_data, self(), StreamRef, IsFin, Data},
 	ok;
 send_data_if_alive(_, _, _) ->
@@ -196,9 +198,9 @@ close(#http_state{owner=Owner, streams=Streams}) ->
 
 close_streams(_, []) ->
 	ok;
-close_streams(Owner, [{_, false}|Tail]) ->
+close_streams(Owner, [{_, _, false}|Tail]) ->
 	close_streams(Owner, Tail);
-close_streams(Owner, [{StreamRef, _}|Tail]) ->
+close_streams(Owner, [{StreamRef, _, _}|Tail]) ->
 	Owner ! {gun_error, self(), StreamRef, {closed,
 		"The connection was lost."}},
 	close_streams(Owner, Tail).
@@ -225,7 +227,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		_ -> Headers3
 	end,
 	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers4)),
-	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef).
+	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, Method).
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, Method, Host, Port, Path, Headers, Body) ->
@@ -242,7 +244,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{<<"content-length">>, integer_to_binary(iolist_size(Body))}
 		|Headers3]),
 		Body]),
-	new_stream(State#http_state{connection=Conn}, StreamRef).
+	new_stream(State#http_state{connection=Conn}, StreamRef, Method).
 
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, StreamRef, _, _) ->
@@ -254,7 +256,7 @@ data(State=#http_state{streams=[]}, StreamRef, _, _) ->
 data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
 	case lists:last(Streams) of
-		{StreamRef, true} ->
+		{StreamRef, _, true} ->
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
 					case Data of
@@ -283,7 +285,7 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 					Transport:send(Socket, Data),
 					State
 			end;
-		{_, _} ->
+		_ ->
 			error_stream_not_found(State, StreamRef)
 	end.
 
@@ -301,7 +303,7 @@ down(#http_state{streams=Streams}) ->
 	KilledStreams = [case Ref of
 		{websocket, Ref2, _, _, _, _} -> Ref2;
 		_ -> Ref
-	end || {Ref, _} <- Streams],
+	end || {Ref, _, _} <- Streams],
 	{KilledStreams, []}.
 
 error_stream_closed(State=#http_state{owner=Owner}, StreamRef) ->
@@ -343,9 +345,11 @@ request_io_from_headers(Headers) ->
 			end
 	end.
 
-response_io_from_headers(_, 204, _) ->
+response_io_from_headers(<<"HEAD">>, _, _, _) ->
 	head;
-response_io_from_headers(Version, _Status, Headers) ->
+response_io_from_headers(_, _, 204, _) ->
+	head;
+response_io_from_headers(_, Version, _Status, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, <<"0">>} ->
 			head;
@@ -367,8 +371,8 @@ response_io_from_headers(Version, _Status, Headers) ->
 
 %% Streams.
 
-new_stream(State=#http_state{streams=Streams}, StreamRef) ->
-	State#http_state{streams=Streams ++ [{StreamRef, true}]}.
+new_stream(State=#http_state{streams=Streams}, StreamRef, Method) ->
+	State#http_state{streams=Streams ++ [{StreamRef, iolist_to_binary(Method), true}]}.
 
 is_stream(#http_state{streams=Streams}, StreamRef) ->
 	lists:keymember(StreamRef, 1, Streams).
@@ -379,7 +383,7 @@ cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 			{Ref, false};
 		_ ->
 			Tuple
-	end || Tuple = {Ref, _} <- Streams],
+	end || Tuple = {Ref, _, _} <- Streams],
 	State#http_state{streams=Streams2}.
 
 end_stream(State=#http_state{streams=[_|Tail]}) ->
@@ -416,7 +420,7 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
 	end,
 	Transport:send(Socket, cow_http:request(<<"GET">>, Path, 'HTTP/1.1', Headers3)),
 	new_stream(State#http_state{connection=keepalive, out=head},
-		{websocket, StreamRef, Key, GunExtensions, [], WsOpts}).
+		{websocket, StreamRef, Key, GunExtensions, [], WsOpts}, <<"GET">>).
 
 ws_handshake(Buffer, State, Headers, Key, GunExtensions, GunProtocols, Opts) ->
 	%% @todo check upgrade, connection
