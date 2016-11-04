@@ -16,7 +16,7 @@
 
 %% Connection.
 -export([open/2]).
--export([open/3]).
+-export([open/4]).
 -export([close/1]).
 -export([shutdown/1]).
 
@@ -68,8 +68,8 @@
 -export([dbg_send_raw/2]).
 
 %% Internals.
--export([start_link/4]).
--export([init/5]).
+-export([start_link/5]).
+-export([init/6]).
 -export([system_continue/3]).
 -export([system_terminate/4]).
 -export([system_code_change/4]).
@@ -106,7 +106,8 @@
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	protocol :: module(),
-	protocol_state :: any()
+	protocol_state :: any(),
+    timeout :: timeout()
 }).
 
 %% Connection.
@@ -114,14 +115,14 @@
 -spec open(inet:hostname(), inet:port_number())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port) ->
-	open(Host, Port, #{}).
+	open(Host, Port, #{}, 1000).
 
--spec open(inet:hostname(), inet:port_number(), opts())
+-spec open(inet:hostname(), inet:port_number(), opts(), timeout())
 	-> {ok, pid()} | {error, any()}.
-open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
+open(Host, Port, Opts, Timeout) when is_list(Host); is_atom(Host) ->
 	case check_options(maps:to_list(Opts)) of
 		ok ->
-			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
+			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts, Timeout]) of
 				OK = {ok, ServerPid} ->
 					consider_tracing(ServerPid, Opts),
 					OK;
@@ -471,23 +472,24 @@ dbg_send_raw(ServerPid, Data) ->
 
 %% Internals.
 
-start_link(Owner, Host, Port, Opts) ->
+start_link(Owner, Host, Port, Opts, Timeout) ->
 	proc_lib:start_link(?MODULE, init,
-		[self(), Owner, Host, Port, Opts]).
+		[self(), Owner, Host, Port, Opts, Timeout], Timeout).
 
-init(Parent, Owner, Host, Port, Opts) ->
+init(Parent, Owner, Host, Port, Opts, Timeout) ->
 	ok = proc_lib:init_ack(Parent, {ok, self()}),
 	Retry = maps:get(retry, Opts, 5),
 	Transport = case maps:get(transport, Opts, default_transport(Port)) of
 		tcp -> ranch_tcp;
 		ssl -> ranch_ssl
 	end,
-	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts, transport=Transport}, Retry).
+	connect(#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts, transport=Transport,
+        timeout=Timeout}, Retry).
 
 default_transport(443) -> ssl;
 default_transport(_) -> tcp.
 
-connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_ssl}, Retries) ->
+connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_ssl, timeout=Timeout}, Retries) ->
 	Protocols = lists:flatten([case P of
 		http -> <<"http/1.1">>;
 		http2 -> <<"h2">>;
@@ -497,7 +499,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 		|maps:get(transport_opts, Opts, [])],
-	case Transport:connect(Host, Port, TransportOpts) of
+	case Transport:connect(Host, Port, TransportOpts, Timeout) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
 				{ok, <<"h2">>} -> {gun_http2, http2_opts};
@@ -508,10 +510,10 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		{error, _} ->
 			retry(State, Retries - 1)
 	end;
-connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
+connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport, timeout=Timeout}, Retries) ->
 	TransportOpts = [binary, {active, false}
 		|maps:get(transport_opts, Opts, [])],
-	case Transport:connect(Host, Port, TransportOpts) of
+	case Transport:connect(Host, Port, TransportOpts, Timeout) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case maps:get(protocols, Opts, [http]) of
 				[http] -> {gun_http, http_opts};
