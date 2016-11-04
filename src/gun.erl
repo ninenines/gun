@@ -117,6 +117,11 @@
 open(Host, Port) ->
 	open(Host, Port, #{}, 1000).
 
+-spec open(inet:hostname(), inet:port_number(), opts())
+	-> {ok, pid()} | {error, any()}.
+open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
+    open(Host, Port, Opts, 1000).
+
 -spec open(inet:hostname(), inet:port_number(), opts(), timeout())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port, Opts, Timeout) when is_list(Host); is_atom(Host) ->
