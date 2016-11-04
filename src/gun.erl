@@ -135,6 +135,8 @@ open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
 
 check_options([]) ->
 	ok;
+check_options([{connect_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
+	check_options(Opts);
 check_options([{http_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_http:check_options(ProtoOpts) of
 		ok ->
@@ -498,7 +500,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 		|maps:get(transport_opts, Opts, [])],
-	case Transport:connect(Host, Port, TransportOpts) of
+	case Transport:connect(Host, Port, TransportOpts, maps:get(connect_timeout, Opts, infinity)) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
 				{ok, <<"h2">>} -> {gun_http2, http2_opts};
@@ -512,7 +514,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
 	TransportOpts = [binary, {active, false}
 		|maps:get(transport_opts, Opts, [])],
-	case Transport:connect(Host, Port, TransportOpts) of
+	case Transport:connect(Host, Port, TransportOpts, maps:get(connect_timeout, Opts, infinity)) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case maps:get(protocols, Opts, [http]) of
 				[http] -> {gun_http, http_opts};

@@ -18,6 +18,8 @@ Configuration for the connection.
 
 The following keys are defined:
 
+connect_timeout => timeout()::
+	Connection timeout. Defaults to `infinity`.
 http_opts => http_opts()::
 	Options specific to the HTTP protocol. See below.
 protocols => [http | spdy]::
