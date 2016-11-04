@@ -16,6 +16,7 @@
 
 %% Connection.
 -export([open/2]).
+-export([open/3]).
 -export([open/4]).
 -export([close/1]).
 -export([shutdown/1]).
