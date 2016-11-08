@@ -166,7 +166,7 @@ check_options([{conn_timeout, T}|Opts]) when is_integer(T), T > 0 ->
     check_options(Opts);
 check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	check_options(Opts);
-check_options([{retry_timeout, T}|Opts]) when is_integer(T), T > 0 ->
+check_options([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
 	check_options(Opts);
 check_options([{spdy_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_spdy:check_options(ProtoOpts) of
@@ -475,7 +475,7 @@ dbg_send_raw(ServerPid, Data) ->
 
 start_link(Owner, Host, Port, Opts) ->
 	proc_lib:start_link(?MODULE, init,
-        [self(), Owner, Host, Port, Opts], maps:get(conn_timeout, Opts, 1000)).
+        [self(), Owner, Host, Port, Opts]).
 
 init(Parent, Owner, Host, Port, Opts) ->
 	ok = proc_lib:init_ack(Parent, {ok, self()}),
@@ -499,7 +499,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 		|maps:get(transport_opts, Opts, [])],
-    case Transport:connect(Host, Port, TransportOpts, maps:get(conn_timeout, Opts, 1000)) of
+    case Transport:connect(Host, Port, TransportOpts, maps:get(conn_timeout, Opts, 5000)) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
 				{ok, <<"h2">>} -> {gun_http2, http2_opts};
@@ -513,7 +513,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
 	TransportOpts = [binary, {active, false}
 		|maps:get(transport_opts, Opts, [])],
-    case Transport:connect(Host, Port, TransportOpts, maps:get(conn_timeout, Opts, 1000)) of
+    case Transport:connect(Host, Port, TransportOpts, maps:get(conn_timeout, Opts, 5000)) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case maps:get(protocols, Opts, [http]) of
 				[http] -> {gun_http, http_opts};
