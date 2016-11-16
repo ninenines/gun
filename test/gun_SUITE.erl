@@ -75,6 +75,32 @@ gone_reason(_) ->
 		error(timeout)
 	end.
 
+reply_to(_) ->
+	doc("The reply_to option allows using a separate process for requests."),
+	do_reply_to(http),
+	do_reply_to(http2).
+
+do_reply_to(Protocol) ->
+	Self = self(),
+	{ok, Pid} = gun:open("google.com", 443, #{protocols => [Protocol]}),
+	{ok, Protocol} = gun:await_up(Pid),
+	ReplyTo = spawn(fun() ->
+		receive Ref ->
+			Response = gun:await(Pid, Ref),
+			Self ! Response
+		after 1000 ->
+			error(timeout)
+		end
+	end),
+	Ref = gun:get(Pid, "/", [{<<"host">>, <<"google.com">>}], #{reply_to => ReplyTo}),
+	ReplyTo ! Ref,
+	receive
+		{response, _, _, _} ->
+			ok
+	after 1000 ->
+		error(timeout)
+	end.
+
 retry_0(_) ->
 	doc("Ensure Gun gives up immediately with retry=0."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0, retry_timeout => 500}),

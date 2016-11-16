@@ -45,7 +45,7 @@ handling of responses will be explained further on.
 
 ==== GET and HEAD
 
-Use `gun:get/{2,3}` to request a resource.
+Use `gun:get/{2,3,4}` to request a resource.
 
 .GET "/organizations/ninenines"
 
@@ -64,7 +64,7 @@ Note that the list of headers has the field name as a binary.
 The field value is iodata, which is either a binary or an
 iolist.
 
-Use `gun:head/{2,3}` if you don't need the response body.
+Use `gun:head/{2,3,4}` if you don't need the response body.
 
 .HEAD "/organizations/ninenines"
 
@@ -101,7 +101,7 @@ desirable. The request body of a PATCH method may be a partial
 representation or a list of instructions on how to update the
 resource.
 
-The `gun:post/4`, `gun:put/4` and `gun:patch/4` functions
+The `gun:post/{4,5}`, `gun:put/{4,5}` and `gun:patch/{4,5}` functions
 take a body as their fourth argument. These functions do
 not require any body-specific header to be set, although
 it is always recommended to set the content-type header.
@@ -171,7 +171,7 @@ do_sendfile(ConnPid, StreamRef, IoDevice) ->
 
 ==== DELETE
 
-Use `gun:delete/{2,3}` to delete a resource.
+Use `gun:delete/{2,3,4}` to delete a resource.
 
 .DELETE "/organizations/ninenines"
 
@@ -211,7 +211,7 @@ StreamRef = gun:options(ConnPid, "*").
 
 ==== Requests with an arbitrary method
 
-The `gun:request/{4,5}` function can be used to send requests
+The `gun:request/{4,5,6}` function can be used to send requests
 with a configurable method name. It is mostly useful when you
 need a method that Gun does not understand natively.
 
@@ -360,3 +360,14 @@ gun:flush(ConnPid).
 
 [source,erlang]
 gun:flush(StreamRef).
+
+=== Redirecting responses to a different process
+
+Gun allows you to specify which process will handle responses
+to a request via the `reply_to` request option.
+
+.GET "/organizations/ninenines" to a different process
+
+[source,erlang]
+StreamRef = gun:get(ConnPid, "/organizations/ninenines", [],
+	#{reply_to => Pid}).

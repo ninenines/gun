@@ -23,20 +23,28 @@
 %% Requests.
 -export([delete/2]).
 -export([delete/3]).
+-export([delete/4]).
 -export([get/2]).
 -export([get/3]).
+-export([get/4]).
 -export([head/2]).
 -export([head/3]).
+-export([head/4]).
 -export([options/2]).
 -export([options/3]).
+-export([options/4]).
 -export([patch/3]).
 -export([patch/4]).
+-export([patch/5]).
 -export([post/3]).
 -export([post/4]).
+-export([post/5]).
 -export([put/3]).
 -export([put/4]).
+-export([put/5]).
 -export([request/4]).
 -export([request/5]).
+-export([request/6]).
 
 %% Streaming data.
 -export([data/4]).
@@ -83,6 +91,9 @@
 
 -type opts() :: map().
 -export_type([opts/0]).
+
+-type req_opts() :: map().
+-export_type([req_opts/0]).
 
 -type http_opts() :: map().
 -export_type([http_opts/0]).
@@ -226,6 +237,10 @@ delete(ServerPid, Path) ->
 delete(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"DELETE">>, Path, Headers).
 
+-spec delete(pid(), iodata(), headers(), req_opts()) -> reference().
+delete(ServerPid, Path, Headers, ReqOpts) ->
+	request(ServerPid, <<"DELETE">>, Path, Headers, <<>>, ReqOpts).
+
 -spec get(pid(), iodata()) -> reference().
 get(ServerPid, Path) ->
 	request(ServerPid, <<"GET">>, Path, []).
@@ -233,6 +248,10 @@ get(ServerPid, Path) ->
 -spec get(pid(), iodata(), headers()) -> reference().
 get(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"GET">>, Path, Headers).
+
+-spec get(pid(), iodata(), headers(), req_opts()) -> reference().
+get(ServerPid, Path, Headers, ReqOpts) ->
+	request(ServerPid, <<"GET">>, Path, Headers, <<>>, ReqOpts).
 
 -spec head(pid(), iodata()) -> reference().
 head(ServerPid, Path) ->
@@ -242,6 +261,10 @@ head(ServerPid, Path) ->
 head(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"HEAD">>, Path, Headers).
 
+-spec head(pid(), iodata(), headers(), req_opts()) -> reference().
+head(ServerPid, Path, Headers, ReqOpts) ->
+	request(ServerPid, <<"HEAD">>, Path, Headers, <<>>, ReqOpts).
+
 -spec options(pid(), iodata()) -> reference().
 options(ServerPid, Path) ->
 	request(ServerPid, <<"OPTIONS">>, Path, []).
@@ -249,6 +272,10 @@ options(ServerPid, Path) ->
 -spec options(pid(), iodata(), headers()) -> reference().
 options(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"OPTIONS">>, Path, Headers).
+
+-spec options(pid(), iodata(), headers(), req_opts()) -> reference().
+options(ServerPid, Path, Headers, ReqOpts) ->
+	request(ServerPid, <<"OPTIONS">>, Path, Headers, <<>>, ReqOpts).
 
 -spec patch(pid(), iodata(), headers()) -> reference().
 patch(ServerPid, Path, Headers) ->
@@ -258,6 +285,10 @@ patch(ServerPid, Path, Headers) ->
 patch(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PATCH">>, Path, Headers, Body).
 
+-spec patch(pid(), iodata(), headers(), iodata(), req_opts()) -> reference().
+patch(ServerPid, Path, Headers, Body, ReqOpts) ->
+	request(ServerPid, <<"PATCH">>, Path, Headers, Body, ReqOpts).
+
 -spec post(pid(), iodata(), headers()) -> reference().
 post(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"POST">>, Path, Headers).
@@ -265,6 +296,10 @@ post(ServerPid, Path, Headers) ->
 -spec post(pid(), iodata(), headers(), iodata()) -> reference().
 post(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"POST">>, Path, Headers, Body).
+
+-spec post(pid(), iodata(), headers(), iodata(), req_opts()) -> reference().
+post(ServerPid, Path, Headers, Body, ReqOpts) ->
+	request(ServerPid, <<"POST">>, Path, Headers, Body, ReqOpts).
 
 -spec put(pid(), iodata(), headers()) -> reference().
 put(ServerPid, Path, Headers) ->
@@ -274,16 +309,23 @@ put(ServerPid, Path, Headers) ->
 put(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PUT">>, Path, Headers, Body).
 
+-spec put(pid(), iodata(), headers(), iodata(), req_opts()) -> reference().
+put(ServerPid, Path, Headers, Body, ReqOpts) ->
+	request(ServerPid, <<"PUT">>, Path, Headers, Body, ReqOpts).
+
 -spec request(pid(), iodata(), iodata(), headers()) -> reference().
 request(ServerPid, Method, Path, Headers) ->
-	StreamRef = make_ref(),
-	_ = ServerPid ! {request, self(), StreamRef, Method, Path, Headers},
-	StreamRef.
+	request(ServerPid, Method, Path, Headers, <<>>, #{}).
 
 -spec request(pid(), iodata(), iodata(), headers(), iodata()) -> reference().
 request(ServerPid, Method, Path, Headers, Body) ->
+	request(ServerPid, Method, Path, Headers, Body, #{}).
+
+-spec request(pid(), iodata(), iodata(), headers(), iodata(), req_opts()) -> reference().
+request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
 	StreamRef = make_ref(),
-	_ = ServerPid ! {request, self(), StreamRef, Method, Path, Headers, Body},
+	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	_ = ServerPid ! {request, ReplyTo, StreamRef, Method, Path, Headers, Body},
 	StreamRef.
 
 %% Streaming data.
@@ -611,20 +653,22 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, por
 		keepalive ->
 			ProtoState2 = Protocol:keepalive(ProtoState),
 			before_loop(State#state{protocol_state=ProtoState2});
-		{request, Owner, StreamRef, Method, Path, Headers} ->
+		{request, ReplyTo, StreamRef, Method, Path, Headers, <<>>} ->
 			ProtoState2 = Protocol:request(ProtoState,
-				StreamRef, Method, Host, Port, Path, Headers),
+				StreamRef, ReplyTo, Method, Host, Port, Path, Headers),
 			loop(State#state{protocol_state=ProtoState2});
-		{request, Owner, StreamRef, Method, Path, Headers, Body} ->
+		{request, ReplyTo, StreamRef, Method, Path, Headers, Body} ->
 			ProtoState2 = Protocol:request(ProtoState,
-				StreamRef, Method, Host, Port, Path, Headers, Body),
+				StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body),
 			loop(State#state{protocol_state=ProtoState2});
-		{data, Owner, StreamRef, IsFin, Data} ->
+		%% @todo Do we want to reject ReplyTo if it's not the process
+		%% who initiated the connection? For both data and cancel.
+		{data, ReplyTo, StreamRef, IsFin, Data} ->
 			ProtoState2 = Protocol:data(ProtoState,
-				StreamRef, IsFin, Data),
+				StreamRef, ReplyTo, IsFin, Data),
 			loop(State#state{protocol_state=ProtoState2});
-		{cancel, Owner, StreamRef} ->
-			ProtoState2 = Protocol:cancel(ProtoState, StreamRef),
+		{cancel, ReplyTo, StreamRef} ->
+			ProtoState2 = Protocol:cancel(ProtoState, StreamRef, ReplyTo),
 			loop(State#state{protocol_state=ProtoState2});
 		%% @todo Maybe make an interface in the protocol module instead of checking on protocol name.
 		%% An interface would also make sure that HTTP/1.0 can't upgrade.
@@ -662,6 +706,8 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, por
 				"Connection needs to be upgraded to Websocket "
 				"before the gun:ws_send/1 function can be used."}},
 			loop(State);
+		%% @todo The ReplyTo patch disabled the notowner behavior.
+		%% We need to add an option to enforce this behavior if needed.
 		Any when is_tuple(Any), is_pid(element(2, Any)) ->
 			element(2, Any) ! {gun_error, self(), {notowner,
 				"Operations are restricted to the owner of the connection."}},

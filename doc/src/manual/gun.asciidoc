@@ -64,6 +64,15 @@ keepalive => pos_integer()::
 version => 'HTTP/1.1' | 'HTTP/1.0'::
 	HTTP version to use. Defaults to 'HTTP/1.1'.
 
+=== req_opts() = map()
+
+Configuration for a particular request.
+
+The following keys are defined:
+
+reply_to => pid()::
+	The pid of a process that is responsible for the response handling.
+
 === spdy_opts() = map()
 
 Configuration for the SPDY protocol.
@@ -241,41 +250,56 @@ Gracefully close the connection.
 A monitor can be used to be notified when the connection is
 effectively closed.
 
-=== delete(ConnPid, Path) -> delete(ConnPid, Path, [])
+=== delete(ConnPid, Path) -> delete(ConnPid, Path, [], #{})
 
-Alias of `gun:delete/3`.
+Alias of `gun:delete/4`.
 
-=== delete(ConnPid, Path, Headers) -> StreamRef
+=== delete(ConnPid, Path, Headers) -> delete(ConnPid, Path, Headers, #{})
+
+Alias of `gun:delete/4`.
+
+=== delete(ConnPid, Path, Headers, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Delete a resource.
 
-=== get(ConnPid, Path) -> get(ConnPid, Path, [])
+=== get(ConnPid, Path) -> get(ConnPid, Path, [], #{})
 
-Alias of `gun:get/3`.
+Alias of `gun:get/4`.
 
-=== get(ConnPid, Path, Headers) -> StreamRef
+=== get(ConnPid, Path, Headers) -> get(ConnPid, Path, Headers, #{})
+
+Alias of `gun:get/4`.
+
+=== get(ConnPid, Path, Headers, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Get a resource.
 
-=== head(ConnPid, Path) -> head(ConnPid, Path, [])
+=== head(ConnPid, Path) -> head(ConnPid, Path, [], #{})
 
-Alias of `gun:head/3`.
+Alias of `gun:head/4`.
 
-=== head(ConnPid, Path, Headers) -> StreamRef
+=== head(ConnPid, Path, Headers) -> head(ConnPid, Path, Headers, #{})
+
+Alias of `gun:head/4`.
+
+=== head(ConnPid, Path, Headers, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Get headers of a resource.
@@ -288,15 +312,20 @@ While servers should send the same headers they would if the
 request was a GET, like `content-length`, it is not always
 the case and differences may exist.
 
-=== options(ConnPid, Path) -> options(ConnPid, Path, [])
+=== options(ConnPid, Path) -> options(ConnPid, Path, [], #{})
 
-Alias of `gun:options/3`.
+Alias of `gun:options/4`.
 
-=== options(ConnPid, Path, Headers) -> StreamRef
+=== options(ConnPid, Path, Headers) -> options(ConnPid, Path, Headers, #{})
+
+Alias of `gun:options/4`.
+
+=== options(ConnPid, Path, Headers, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Obtain information about the capabilities of the server or of a resource.
@@ -324,12 +353,17 @@ with instructions on how to update the resource.
 
 You can use the `gun:data/4` function to send the body, if any.
 
-=== patch(ConnPid, Path, Headers, Body) -> StreamRef
+=== patch(ConnPid, Path, Headers, Body) -> patch(ConnPid, Path, Headers, Body, #{})
+
+Alias of `gun:patch/5`.
+
+=== patch(ConnPid, Path, Headers, Body, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
 Body = iodata():: Body of the request.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Request that a set of changes be applied to the resource.
@@ -366,12 +400,17 @@ located at a different URI.
 
 You can use the `gun:data/4` function to send the body, if any.
 
-=== post(ConnPid, Path, Headers, Body) -> StreamRef
+=== post(ConnPid, Path, Headers, Body) -> post(ConnPid, Path, Headers, Body, #{})
+
+Alias of `gun:post/5`.
+
+=== post(ConnPid, Path, Headers, Body, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
 Body = iodata():: Body of the request.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Process the enclosed representation according to the resource's own semantics.
@@ -407,12 +446,17 @@ highly recommended to set both when possible.
 
 You can use the `gun:data/4` function to send the body, if any.
 
-=== put(ConnPid, Path, Headers, Body) -> StreamRef
+=== put(ConnPid, Path, Headers, Body) -> put(ConnPid, Path, Headers, Body, #{})
+
+Alias of `gun:put/5`.
+
+=== put(ConnPid, Path, Headers, Body, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
 Body = iodata():: Body of the request.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Create or replace a resource.
@@ -447,13 +491,18 @@ highly recommended to set both when possible.
 
 You can use the `gun:data/4` function to send the body, if any.
 
-=== request(ConnPid, Method, Path, Headers, Body) -> StreamRef
+=== request(ConnPid, Method, Path, Headers, Body) -> request(ConnPid, Method, Path, Headers, Body, #{})
+
+Alias of `gun:request/6`.
+
+=== request(ConnPid, Method, Path, Headers, Body, ReqOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Method = iodata():: Request method.
 Path = iodata():: Path of the resource.
 Headers = [{binary(), iodata()}]:: Additional request headers.
 Body = iodata():: Body of the request.
+ReqOpts = req_opts():: Request options.
 StreamRef = reference():: Identifier of the stream for this request.
 
 Perform the given request.

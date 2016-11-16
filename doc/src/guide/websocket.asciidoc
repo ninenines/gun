@@ -64,6 +64,10 @@ after 1000 ->
 	exit(timeout)
 end.
 
+Note that you shouldn't use the `reply_to` request option
+for connections you plan to upgrade, because only the
+owner of the connection will receive messages about it.
+
 === Sending data
 
 Once the Websocket upgrade has completed successfully, you no
