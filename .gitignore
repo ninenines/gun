@@ -1,5 +1,11 @@
-.erlang.mk.packages.v2
+.erlang.mk
+.*.plt
+*.d
 deps
-ebin
+doc/guide.pdf
+doc/html
+doc/man*
+ebin/test
+ebin/*.beam
 logs
 test/*.beam

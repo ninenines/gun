@@ -26,3 +26,7 @@ to lowercase, and expects your application to provide lowercase header
 names.
 
 The same applies to any other case insensitive value.
+
+=== Versioning
+
+Gun uses [Semantic Versioning 2.0.0](http://semver.org/).
