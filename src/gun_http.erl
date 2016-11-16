@@ -31,6 +31,14 @@
 
 -type websocket_info() :: {websocket, reference(), binary(), [binary()], [], gun:ws_opts()}. %% key, extensions, protocols, options
 
+-record(stream, {
+	ref :: reference() | websocket_info(),
+	method :: binary(),
+	alive :: boolean()
+}).
+
+-type stream() :: #stream{}.
+
 -record(http_state, {
 	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
@@ -39,7 +47,7 @@
 	connection = keepalive :: keepalive | close,
 	buffer = <<>> :: binary(),
 	%% Stream reference, request method and whether the stream is alive.
-	streams = [] :: [{reference() | websocket_info(), binary(), boolean()}],
+	streams = [] :: [stream()],
 	in = head :: io(),
 	in_state :: {non_neg_integer(), non_neg_integer()},
 	out = head :: io()
@@ -141,7 +149,7 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 	end.
 
 handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
-		connection=Conn, streams=[{StreamRef, Method, IsAlive}|_]}) ->
+		connection=Conn, streams=[#stream{ref=StreamRef, method=Method, alive=IsAlive}|_]}) ->
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
 	case {Status, StreamRef} of
@@ -184,7 +192,7 @@ send_data_if_alive(<<>>, _, nofin) ->
 	ok;
 %% @todo What if we receive data when the HEAD method was used?
 send_data_if_alive(Data, #http_state{owner=Owner,
-		streams=[{StreamRef, _, true}|_]}, IsFin) ->
+		streams=[#stream{ref=StreamRef, alive=true}|_]}, IsFin) ->
 	Owner ! {gun_data, self(), StreamRef, IsFin, Data},
 	ok;
 send_data_if_alive(_, _, _) ->
@@ -198,9 +206,9 @@ close(#http_state{owner=Owner, streams=Streams}) ->
 
 close_streams(_, []) ->
 	ok;
-close_streams(Owner, [{_, _, false}|Tail]) ->
+close_streams(Owner, [#stream{alive=false}|Tail]) ->
 	close_streams(Owner, Tail);
-close_streams(Owner, [{StreamRef, _, _}|Tail]) ->
+close_streams(Owner, [#stream{ref=StreamRef}|Tail]) ->
 	Owner ! {gun_error, self(), StreamRef, {closed,
 		"The connection was lost."}},
 	close_streams(Owner, Tail).
@@ -256,7 +264,7 @@ data(State=#http_state{streams=[]}, StreamRef, _, _) ->
 data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
 	case lists:last(Streams) of
-		{StreamRef, _, true} ->
+		#stream{ref=StreamRef, alive=true} ->
 			DataLength = iolist_size(Data),
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
@@ -304,7 +312,7 @@ down(#http_state{streams=Streams}) ->
 	KilledStreams = [case Ref of
 		{websocket, Ref2, _, _, _, _} -> Ref2;
 		_ -> Ref
-	end || {Ref, _, _} <- Streams],
+	end || #stream{ref=Ref} <- Streams],
 	{KilledStreams, []}.
 
 error_stream_closed(State=#http_state{owner=Owner}, StreamRef) ->
@@ -373,10 +381,10 @@ response_io_from_headers(_, Version, _Status, Headers) ->
 %% Streams.
 
 new_stream(State=#http_state{streams=Streams}, StreamRef, Method) ->
-	State#http_state{streams=Streams ++ [{StreamRef, iolist_to_binary(Method), true}]}.
+	State#http_state{streams=Streams ++ [#stream{ref=StreamRef, method=iolist_to_binary(Method), alive=true}]}.
 
 is_stream(#http_state{streams=Streams}, StreamRef) ->
-	lists:keymember(StreamRef, 1, Streams).
+	lists:keymember(StreamRef, #stream.ref, Streams).
 
 cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 	Streams2 = [case Ref of
@@ -384,7 +392,7 @@ cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 			{Ref, false};
 		_ ->
 			Tuple
-	end || Tuple = {Ref, _, _} <- Streams],
+	end || Tuple = #stream{ref=Ref} <- Streams],
 	State#http_state{streams=Streams2}.
 
 end_stream(State=#http_state{streams=[_|Tail]}) ->
