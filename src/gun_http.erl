@@ -20,16 +20,25 @@
 -export([handle/2]).
 -export([close/1]).
 -export([keepalive/1]).
--export([request/7]).
 -export([request/8]).
--export([data/4]).
--export([cancel/2]).
+-export([request/9]).
+-export([data/5]).
+-export([cancel/3]).
 -export([down/1]).
 -export([ws_upgrade/7]).
 
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked.
 
 -type websocket_info() :: {websocket, reference(), binary(), [binary()], [], gun:ws_opts()}. %% key, extensions, protocols, options
+
+-record(stream, {
+	ref :: reference() | websocket_info(),
+	reply_to :: pid(),
+	method :: binary(),
+	alive :: boolean()
+}).
+
+-type stream() :: #stream{}.
 
 -record(http_state, {
 	owner :: pid(),
@@ -39,7 +48,7 @@
 	connection = keepalive :: keepalive | close,
 	buffer = <<>> :: binary(),
 	%% Stream reference, request method and whether the stream is alive.
-	streams = [] :: [{reference() | websocket_info(), binary(), boolean()}],
+	streams = [] :: [stream()],
 	in = head :: io(),
 	in_state :: {non_neg_integer(), non_neg_integer()},
 	out = head :: io()
@@ -140,8 +149,8 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 			end
 	end.
 
-handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
-		connection=Conn, streams=[{StreamRef, Method, IsAlive}|_]}) ->
+handle_head(Data, State=#http_state{version=ClientVersion,
+		connection=Conn, streams=[#stream{ref=StreamRef, reply_to=ReplyTo, method=Method, alive=IsAlive}|_]}) ->
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
 	case {Status, StreamRef} of
@@ -158,7 +167,7 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 						{websocket, SR, _, _, _, _} -> SR;
 						_ -> StreamRef
 					end,
-					Owner ! {gun_response, self(), StreamRef2,
+					ReplyTo ! {gun_response, self(), StreamRef2,
 						IsFin, Status, Headers},
 					ok
 			end,
@@ -183,27 +192,26 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 send_data_if_alive(<<>>, _, nofin) ->
 	ok;
 %% @todo What if we receive data when the HEAD method was used?
-send_data_if_alive(Data, #http_state{owner=Owner,
-		streams=[{StreamRef, _, true}|_]}, IsFin) ->
-	Owner ! {gun_data, self(), StreamRef, IsFin, Data},
+send_data_if_alive(Data, #http_state{streams=[#stream{ref=StreamRef, reply_to=ReplyTo, alive=true}|_]}, IsFin) ->
+	ReplyTo ! {gun_data, self(), StreamRef, IsFin, Data},
 	ok;
 send_data_if_alive(_, _, _) ->
 	ok.
 
-close(State=#http_state{in=body_close, owner=Owner, streams=[_|Tail]}) ->
+close(State=#http_state{in=body_close, streams=[_|Tail]}) ->
 	send_data_if_alive(<<>>, State, fin),
-	close_streams(Owner, Tail);
-close(#http_state{owner=Owner, streams=Streams}) ->
-	close_streams(Owner, Streams).
+	close_streams(Tail);
+close(#http_state{streams=Streams}) ->
+	close_streams(Streams).
 
-close_streams(_, []) ->
+close_streams([]) ->
 	ok;
-close_streams(Owner, [{_, _, false}|Tail]) ->
-	close_streams(Owner, Tail);
-close_streams(Owner, [{StreamRef, _, _}|Tail]) ->
-	Owner ! {gun_error, self(), StreamRef, {closed,
+close_streams([#stream{alive=false}|Tail]) ->
+	close_streams(Tail);
+close_streams([#stream{ref=StreamRef, reply_to=ReplyTo}|Tail]) ->
+	ReplyTo ! {gun_error, self(), StreamRef, {closed,
 		"The connection was lost."}},
-	close_streams(Owner, Tail).
+	close_streams(Tail).
 
 %% We can only keep-alive by sending an empty line in-between streams.
 keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}) ->
@@ -213,7 +221,7 @@ keepalive(State) ->
 	State.
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=head}, StreamRef, Method, Host, Port, Path, Headers) ->
+		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers) ->
 	Headers2 = lists:keydelete(<<"transfer-encoding">>, 1, Headers),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
 		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2];
@@ -227,10 +235,10 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		_ -> Headers3
 	end,
 	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers4)),
-	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, Method).
+	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo, Method).
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=head}, StreamRef, Method, Host, Port, Path, Headers, Body) ->
+		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body) ->
 	Headers2 = lists:keydelete(<<"content-length">>, 1,
 		lists:keydelete(<<"transfer-encoding">>, 1, Headers)),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
@@ -244,19 +252,19 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{<<"content-length">>, integer_to_binary(iolist_size(Body))}
 		|Headers3]),
 		Body]),
-	new_stream(State#http_state{connection=Conn}, StreamRef, Method).
+	new_stream(State#http_state{connection=Conn}, StreamRef, ReplyTo, Method).
 
 %% We are expecting a new stream.
-data(State=#http_state{out=head}, StreamRef, _, _) ->
-	error_stream_closed(State, StreamRef);
+data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _) ->
+	error_stream_closed(State, StreamRef, ReplyTo);
 %% There are no active streams.
-data(State=#http_state{streams=[]}, StreamRef, _, _) ->
-	error_stream_not_found(State, StreamRef);
+data(State=#http_state{streams=[]}, StreamRef, ReplyTo, _, _) ->
+	error_stream_not_found(State, StreamRef, ReplyTo);
 %% We can only send data on the last created stream.
 data(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
+		out=Out, streams=Streams}, StreamRef, ReplyTo, IsFin, Data) ->
 	case lists:last(Streams) of
-		{StreamRef, _, true} ->
+		#stream{ref=StreamRef, alive=true} ->
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
 					case Data of
@@ -286,16 +294,16 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 					State
 			end;
 		_ ->
-			error_stream_not_found(State, StreamRef)
+			error_stream_not_found(State, StreamRef, ReplyTo)
 	end.
 
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
-cancel(State, StreamRef) ->
+cancel(State, StreamRef, ReplyTo) ->
 	case is_stream(State, StreamRef) of
 		true ->
 			cancel_stream(State, StreamRef);
 		false ->
-			error_stream_not_found(State, StreamRef)
+			error_stream_not_found(State, StreamRef, ReplyTo)
 	end.
 
 %% HTTP does not provide any way to figure out what streams are unprocessed.
@@ -303,16 +311,16 @@ down(#http_state{streams=Streams}) ->
 	KilledStreams = [case Ref of
 		{websocket, Ref2, _, _, _, _} -> Ref2;
 		_ -> Ref
-	end || {Ref, _, _} <- Streams],
+	end || #stream{ref=Ref} <- Streams],
 	{KilledStreams, []}.
 
-error_stream_closed(State=#http_state{owner=Owner}, StreamRef) ->
-	Owner ! {gun_error, self(), StreamRef, {badstate,
+error_stream_closed(State, StreamRef, ReplyTo) ->
+	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 		"The stream has already been closed."}},
 	State.
 
-error_stream_not_found(State=#http_state{owner=Owner}, StreamRef) ->
-	Owner ! {gun_error, self(), StreamRef, {badstate,
+error_stream_not_found(State, StreamRef, ReplyTo) ->
+	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 		"The stream cannot be found."}},
 	State.
 
@@ -371,11 +379,11 @@ response_io_from_headers(_, Version, _Status, Headers) ->
 
 %% Streams.
 
-new_stream(State=#http_state{streams=Streams}, StreamRef, Method) ->
-	State#http_state{streams=Streams ++ [{StreamRef, iolist_to_binary(Method), true}]}.
+new_stream(State=#http_state{streams=Streams}, StreamRef, ReplyTo, Method) ->
+	State#http_state{streams=Streams ++ [#stream{ref=StreamRef, reply_to=ReplyTo, method=iolist_to_binary(Method), alive=true}]}.
 
 is_stream(#http_state{streams=Streams}, StreamRef) ->
-	lists:keymember(StreamRef, 1, Streams).
+	lists:keymember(StreamRef, #stream.ref, Streams).
 
 cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 	Streams2 = [case Ref of
@@ -383,7 +391,7 @@ cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 			{Ref, false};
 		_ ->
 			Tuple
-	end || Tuple = {Ref, _, _} <- Streams],
+	end || Tuple = #stream{ref=Ref} <- Streams],
 	State#http_state{streams=Streams2}.
 
 end_stream(State=#http_state{streams=[_|Tail]}) ->
@@ -394,7 +402,7 @@ end_stream(State=#http_state{streams=[_|Tail]}) ->
 %% Ensure version is 1.1.
 ws_upgrade(#http_state{version='HTTP/1.0'}, _, _, _, _, _, _) ->
 	error; %% @todo
-ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
+ws_upgrade(State=#http_state{socket=Socket, transport=Transport, owner=Owner, out=head},
 		StreamRef, Host, Port, Path, Headers, WsOpts) ->
 	{Headers1, GunExtensions} = case maps:get(compress, WsOpts, false) of
 		true -> {[{<<"sec-websocket-extensions">>,
@@ -420,7 +428,7 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, out=head},
 	end,
 	Transport:send(Socket, cow_http:request(<<"GET">>, Path, 'HTTP/1.1', Headers3)),
 	new_stream(State#http_state{connection=keepalive, out=head},
-		{websocket, StreamRef, Key, GunExtensions, [], WsOpts}, <<"GET">>).
+		{websocket, StreamRef, Key, GunExtensions, [], WsOpts}, Owner, <<"GET">>).
 
 ws_handshake(Buffer, State, Headers, Key, GunExtensions, GunProtocols, Opts) ->
 	%% @todo check upgrade, connection
