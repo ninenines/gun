@@ -27,3 +27,7 @@ dep_ct_helper = git https://github.com/extend/ct_helper.git master
 # Standard targets.
 
 include erlang.mk
+
+# Generate rebar.config on build.
+
+app:: rebar.config
