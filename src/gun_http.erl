@@ -257,6 +257,7 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
 	case lists:last(Streams) of
 		{StreamRef, _, true} ->
+			DataLength = iolist_size(Data),
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
 					case Data of
@@ -272,9 +273,9 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 				body_chunked when Version =:= 'HTTP/1.1' ->
 					Transport:send(Socket, cow_http_te:chunk(Data)),
 					State;
-				{body, Length} when byte_size(Data) =< Length ->
+				{body, Length} when DataLength =< Length ->
 					Transport:send(Socket, Data),
-					Length2 = Length - byte_size(Data),
+					Length2 = Length - DataLength,
 					if
 						Length2 =:= 0, IsFin =:= fin ->
 							State#http_state{out=head};
