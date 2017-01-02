@@ -249,10 +249,11 @@ request(State=#http2_state{socket=Socket, transport=Transport, encode_state=Enco
 	Headers = lists:keystore(<<"content-length">>, 1, Headers0,
 		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
 	{HeaderBlock, EncodeState} = prepare_headers(EncodeState0, Transport, Method, Host, Port, Path, Headers),
-	Transport:send(Socket, [
-		cow_http2:headers(StreamID, nofin, HeaderBlock),
-		cow_http2:data(StreamID, fin, Body)
-	]),
+	Transport:send(Socket, cow_http2:headers(StreamID, nofin, HeaderBlock)),
+	%% @todo 16384 is the default SETTINGS_MAX_FRAME_SIZE.
+	%% Use the length set by the server instead, if any.
+	%% @todo Would be better if we didn't have to convert to binary.
+	send_data(Socket, Transport, StreamID, fin, iolist_to_binary(Body), 16384),
 	new_stream(StreamID, StreamRef, nofin, fin,
 		State#http2_state{stream_id=StreamID + 2, encode_state=EncodeState}).
 
@@ -276,16 +277,29 @@ prepare_headers(EncodeState, Transport, Method, Host, Port, Path, Headers0) ->
 	|Headers1],
 	cow_hpack:encode(Headers, EncodeState).
 
-data(State=#http2_state{socket=Socket, transport=Transport},
-		StreamRef, IsFin, Data) ->
+data(State=#http2_state{socket=Socket, transport=Transport}, StreamRef, IsFin, Data) ->
 	case get_stream_by_ref(StreamRef, State) of
 		#stream{local=fin} ->
 			error_stream_closed(State, StreamRef);
 		S = #stream{} ->
-			Transport:send(Socket, cow_http2:data(S#stream.id, IsFin, Data)),
+			%% @todo 16384 is the default SETTINGS_MAX_FRAME_SIZE.
+			%% Use the length set by the server instead, if any.
+			%% @todo Would be better if we didn't have to convert to binary.
+			send_data(Socket, Transport, S#stream.id, IsFin, iolist_to_binary(Data), 16384),
 			local_fin(S, State, IsFin);
 		false ->
 			error_stream_not_found(State, StreamRef)
+	end.
+
+%% This same function is found in cowboy_http2.
+send_data(Socket, Transport, StreamID, IsFin, Data, Length) ->
+	if
+		Length < byte_size(Data) ->
+			<< Payload:Length/binary, Rest/bits >> = Data,
+			Transport:send(Socket, cow_http2:data(StreamID, nofin, Payload)),
+			send_data(Socket, Transport, StreamID, IsFin, Rest, Length);
+		true ->
+			Transport:send(Socket, cow_http2:data(StreamID, IsFin, Data))
 	end.
 
 cancel(State=#http2_state{socket=Socket, transport=Transport},
