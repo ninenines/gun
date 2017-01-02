@@ -154,9 +154,40 @@ frame(settings_ack, State) -> %% @todo =#http2_state{next_settings=_NextSettings
 	State;
 %% PUSH_PROMISE frame.
 %% @todo Continuation.
-%frame({push_promise, StreamID, head_fin, PromisedStreamID, HeaderBlock}, State) ->
-%	%% @todo
-%	State;
+frame({push_promise, StreamID, head_fin, PromisedStreamID, HeaderBlock},
+		State=#http2_state{owner=Owner, decode_state=DecodeState0}) ->
+	case get_stream_by_id(PromisedStreamID, State) of
+		false ->
+			case get_stream_by_id(StreamID, State) of
+				#stream{ref=StreamRef} ->
+					try cow_hpack:decode(HeaderBlock, DecodeState0) of
+						{Headers0, DecodeState} ->
+							{Method, Scheme, Authority, Path, Headers} = try
+								{value, {_, Method0}, Headers1} = lists:keytake(<<":method">>, 1, Headers0),
+								{value, {_, Scheme0}, Headers2} = lists:keytake(<<":scheme">>, 1, Headers1),
+								{value, {_, Authority0}, Headers3} = lists:keytake(<<":authority">>, 1, Headers2),
+								{value, {_, Path0}, Headers4} = lists:keytake(<<":path">>, 1, Headers3),
+								{Method0, Scheme0, Authority0, Path0, Headers4}
+							catch error:badmatch ->
+								stream_reset(State, StreamID, {stream_error, protocol_error,
+									'Malformed push promise; missing pseudo-header field. (RFC7540 8.1.2.3)'})
+							end,
+							NewStreamRef = make_ref(),
+							Owner ! {gun_push, self(), StreamRef, NewStreamRef, Method,
+								iolist_to_binary([Scheme, <<"://">>, Authority, Path]), Headers},
+							new_stream(PromisedStreamID, NewStreamRef, nofin, fin,
+								State#http2_state{decode_state=DecodeState})
+					catch _:_ ->
+						terminate(State, {connection_error, compression_error,
+							'Error while trying to decode HPACK-encoded header block. (RFC7540 4.3)'})
+					end;
+				_ ->
+					stream_reset(State, StreamID, {stream_error, stream_closed,
+						'DATA frame received for a closed or non-existent stream. (RFC7540 6.1)'})
+			end;
+		_ ->
+			stream_reset(State, StreamID, {stream_error, todo, ''})
+	end;
 %% PING frame.
 frame({ping, Opaque}, State=#http2_state{socket=Socket, transport=Transport}) ->
 	Transport:send(Socket, cow_http2:ping_ack(Opaque)),

@@ -309,8 +309,8 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{response, IsFin, Status, Headers};
 		{gun_data, ServerPid, StreamRef, IsFin, Data} ->
 			{data, IsFin, Data};
-		{gun_push, ServerPid, StreamRef, NewStreamRef, Method, Host, Path, Headers} ->
-			{push, NewStreamRef, Method, Host, Path, Headers};
+		{gun_push, ServerPid, StreamRef, NewStreamRef, Method, URI, Headers} ->
+			{push, NewStreamRef, Method, URI, Headers};
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, Reason};
 		{gun_error, ServerPid, Reason} ->

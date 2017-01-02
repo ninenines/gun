@@ -97,15 +97,15 @@ handle_frame(Rest, State=#spdy_state{owner=Owner,
 handle_frame(Rest, State=#spdy_state{owner=Owner,
 		socket=Socket, transport=Transport},
 		{syn_stream, StreamID, AssocToStreamID, IsFin, IsUnidirectional,
-		_, Method, _, Host, Path, Version, Headers})
+		_, Method, Scheme, Host, Path, Version, Headers})
 		when AssocToStreamID =/= 0, IsUnidirectional ->
 	case get_stream_by_id(StreamID, State) of
 		false ->
 			case get_stream_by_id(AssocToStreamID, State) of
 				#stream{ref=AssocToStreamRef} ->
 					StreamRef = make_ref(),
-					Owner ! {gun_push, self(), AssocToStreamRef,
-						StreamRef, Method, Host, Path, Headers},
+					Owner ! {gun_push, self(), AssocToStreamRef, StreamRef, Method,
+						iolist_to_binary([Scheme, <<"://">>, Host, Path]), Headers},
 					handle_loop(Rest, new_stream(StreamID, StreamRef,
 						not IsFin, false, Version, State));
 				false ->
