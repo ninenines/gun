@@ -663,7 +663,7 @@ loop(State=#state{parent=Parent, owner=Owner, host=Host, port=Port, opts=Opts,
 ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
 		transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
-	ok = Transport:setopts(Socket, [{active, once}]),
+	Transport:setopts(Socket, [{active, once}]),
 	receive
 		{OK, Socket, Data} ->
 			case Protocol:handle(Data, ProtoState) of
