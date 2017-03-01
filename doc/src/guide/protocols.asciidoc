@@ -10,7 +10,7 @@ sends a request, the server sends back a response.
 
 Gun provides convenience functions for performing GET, HEAD,
 OPTIONS, POST, PATCH, PUT, and DELETE requests. All these
-functions are aliases of `gun:request/{4,5}` for each respective
+functions are aliases of `gun:request/{4,5,6}` for each respective
 methods. Gun also provides a `gun:data/4` function for streaming
 the request body.
 

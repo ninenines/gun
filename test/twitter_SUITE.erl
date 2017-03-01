@@ -16,41 +16,63 @@
 -compile(export_all).
 
 all() ->
-	[http, http2, spdy].
+	[
+		{group, http},
+		{group, http2},
+		{group, spdy}
+	].
 
-http(_) ->
-	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [http]}),
-	{ok, http} = gun:await_up(Pid),
-	common(Pid).
+groups() ->
+	Tests = ct_helper:all(?MODULE),
+	[
+		{http, [parallel], Tests},
+		{http2, [parallel], Tests},
+		{spdy, [parallel], Tests}
+	].
 
-http2(_) ->
-	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [http2]}),
-	{ok, http2} = gun:await_up(Pid),
-	common(Pid).
+init_per_group(Protocol, Config) ->
+	[{protocol, Protocol}|Config].
 
-spdy(_) ->
-	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [spdy]}),
-	{ok, spdy} = gun:await_up(Pid),
-	common(Pid).
+end_per_group(_Protocol, _Config) ->
+	ok.
 
-common(Pid) ->
+common(Config) ->
+	Pid = do_open(ct_helper:config(protocol, Config)),
 	Ref = gun:get(Pid, "/"),
+	do_wait(Pid, Ref).
+
+common_spawn(Config) ->
+	Parent = self(),
+	DoneMsg = make_ref(),
+	Receiver =
+		spawn_link(
+			fun() ->
+				receive
+					{await, Pid, Ref} -> do_wait(Pid, Ref), Parent ! DoneMsg
+					after 5000 -> error(timeout)
+				end
+			end),
+
+	spawn_link(
+		fun() ->
+			Pid = do_open(ct_helper:config(protocol, Config)),
+			Ref = gun:get(Pid, "/", [], #{reply_to => Receiver}),
+			Receiver ! {await, Pid, Ref}
+		end),
+
 	receive
-		{gun_response, Pid, Ref, nofin, Status, Headers} ->
-			ct:print("response ~p ~p", [Status, Headers]),
-			data_loop(Pid, Ref)
-	after 5000 ->
-		error(timeout)
+		DoneMsg -> ok
+		after 5000 -> error(timeout)
 	end.
 
-data_loop(Pid, Ref) ->
-	receive
-		{gun_data, Pid, Ref, nofin, Data} ->
-			ct:print("data ~p", [Data]),
-			data_loop(Pid, Ref);
-		{gun_data, Pid, Ref, fin, Data} ->
-			gun:close(Pid),
-			ct:print("data ~p~nend", [Data])
-	after 5000 ->
-		error(timeout)
+%% Support functions.
+do_open(Protocol) ->
+	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [Protocol]}),
+	{ok, Protocol} = gun:await_up(Pid),
+	Pid.
+
+do_wait(Pid, Ref) ->
+	case gun:await(Pid, Ref) of
+		{response, nofin, _, _} -> {ok, _} = gun:await_body(Pid, Ref);
+		{response, fin, _, _} -> ok
 	end.
