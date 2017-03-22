@@ -489,8 +489,6 @@ ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Trans
 
 apply_transform_header_names(#http_state{ transform_header_name = Fun }, Headers)
   when is_function(Fun) ->
-	lists:map(fun({HeaderName, HeaderValue}) ->
-					{Fun(HeaderName), HeaderValue}
-			  end, Headers);
+	lists:keymap(fun(HeaderName) -> Fun(HeaderName) end, 1, Headers);
 apply_transform_header_names(_, Headers) ->
 	Headers.
