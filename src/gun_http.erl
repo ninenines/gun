@@ -231,7 +231,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		body_chunked -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers3];
 		_ -> Headers3
 	end,
-	Headers5 = apply_transform_header_names(State, Headers4),
+	Headers5 = apply_transform_header_name(State, Headers4),
 	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers5)),
 	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, Method).
 
@@ -243,7 +243,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2];
 		true -> Headers2
 	end,
-	Headers4 = apply_transform_header_names(State, Headers3),
+	Headers4 = apply_transform_header_name(State, Headers3),
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
 	Transport:send(Socket, [
@@ -486,8 +486,8 @@ ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Trans
 	end,
 	gun_ws:init(Owner, Socket, Transport, Headers, Extensions, Protocols).
 
-apply_transform_header_names(#http_state{ transform_header_name = Fun }, Headers)
+apply_transform_header_name(#http_state{ transform_header_name = Fun }, Headers)
   when is_function(Fun) ->
 	lists:keymap(fun(HeaderName) -> Fun(HeaderName) end, 1, Headers);
-apply_transform_header_names(_, Headers) ->
+apply_transform_header_name(_, Headers) ->
 	Headers.
