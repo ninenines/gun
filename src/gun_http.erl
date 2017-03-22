@@ -232,7 +232,6 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		_ -> Headers3
 	end,
 	Headers5 = apply_transform_header_names(State, Headers4),
-	io:format("Final headers: ~p~n", [Headers5]),
 	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers5)),
 	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, Method).
 
