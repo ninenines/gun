@@ -51,7 +51,8 @@
 	streams = [] :: [#stream{}],
 	in = head :: io(),
 	in_state = {0, 0} :: {non_neg_integer(), non_neg_integer()},
-	out = head :: io()
+	out = head :: io(),
+	transform_header_name :: fun((binary()) -> binary())
 }).
 
 check_options(Opts) ->
@@ -68,6 +69,8 @@ do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
 		ok -> do_check_options(Opts);
 		error -> {error, {options, {http, Opt}}}
 	end;
+do_check_options([{transform_header_name, F}|Opts]) when is_function(F) ->
+	do_check_options(Opts);
 do_check_options([Opt|_]) ->
 	{error, {options, {http, Opt}}}.
 
@@ -76,8 +79,9 @@ name() -> http.
 init(Owner, Socket, Transport, Opts) ->
 	Version = maps:get(version, Opts, 'HTTP/1.1'),
 	Handlers = maps:get(content_handlers, Opts, [gun_data]),
+	TransformHeaderName = maps:get(transform_header_name, Opts, fun (N) -> N end),
 	#http_state{owner=Owner, socket=Socket, transport=Transport, version=Version,
-		content_handlers=Handlers}.
+		content_handlers=Handlers, transform_header_name=TransformHeaderName}.
 
 %% Stop looping when we got no more data.
 handle(<<>>, State) ->
@@ -255,7 +259,8 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		body_chunked -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers3];
 		_ -> Headers3
 	end,
-	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers4)),
+	Headers5 = transform_header_names(State, Headers4),
+	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers5)),
 	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo, Method).
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
@@ -266,14 +271,18 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2];
 		true -> Headers2
 	end,
+	Headers4 = transform_header_names(State, Headers3),
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
 	Transport:send(Socket, [
 		cow_http:request(Method, Path, Version, [
 			{<<"content-length">>, integer_to_binary(iolist_size(Body))}
-		|Headers3]),
+		|Headers4]),
 		Body]),
 	new_stream(State#http_state{connection=Conn}, StreamRef, ReplyTo, Method).
+
+transform_header_names(#http_state{transform_header_name = Fun}, Headers) ->
+	lists:keymap(Fun, 1, Headers).
 
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _) ->

@@ -61,6 +61,12 @@ keepalive => pos_integer()::
 	empty line when the connection is idle. Gun only makes a best
 	effort here as servers usually have configurable limits to drop
 	idle connections. Defaults to 5000.
+transform_header_name => fun((LowercaseName :: binary()) -> TransformedName :: binary()) | undefined::
+	A function that will be applied to all header names before they
+	are sent to the server. Gun assumes that all header names are in
+	lower case. This function is useful if you, for example, need to
+	re-case header names in the event that the server incorrectly
+	considers header name case to be significant.
 version => 'HTTP/1.1' | 'HTTP/1.0'::
 	HTTP version to use. Defaults to 'HTTP/1.1'.
 

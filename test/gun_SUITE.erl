@@ -139,3 +139,16 @@ retry_timeout(_) ->
 	after 400 ->
 		error(gone_too_late)
 	end.
+
+transform_header_name(_) ->
+	doc("The reply_to option allows using a separate process for requests."),
+	{ok, Pid} = gun:open("google.com", 443, #{
+		protocols => [http],
+		http_opts => #{
+			transform_header_name => fun(<<"host">>) -> <<"HOST">>; (N) -> N end
+		}
+	}),
+	{ok, http} = gun:await_up(Pid),
+	Ref = gun:get(Pid, "/", [{<<"host">>, <<"google.com">>}]),
+	{response, _, _, _} = gun:await(Pid, Ref),
+	ok.

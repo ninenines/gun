@@ -173,7 +173,7 @@ frame(settings_ack, State) -> %% @todo =#http2_state{next_settings=_NextSettings
 %% PUSH_PROMISE frame.
 %% @todo Continuation.
 frame({push_promise, StreamID, head_fin, PromisedStreamID, HeaderBlock},
-		State=#http2_state{owner=Owner, decode_state=DecodeState0}) ->
+		State=#http2_state{decode_state=DecodeState0}) ->
 	case get_stream_by_id(PromisedStreamID, State) of
 		false ->
 			case get_stream_by_id(StreamID, State) of
