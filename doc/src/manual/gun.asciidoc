@@ -61,6 +61,12 @@ keepalive => pos_integer()::
 	idle connections. Defaults to 5000.
 version => 'HTTP/1.1' | 'HTTP/1.0'::
 	HTTP version to use. Defaults to 'HTTP/1.1'.
+transform_header_name => fun((HeaderName1 :: binary()) -> HeaderName2 :: binary()) | undefined::
+	A function that will be applied to all header names before they
+	are sent to the server. Gun assumes that all header names are in
+	lower case. This function is useful if you, for example, need to
+	re-case header names in the event that the server considers
+	header name case to be significant.
 
 === spdy_opts() = map()
 
