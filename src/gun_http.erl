@@ -31,6 +31,8 @@
 
 -type websocket_info() :: {websocket, reference(), binary(), [binary()], [], gun:ws_opts()}. %% key, extensions, protocols, options
 
+-type transform_header_name_callback() :: fun((HeaderName1 :: binary()) -> HeaderName2 :: binary()).
+
 -record(http_state, {
 	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
@@ -43,7 +45,7 @@
 	in = head :: io(),
 	in_state :: {non_neg_integer(), non_neg_integer()},
 	out = head :: io(),
-	transform_header_name = undefined :: function() | undefined
+	transform_header_name = undefined :: transform_header_name_callback() | undefined
 }).
 
 check_options(Opts) ->
