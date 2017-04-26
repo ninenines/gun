@@ -257,7 +257,11 @@ request(State=#http2_state{socket=Socket, transport=Transport, encode_state=Enco
 	new_stream(StreamID, StreamRef, nofin, fin,
 		State#http2_state{stream_id=StreamID + 2, encode_state=EncodeState}).
 
-prepare_headers(EncodeState, Transport, Method, Host, Port, Path, Headers0) ->
+prepare_headers(EncodeState, Transport, Method, Host0, Port, Path, Headers0) ->
+	Authority = case lists:keyfind(<<"host">>, 1, Headers0) of
+		{_, Host} -> Host;
+		_ -> [Host0, $:, integer_to_binary(Port)]
+	end,
 	%% @todo We also must remove any header found in the connection header.
 	Headers1 =
 		lists:keydelete(<<"host">>, 1,
@@ -272,7 +276,7 @@ prepare_headers(EncodeState, Transport, Method, Host, Port, Path, Headers0) ->
 			true -> <<"https">>;
 			false -> <<"http">>
 		end},
-		{<<":authority">>, [Host, $:, integer_to_binary(Port)]},
+		{<<":authority">>, Authority},
 		{<<":path">>, Path}
 	|Headers1],
 	cow_hpack:encode(Headers, EncodeState).
