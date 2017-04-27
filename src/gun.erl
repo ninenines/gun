@@ -102,8 +102,8 @@
 	host :: inet:hostname(),
 	port :: inet:port_number(),
 	opts :: opts(),
-	keepalive_ref :: reference(),
-	socket :: inet:socket() | ssl:sslsocket(),
+	keepalive_ref :: undefined | reference(),
+	socket :: undefined | inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	protocol :: module(),
 	protocol_state :: any()

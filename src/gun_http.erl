@@ -31,17 +31,25 @@
 
 -type websocket_info() :: {websocket, reference(), binary(), [binary()], [], gun:ws_opts()}. %% key, extensions, protocols, options
 
+-record(stream, {
+	ref :: reference() | websocket_info(),
+	method :: binary(),
+	is_alive :: boolean(),
+	handler_state :: undefined | gun_content_handler:state()
+}).
+
 -record(http_state, {
 	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	version = 'HTTP/1.1' :: cow_http:version(),
+	content_handlers :: gun_content_handler:opt(),
 	connection = keepalive :: keepalive | close,
 	buffer = <<>> :: binary(),
 	%% Stream reference, request method and whether the stream is alive.
-	streams = [] :: [{reference() | websocket_info(), binary(), boolean()}],
+	streams = [] :: [#stream{}],
 	in = head :: io(),
-	in_state :: {non_neg_integer(), non_neg_integer()},
+	in_state = {0, 0} :: {non_neg_integer(), non_neg_integer()},
 	out = head :: io()
 }).
 
@@ -54,6 +62,11 @@ do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
 do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
 	do_check_options(Opts);
+do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
+	case gun_content_handler:check_option(Handlers) of
+		ok -> do_check_options(Opts);
+		error -> {error, {options, {http, Opt}}}
+	end;
 do_check_options([Opt|_]) ->
 	{error, {options, {http, Opt}}}.
 
@@ -61,7 +74,9 @@ name() -> http.
 
 init(Owner, Socket, Transport, Opts) ->
 	Version = maps:get(version, Opts, 'HTTP/1.1'),
-	#http_state{owner=Owner, socket=Socket, transport=Transport, version=Version}.
+	Handlers = maps:get(content_handlers, Opts, [gun_data]),
+	#http_state{owner=Owner, socket=Socket, transport=Transport, version=Version,
+		content_handlers=Handlers}.
 
 %% Stop looping when we got no more data.
 handle(<<>>, State) ->
@@ -78,8 +93,7 @@ handle(Data, State=#http_state{in=head, buffer=Buffer}) ->
 	end;
 %% Everything sent to the socket until it closes is part of the response body.
 handle(Data, State=#http_state{in=body_close}) ->
-	send_data_if_alive(Data, State, nofin),
-	State;
+	send_data_if_alive(Data, State, nofin);
 handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 		buffer=Buffer, connection=Conn}) ->
 	Buffer2 = << Buffer/binary, Data/binary >>,
@@ -87,30 +101,33 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 		more ->
 			State#http_state{buffer=Buffer2};
 		{more, Data2, InState2} ->
-			send_data_if_alive(Data2, State, nofin),
-			State#http_state{buffer= <<>>, in_state=InState2};
+			send_data_if_alive(Data2,
+				State#http_state{buffer= <<>>, in_state=InState2},
+				nofin);
 		{more, Data2, Length, InState2} when is_integer(Length) ->
 			%% @todo See if we can recv faster than one message at a time.
-			send_data_if_alive(Data2, State, nofin),
-			State#http_state{buffer= <<>>, in_state=InState2};
+			send_data_if_alive(Data2,
+				State#http_state{buffer= <<>>, in_state=InState2},
+				nofin);
 		{more, Data2, Rest, InState2} ->
 			%% @todo See if we can recv faster than one message at a time.
-			send_data_if_alive(Data2, State, nofin),
-			State#http_state{buffer=Rest, in_state=InState2};
+			send_data_if_alive(Data2,
+				State#http_state{buffer=Rest, in_state=InState2},
+				nofin);
 		{done, _TotalLength, Rest} ->
 			%% I suppose it doesn't hurt to append an empty binary.
-			send_data_if_alive(<<>>, State, fin),
+			State1 = send_data_if_alive(<<>>, State, fin),
 			case Conn of
 				keepalive ->
-					handle(Rest, end_stream(State#http_state{buffer= <<>>}));
+					handle(Rest, end_stream(State1#http_state{buffer= <<>>}));
 				close ->
 					close
 			end;
 		{done, Data2, _TotalLength, Rest} ->
-			send_data_if_alive(Data2, State, fin),
+			State1 = send_data_if_alive(Data2, State, fin),
 			case Conn of
 				keepalive ->
-					handle(Rest, end_stream(State#http_state{buffer= <<>>}));
+					handle(Rest, end_stream(State1#http_state{buffer= <<>>}));
 				close ->
 					close
 			end
@@ -121,27 +138,29 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 	if
 		%% More data coming.
 		DataSize < Length ->
-			send_data_if_alive(Data, State, nofin),
-			State#http_state{in={body, Length - DataSize}};
+			send_data_if_alive(Data,
+				State#http_state{in={body, Length - DataSize}},
+				nofin);
 		%% Stream finished, no rest.
 		DataSize =:= Length ->
-			send_data_if_alive(Data, State, fin),
+			State1 = send_data_if_alive(Data, State, fin),
 			case Conn of
-				keepalive -> end_stream(State);
+				keepalive -> end_stream(State1);
 				close -> close
 			end;
 		%% Stream finished, rest.
 		true ->
 			<< Body:Length/binary, Rest/bits >> = Data,
-			send_data_if_alive(Body, State, fin),
+			State1 = send_data_if_alive(Body, State, fin),
 			case Conn of
-				keepalive -> handle(Rest, end_stream(State));
+				keepalive -> handle(Rest, end_stream(State1));
 				close -> close
 			end
 	end.
 
 handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
-		connection=Conn, streams=[{StreamRef, Method, IsAlive}|_]}) ->
+		content_handlers=Handlers0, connection=Conn,
+		streams=[Stream=#stream{ref=StreamRef, method=Method, is_alive=IsAlive}|Tail]}) ->
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
 	case {Status, StreamRef} of
@@ -150,7 +169,7 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 		_ ->
 			In = response_io_from_headers(Method, Version, Status, Headers),
 			IsFin = case In of head -> fin; _ -> nofin end,
-			case IsAlive of
+			Handlers = case IsAlive of
 				false ->
 					ok;
 				true ->
@@ -160,7 +179,13 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 					end,
 					Owner ! {gun_response, self(), StreamRef2,
 						IsFin, Status, Headers},
-					ok
+					%% @todo Change to ReplyTo.
+					case IsFin of
+						fin -> undefined;
+						nofin ->
+							gun_content_handler:init(Owner, StreamRef,
+								Status, Headers, Handlers0)
+					end
 			end,
 			Conn2 = if
 				Conn =:= close -> close;
@@ -174,33 +199,36 @@ handle_head(Data, State=#http_state{owner=Owner, version=ClientVersion,
 					close;
 				IsFin =:= fin ->
 					handle(Rest2, end_stream(State#http_state{in=In,
-						in_state={0, 0}, connection=Conn2}));
+						in_state={0, 0}, connection=Conn2,
+						streams=[Stream#stream{handler_state=Handlers}|Tail]}));
 				true ->
-					handle(Rest2, State#http_state{in=In, in_state={0, 0}, connection=Conn2})
+					handle(Rest2, State#http_state{in=In,
+						in_state={0, 0}, connection=Conn2,
+						streams=[Stream#stream{handler_state=Handlers}|Tail]})
 			end
 	end.
 
-send_data_if_alive(<<>>, _, nofin) ->
-	ok;
+send_data_if_alive(<<>>, State, nofin) ->
+	State;
 %% @todo What if we receive data when the HEAD method was used?
-send_data_if_alive(Data, #http_state{owner=Owner,
-		streams=[{StreamRef, _, true}|_]}, IsFin) ->
-	Owner ! {gun_data, self(), StreamRef, IsFin, Data},
-	ok;
-send_data_if_alive(_, _, _) ->
-	ok.
+send_data_if_alive(Data, State=#http_state{streams=[Stream=#stream{
+		is_alive=true, handler_state=Handlers0}|Tail]}, IsFin) ->
+	Handlers = gun_content_handler:handle(IsFin, Data, Handlers0),
+	State#http_state{streams=[Stream#stream{handler_state=Handlers}|Tail]};
+send_data_if_alive(_, State, _) ->
+	State.
 
 close(State=#http_state{in=body_close, owner=Owner, streams=[_|Tail]}) ->
-	send_data_if_alive(<<>>, State, fin),
+	_ = send_data_if_alive(<<>>, State, fin),
 	close_streams(Owner, Tail);
 close(#http_state{owner=Owner, streams=Streams}) ->
 	close_streams(Owner, Streams).
 
 close_streams(_, []) ->
 	ok;
-close_streams(Owner, [{_, _, false}|Tail]) ->
+close_streams(Owner, [#stream{is_alive=false}|Tail]) ->
 	close_streams(Owner, Tail);
-close_streams(Owner, [{StreamRef, _, _}|Tail]) ->
+close_streams(Owner, [#stream{ref=StreamRef}|Tail]) ->
 	Owner ! {gun_error, self(), StreamRef, {closed,
 		"The connection was lost."}},
 	close_streams(Owner, Tail).
@@ -256,7 +284,7 @@ data(State=#http_state{streams=[]}, StreamRef, _, _) ->
 data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=Out, streams=Streams}, StreamRef, IsFin, Data) ->
 	case lists:last(Streams) of
-		{StreamRef, _, true} ->
+		#stream{ref=StreamRef, is_alive=true} ->
 			DataLength = iolist_size(Data),
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
@@ -304,7 +332,7 @@ down(#http_state{streams=Streams}) ->
 	KilledStreams = [case Ref of
 		{websocket, Ref2, _, _, _, _} -> Ref2;
 		_ -> Ref
-	end || {Ref, _, _} <- Streams],
+	end || #stream{ref=Ref} <- Streams],
 	{KilledStreams, []}.
 
 error_stream_closed(State=#http_state{owner=Owner}, StreamRef) ->
@@ -373,7 +401,8 @@ response_io_from_headers(_, Version, _Status, Headers) ->
 %% Streams.
 
 new_stream(State=#http_state{streams=Streams}, StreamRef, Method) ->
-	State#http_state{streams=Streams ++ [{StreamRef, iolist_to_binary(Method), true}]}.
+	State#http_state{streams=Streams
+		++ [#stream{ref=StreamRef, method=iolist_to_binary(Method), is_alive=true}]}.
 
 is_stream(#http_state{streams=Streams}, StreamRef) ->
 	lists:keymember(StreamRef, 1, Streams).
@@ -384,7 +413,7 @@ cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 			{Ref, false};
 		_ ->
 			Tuple
-	end || Tuple = {Ref, _, _} <- Streams],
+	end || Tuple = #stream{ref=Ref} <- Streams],
 	State#http_state{streams=Streams2}.
 
 end_stream(State=#http_state{streams=[_|Tail]}) ->
