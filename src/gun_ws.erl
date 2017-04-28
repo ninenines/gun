@@ -16,7 +16,7 @@
 
 -export([check_options/1]).
 -export([name/0]).
--export([init/6]).
+-export([init/7]).
 -export([handle/2]).
 -export([send/2]).
 -export([down/1]).
@@ -38,9 +38,10 @@
 	buffer = <<>> :: binary(),
 	in = head :: head | #payload{} | close,
 	frag_state = undefined :: cow_ws:frag_state(),
-	frag_buffer = <<>> :: binary(),
 	utf8_state = 0 :: cow_ws:utf8_state(),
-	extensions = #{} :: cow_ws:extensions()
+	extensions = #{} :: cow_ws:extensions(),
+	handler :: module(),
+	handler_state :: any()
 }).
 
 check_options(Opts) ->
@@ -55,10 +56,11 @@ do_check_options([Opt|_]) ->
 
 name() -> ws.
 
-%% @todo Protocols
-init(Owner, Socket, Transport, Headers, Extensions, _Protocols) ->
+init(Owner, Socket, Transport, Headers, Extensions, Handler, Opts) ->
 	Owner ! {gun_ws_upgrade, self(), ok, Headers},
-	{upgrade, ?MODULE, #ws_state{owner=Owner, socket=Socket, transport=Transport, extensions=Extensions}}.
+	HandlerState = Handler:init(Owner, Headers, Opts),
+	{upgrade, ?MODULE, #ws_state{owner=Owner, socket=Socket, transport=Transport,
+		extensions=Extensions, handler=Handler, handler_state=HandlerState}}.
 
 %% Do not handle anything if we received a close frame.
 handle(_, State=#ws_state{in=close}) ->
@@ -94,29 +96,27 @@ handle(Data, State=#ws_state{in=In=#payload{type=Type, rsv=Rsv, len=Len, mask_ke
 			close(Error, State)
 	end.
 
-dispatch(Rest, State=#ws_state{owner=Owner, frag_state=FragState, frag_buffer=SoFar},
+dispatch(Rest, State0=#ws_state{frag_state=FragState,
+		handler=Handler, handler_state=HandlerState0},
 		Type0, Payload0, CloseCode0) ->
 	case cow_ws:make_frame(Type0, Payload0, CloseCode0, FragState) of
-		{fragment, nofin, _, Payload} ->
-			handle(Rest, State#ws_state{frag_buffer= << SoFar/binary, Payload/binary >>});
-		{fragment, fin, Type, Payload} ->
-			Owner ! {gun_ws, self(), {Type, << SoFar/binary, Payload/binary >>}},
-			handle(Rest, State#ws_state{frag_state=undefined, frag_buffer= <<>>});
 		ping ->
-			State2 = send(pong, State),
-			handle(Rest, State2);
+			State = send(pong, State0),
+			handle(Rest, State);
 		{ping, Payload} ->
-			State2 = send({pong, Payload}, State),
-			handle(Rest, State2);
+			State = send({pong, Payload}, State0),
+			handle(Rest, State);
 		pong ->
-			handle(Rest, State);
+			handle(Rest, State0);
 		{pong, _} ->
-			handle(Rest, State);
+			handle(Rest, State0);
 		Frame ->
-			Owner ! {gun_ws, self(), Frame},
+			HandlerState = Handler:handle(Frame, HandlerState0),
+			State = State0#ws_state{handler_state=HandlerState},
 			case Frame of
 				close -> handle(Rest, State#ws_state{in=close});
 				{close, _, _} -> handle(Rest, State#ws_state{in=close});
+				{fragment, fin, _, _} -> handle(Rest, State#ws_state{frag_state=undefined});
 				_ -> handle(Rest, State)
 			end
 	end.
