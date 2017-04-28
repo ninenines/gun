@@ -24,24 +24,24 @@
 -type state() :: opt() | [{module(), any()}].
 -export_type([state/0]).
 
--callback init(pid(), reference(), cow_http:status(),
+-callback init(pid(), any(), cow_http:status(),
 	cow_http:headers(), map()) -> {ok, any()} | disable.
 %% @todo Make fin | nofin its own type.
 -callback handle(fin | nofin, any(), State)
 	-> {ok, any(), State} | {done, State} when State::any().
 
--spec init(pid(), reference(), cow_http:status(),
+-spec init(pid(), any(), cow_http:status(),
 	cow_http:headers(), State) -> State when State::state().
 init(_, _, _, _, []) ->
 	[];
-init(ReplyTo, Owner, Status, Headers, [Handler|Tail]) ->
+init(ReplyTo, StreamRef, Status, Headers, [Handler|Tail]) ->
 	{Mod, Opts} = case Handler of
 		Tuple = {_, _} -> Tuple;
 		Atom -> {Atom, #{}}
 	end,
-	case Mod:init(ReplyTo, Owner, Status, Headers, Opts) of
-		{ok, State} -> [{Mod, State}|init(ReplyTo, Owner, Status, Headers, Tail)];
-		disable -> init(ReplyTo, Owner, Status, Headers, Tail)
+	case Mod:init(ReplyTo, StreamRef, Status, Headers, Opts) of
+		{ok, State} -> [{Mod, State}|init(ReplyTo, StreamRef, Status, Headers, Tail)];
+		disable -> init(ReplyTo, StreamRef, Status, Headers, Tail)
 	end.
 
 -spec handle(fin | nofin, any(), State) -> State when State::state().
