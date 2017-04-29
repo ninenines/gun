@@ -505,8 +505,8 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 				_ -> {gun_http, http_opts}
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
-		{error, _} ->
-			retry(State, Retries - 1)
+		{error, Err} ->
+			retry(Err, State, Retries - 1)
 	end;
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
 	TransportOpts = [binary, {active, false}
@@ -519,8 +519,8 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retr
 				[spdy] -> {gun_spdy, spdy_opts}
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
-		{error, _} ->
-			retry(State, Retries - 1)
+		{error, Err} ->
+			retry(Err, State, Retries - 1)
 	end.
 
 up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, ProtoOptsKey) ->
@@ -532,13 +532,13 @@ up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, 
 down(State=#state{owner=Owner, opts=Opts, protocol=Protocol, protocol_state=ProtoState}, Reason) ->
 	{KilledStreams, UnprocessedStreams} = Protocol:down(ProtoState),
 	Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams, UnprocessedStreams},
-	retry(State#state{socket=undefined, protocol=undefined, protocol_state=undefined},
+	retry(Reason, State#state{socket=undefined, protocol=undefined, protocol_state=undefined},
 		maps:get(retry, Opts, 5)).
 
-%% Exit normally if the retry functionality has been disabled.
-retry(_, 0) ->
-	ok;
-retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(KeepaliveRef) ->
+%% Exit with error cause if the retry functionality has been disabled.
+retry(LastError, _, 0) ->
+	error(LastError);
+retry(LastError, State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(KeepaliveRef) ->
 	_ = erlang:cancel_timer(KeepaliveRef),
 	%% Flush if we have a keepalive message
 	receive
@@ -546,21 +546,21 @@ retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(Keepa
 	after 0 ->
 		ok
 	end,
-	retry_loop(State#state{keepalive_ref=undefined}, Retries);
-retry(State, Retries) ->
-	retry_loop(State, Retries).
+	retry_loop(LastError, State#state{keepalive_ref=undefined}, Retries);
+retry(LastError, State, Retries) ->
+	retry_loop(LastError, State, Retries).
 
-%% Too many retries, give up.
-retry_loop(_, 0) ->
-	error(gone);
-retry_loop(State=#state{parent=Parent, opts=Opts}, Retries) ->
+%% Too many retries, give up. Make the last error cause available to the client
+retry_loop(LastError,_, 0) ->
+	error(LastError);
+retry_loop(LastError, State=#state{parent=Parent, opts=Opts}, Retries) ->
 	_ = erlang:send_after(maps:get(retry_timeout, Opts, 5000), self(), retry),
 	receive
 		retry ->
 			connect(State, Retries);
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
-				{retry_loop, State, Retries})
+				{retry_loop, LastError, State, Retries})
 	end.
 
 before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
@@ -709,8 +709,8 @@ ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
 			error_logger:error_msg("Unexpected message: ~w~n", [Any])
 	end.
 
-system_continue(_, _, {retry_loop, State, Retry}) ->
-	retry_loop(State, Retry);
+system_continue(_, _, {retry_loop, LastError, State, Retry}) ->
+	retry_loop(LastError, State, Retry);
 system_continue(_, _, {loop, State}) ->
 	loop(State);
 system_continue(_, _, {ws_loop, State}) ->
