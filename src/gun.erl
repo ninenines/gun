@@ -506,7 +506,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
 		{error, _} ->
-			retry(State, Retries - 1)
+			retry(State, erlang:max(0, Retries - 1))
 	end;
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
 	TransportOpts = [binary, {active, false}
@@ -520,7 +520,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retr
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
 		{error, _} ->
-			retry(State, Retries - 1)
+			retry(State, erlang:max(0, Retries - 1))
 	end.
 
 up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, ProtoOptsKey) ->
