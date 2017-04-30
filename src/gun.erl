@@ -135,6 +135,8 @@ open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
 
 check_options([]) ->
 	ok;
+check_options([{connect_timeout, infinity}|Opts]) ->
+	check_options(Opts);
 check_options([{connect_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
 check_options([{http_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
