@@ -106,7 +106,8 @@
 	socket :: undefined | inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	protocol :: module(),
-	protocol_state :: any()
+	protocol_state :: any(),
+	last_error :: any()
 }).
 
 %% Connection.
@@ -505,8 +506,8 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 				_ -> {gun_http, http_opts}
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
-		{error, _} ->
-			retry(State, Retries)
+		{error, Reason} ->
+			retry(State#state{last_error=Reason}, Retries)
 	end;
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
 	TransportOpts = [binary, {active, false}
@@ -519,8 +520,8 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retr
 				[spdy] -> {gun_spdy, spdy_opts}
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
-		{error, _} ->
-			retry(State, Retries)
+		{error, Reason} ->
+			retry(State#state{last_error=Reason}, Retries)
 	end.
 
 up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, ProtoOptsKey) ->
@@ -532,11 +533,11 @@ up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, 
 down(State=#state{owner=Owner, opts=Opts, protocol=Protocol, protocol_state=ProtoState}, Reason) ->
 	{KilledStreams, UnprocessedStreams} = Protocol:down(ProtoState),
 	Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams, UnprocessedStreams},
-	retry(State#state{socket=undefined, protocol=undefined, protocol_state=undefined},
-		maps:get(retry, Opts, 5)).
+	retry(State#state{socket=undefined, protocol=undefined, protocol_state=undefined,
+		last_error=Reason}, maps:get(retry, Opts, 5)).
 
-retry(_, 0) ->
-	error(gone);
+retry(#state{last_error=Reason}, 0) ->
+	error({gone, Reason});
 retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(KeepaliveRef) ->
 	_ = erlang:cancel_timer(KeepaliveRef),
 	%% Flush if we have a keepalive message
