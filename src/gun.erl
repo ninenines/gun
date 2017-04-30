@@ -506,7 +506,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
 		{error, _} ->
-			retry(State, Retries - 1)
+			retry(State, Retries)
 	end;
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
 	TransportOpts = [binary, {active, false}
@@ -520,7 +520,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retr
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
 		{error, _} ->
-			retry(State, Retries - 1)
+			retry(State, Retries)
 	end.
 
 up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, ProtoOptsKey) ->
@@ -535,9 +535,8 @@ down(State=#state{owner=Owner, opts=Opts, protocol=Protocol, protocol_state=Prot
 	retry(State#state{socket=undefined, protocol=undefined, protocol_state=undefined},
 		maps:get(retry, Opts, 5)).
 
-%% Exit normally if the retry functionality has been disabled.
 retry(_, 0) ->
-	ok;
+	error(gone);
 retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(KeepaliveRef) ->
 	_ = erlang:cancel_timer(KeepaliveRef),
 	%% Flush if we have a keepalive message
@@ -546,13 +545,10 @@ retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(Keepa
 	after 0 ->
 		ok
 	end,
-	retry_loop(State#state{keepalive_ref=undefined}, Retries);
+	retry_loop(State#state{keepalive_ref=undefined}, Retries - 1);
 retry(State, Retries) ->
-	retry_loop(State, Retries).
+	retry_loop(State, Retries - 1).
 
-%% Too many retries, give up.
-retry_loop(_, 0) ->
-	error(gone);
 retry_loop(State=#state{parent=Parent, opts=Opts}, Retries) ->
 	_ = erlang:send_after(maps:get(retry_timeout, Opts, 5000), self(), retry),
 	receive
