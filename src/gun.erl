@@ -167,7 +167,7 @@ check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 	end;
 check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	check_options(Opts);
-check_options([{retry_timeout, T}|Opts]) when is_integer(T) > 0 ->
+check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
 check_options([{spdy_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_spdy:check_options(ProtoOpts) of
