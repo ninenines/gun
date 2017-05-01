@@ -75,6 +75,12 @@ gone_reason(_) ->
 		error(timeout)
 	end.
 
+info(_) ->
+	doc("Get info from the Gun connection."),
+	{ok, Pid} = gun:open("google.com", 443),
+	#{sock_ip := _, sock_port := _} = gun:info(Pid),
+	ok.
+
 reply_to(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
 	do_reply_to(http),

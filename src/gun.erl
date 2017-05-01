@@ -17,6 +17,7 @@
 %% Connection.
 -export([open/2]).
 -export([open/3]).
+-export([info/1]).
 -export([close/1]).
 -export([shutdown/1]).
 
@@ -217,6 +218,12 @@ consider_tracing(ServerPid, #{trace := true}) ->
 	dbg:p(ServerPid, all);
 consider_tracing(_, _) ->
 	ok.
+
+-spec info(pid()) -> map().
+info(ServerPid) ->
+	{_, #state{socket=Socket, transport=Transport}} = sys:get_state(ServerPid),
+	{ok, {SockIP, SockPort}} = Transport:sockname(Socket),
+	#{sock_ip => SockIP, sock_port => SockPort}.
 
 -spec close(pid()) -> ok.
 close(ServerPid) ->
