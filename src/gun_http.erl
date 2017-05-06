@@ -420,7 +420,7 @@ request_io_from_headers(Headers) ->
 
 response_io_from_headers(<<"HEAD">>, _, _, _) ->
 	head;
-response_io_from_headers(_, _, 204, _) ->
+response_io_from_headers(_, _, Status, _) when (Status =:= 204) or (Status =:= 304) ->
 	head;
 response_io_from_headers(_, Version, _Status, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
