@@ -175,8 +175,7 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 		{101, {websocket, _, WsKey, WsExtensions, WsOpts}} ->
 			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsOpts);
 		_ ->
-			In = response_io_from_headers(Method, Version, Status, Headers),
-			IsFin = case In of head -> fin; _ -> nofin end,
+			{In, IsFin} = InFin = response_io_from_headers(Method, Version, Status, Headers),
 			Handlers = case IsAlive of
 				false ->
 					ok;
@@ -185,13 +184,16 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 						{websocket, SR, _, _, _} -> SR;
 						_ -> StreamRef
 					end,
-					ReplyTo ! {gun_response, self(), StreamRef2,
-						IsFin, Status, Headers},
-					case IsFin of
-						fin -> undefined;
-						nofin ->
-							gun_content_handler:init(ReplyTo, StreamRef,
-								Status, Headers, Handlers0)
+					case InFin of
+						{head, nofin} ->
+							ReplyTo ! {gun_inform, self(), StreamRef2, Status, Headers},
+							undefined;
+						{_, fin} ->
+							ReplyTo ! {gun_response, self(), StreamRef2, IsFin, Status, Headers},
+							undefined;
+						{_, nofin} ->
+							ReplyTo ! {gun_response, self(), StreamRef2, IsFin, Status, Headers},
+							gun_content_handler:init(ReplyTo, StreamRef, Status, Headers, Handlers0)
 					end
 			end,
 			Conn2 = if
@@ -387,25 +389,27 @@ request_io_from_headers(Headers) ->
 	end.
 
 response_io_from_headers(<<"HEAD">>, _, _, _) ->
-	head;
+	{head, fin};
 response_io_from_headers(_, _, Status, _) when (Status =:= 204) or (Status =:= 304) ->
-	head;
+	{head, fin};
+response_io_from_headers(_, _, Status, _) when (Status >= 100) andalso (Status < 200) ->
+	{head, nofin};
 response_io_from_headers(_, Version, _Status, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, <<"0">>} ->
-			head;
+			{head, fin};
 		{_, Length} ->
-			{body, cow_http_hd:parse_content_length(Length)};
+			{{body, cow_http_hd:parse_content_length(Length)}, nofin};
 		_ when Version =:= 'HTTP/1.0' ->
-			body_close;
+			{body_close, nofin};
 		_ ->
 			case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
 				false ->
-					body_close;
+					{body_close, nofin};
 				{_, TE} ->
 					case cow_http_hd:parse_transfer_encoding(TE) of
-						[<<"chunked">>] -> body_chunked;
-						[<<"identity">>] -> body_close
+						[<<"chunked">>] -> {body_chunked, nofin};
+						[<<"identity">>] -> {body_close, nofin}
 					end
 			end
 	end.
