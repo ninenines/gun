@@ -144,13 +144,19 @@ frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 				{Headers0, DecodeState} ->
 					case lists:keytake(<<":status">>, 1, Headers0) of
 						{value, {_, Status}, Headers} ->
-							ReplyTo ! {gun_response, self(), StreamRef, IsFin, parse_status(Status), Headers},
-							Handlers = case IsFin of
-								fin -> undefined;
-								nofin ->
-									gun_content_handler:init(ReplyTo, StreamRef,
-										Status, Headers, Handlers0)
-							end,
+							Handlers =
+								case parse_status(Status) of
+									Val when (Val >= 100) andalso (Val < 200) ->
+										ReplyTo ! {gun_inform, self(), StreamRef, Val, Headers},
+										undefined;
+									Val ->
+										ReplyTo ! {gun_response, self(), StreamRef, IsFin, Val, Headers},
+										case IsFin of
+											fin -> undefined;
+											nofin ->
+												gun_content_handler:init(ReplyTo, StreamRef, Status, Headers, Handlers0)
+										end
+								end,
 							remote_fin(Stream#stream{handler_state=Handlers},
 								State#http2_state{decode_state=DecodeState}, IsFin);
 						false ->
