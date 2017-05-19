@@ -78,7 +78,7 @@
 
 %% Internals.
 -export([start_link/4]).
--export([init/5]).
+-export([proc_lib_hack/5]).
 -export([system_continue/3]).
 -export([system_terminate/4]).
 -export([system_code_change/4]).
@@ -527,8 +527,18 @@ dbg_send_raw(ServerPid, Data) ->
 %% Internals.
 
 start_link(Owner, Host, Port, Opts) ->
-	proc_lib:start_link(?MODULE, init,
+	proc_lib:start_link(?MODULE, proc_lib_hack,
 		[self(), Owner, Host, Port, Opts]).
+
+proc_lib_hack(Parent, Owner, Host, Port, Opts) ->
+	try
+		init(Parent, Owner, Host, Port, Opts)
+	catch
+		_:normal -> exit(normal);
+		_:shutdown -> exit(shutdown);
+		_:Reason = {shutdown, _} -> exit(Reason);
+		_:Reason -> exit({Reason, erlang:get_stacktrace()})
+	end.
 
 init(Parent, Owner, Host, Port, Opts) ->
 	ok = proc_lib:init_ack(Parent, {ok, self()}),
