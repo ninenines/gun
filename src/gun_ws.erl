@@ -54,7 +54,7 @@ do_check_options([{compress, B}|Opts]) when B =:= true; B =:= false ->
 do_check_options([{default_protocol, M}|Opts]) when is_atom(M) ->
 	do_check_options(Opts);
 do_check_options([Opt={protocols, L}|Opts]) when is_list(L) ->
-	case lists:flatten([[is_binary(B), is_atom(M)] || {B, M} <- L]) of
+	case lists:usort(lists:flatten([[is_binary(B), is_atom(M)] || {B, M} <- L])) of
 		[true] -> do_check_options(Opts);
 		_ -> {error, {options, {ws, Opt}}}
 	end;
