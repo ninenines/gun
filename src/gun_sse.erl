@@ -45,5 +45,11 @@ handle(IsFin, Data, State=#state{reply_to=ReplyTo, stream_ref=StreamRef, sse_sta
 			ReplyTo ! {gun_sse, self(), StreamRef, Event},
 			handle(IsFin, <<>>, State#state{sse_state=SSE});
 		{more, SSE} ->
+			case IsFin of
+				fin ->
+					ReplyTo ! {gun_sse, self(), StreamRef, fin};
+				_ ->
+					ok
+			end,
 			{done, State#state{sse_state=SSE}}
 	end.
