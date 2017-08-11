@@ -18,6 +18,7 @@
 -export([name/0]).
 -export([init/7]).
 -export([handle/2]).
+-export([close/2]).
 -export([send/2]).
 -export([down/1]).
 
@@ -135,6 +136,8 @@ close(Reason, State) ->
 %% @todo We need to send a close frame from gun:ws_loop on close.
 %		Normal when Normal =:= stop; Normal =:= timeout ->
 %			send({close, 1000, <<>>}, State);
+		owner_gone ->
+			send({close, 1001, <<>>}, State);
 		{error, badframe} ->
 			send({close, 1002, <<>>}, State);
 		{error, badencoding} ->

@@ -769,6 +769,10 @@ ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
 		{shutdown, Owner} ->
 			%% @todo Protocol:shutdown? %% @todo close frame
 			ok;
+		{'DOWN', OwnerRef, process, Owner, Reason} ->
+			Protocol:close(owner_gone, ProtoState),
+			Transport:close(Socket),
+			error({owner_gone, Reason});
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{ws_loop, State});
