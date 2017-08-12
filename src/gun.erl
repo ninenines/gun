@@ -92,6 +92,7 @@
 
 -type opts() :: map().
 -export_type([opts/0]).
+%% @todo Add an option to disable/enable the notowner behavior.
 
 -type req_opts() :: map().
 -export_type([req_opts/0]).
@@ -102,9 +103,7 @@
 -type http2_opts() :: map().
 -export_type([http2_opts/0]).
 
--type spdy_opts() :: map().
--export_type([spdy_opts/0]).
-
+%% @todo keepalive
 -type ws_opts() :: map().
 -export_type([ws_opts/0]).
 
@@ -170,7 +169,7 @@ check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 	Len = length(L),
 	case length(lists:usort(L)) of
 		Len when Len > 0 ->
-			Check = lists:usort([(P =:= http) orelse (P =:= http2) orelse (P =:= spdy) || P <- L]),
+			Check = lists:usort([(P =:= http) orelse (P =:= http2) || P <- L]),
 			case Check of
 				[true] ->
 					check_options(Opts);
@@ -184,13 +183,6 @@ check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	check_options(Opts);
 check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
-check_options([{spdy_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
-	case gun_spdy:check_options(ProtoOpts) of
-		ok ->
-			check_options(Opts);
-		Error ->
-			Error
-	end;
 check_options([{trace, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);
 check_options([{transport, T}|Opts]) when T =:= tcp; T =:= ssl ->
@@ -213,7 +205,6 @@ consider_tracing(ServerPid, #{trace := true}) ->
 	dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
-	dbg:tpl(gun_spdy, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
 	dbg:p(ServerPid, all);
 consider_tracing(_, _) ->
@@ -344,6 +335,8 @@ data(ServerPid, StreamRef, IsFin, Data) ->
 
 %% Awaiting gun messages.
 
+%% @todo spec await await_body
+
 await(ServerPid, StreamRef) ->
 	MRef = monitor(process, ServerPid),
 	Res = await(ServerPid, StreamRef, 5000, MRef),
@@ -410,14 +403,14 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 		{error, timeout}
 	end.
 
--spec await_up(pid()) -> {ok, http | http2 | spdy} | {error, atom()}.
+-spec await_up(pid()) -> {ok, http | http2} | {error, atom()}.
 await_up(ServerPid) ->
 	MRef = monitor(process, ServerPid),
 	Res = await_up(ServerPid, 5000, MRef),
 	demonitor(MRef, [flush]),
 	Res.
 
--spec await_up(pid(), reference() | timeout()) -> {ok, http | http2 | spdy} | {error, atom()}.
+-spec await_up(pid(), reference() | timeout()) -> {ok, http | http2} | {error, atom()}.
 await_up(ServerPid, MRef) when is_reference(MRef) ->
 	await_up(ServerPid, 5000, MRef);
 await_up(ServerPid, Timeout) ->
@@ -426,7 +419,7 @@ await_up(ServerPid, Timeout) ->
 	demonitor(MRef, [flush]),
 	Res.
 
--spec await_up(pid(), timeout(), reference()) -> {ok, http | http2 | spdy} | {error, atom()}.
+-spec await_up(pid(), timeout(), reference()) -> {ok, http | http2} | {error, atom()}.
 await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
@@ -555,11 +548,10 @@ default_transport(443) -> ssl;
 default_transport(_) -> tcp.
 
 connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_ssl}, Retries) ->
-	Protocols = lists:flatten([case P of
+	Protocols = [case P of
 		http -> <<"http/1.1">>;
-		http2 -> <<"h2">>;
-		spdy -> [<<"spdy/3.1">>, <<"spdy/3">>]
-	end || P <- maps:get(protocols, Opts, [http2, spdy, http])]),
+		http2 -> <<"h2">>
+	end || P <- maps:get(protocols, Opts, [http2, http])],
 	TransportOpts = [binary, {active, false},
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
@@ -568,7 +560,6 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
 				{ok, <<"h2">>} -> {gun_http2, http2_opts};
-				{ok, <<"spdy/3", _/bits>>} -> {gun_spdy, spdy_opts};
 				_ -> {gun_http, http_opts}
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
@@ -582,8 +573,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retr
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case maps:get(protocols, Opts, [http]) of
 				[http] -> {gun_http, http_opts};
-				[http2] -> {gun_http2, http2_opts};
-				[spdy] -> {gun_spdy, spdy_opts}
+				[http2] -> {gun_http2, http2_opts}
 			end,
 			up(State, Socket, Protocol, ProtoOptsKey);
 		{error, Reason} ->
@@ -630,8 +620,7 @@ before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
 	%% @todo Might not be worth checking every time?
 	ProtoOptsKey = case Protocol of
 		gun_http -> http_opts;
-		gun_http2 -> http2_opts;
-		gun_spdy -> spdy_opts
+		gun_http2 -> http2_opts
 	end,
 	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
 	Keepalive = maps:get(keepalive, ProtoOpts, 5000),
@@ -734,7 +723,7 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, por
 			loop(State)
 	end.
 
-ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
+ws_loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, socket=Socket,
 		transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
 	Transport:setopts(Socket, [{active, once}]),
