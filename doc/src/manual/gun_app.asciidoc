@@ -2,14 +2,14 @@
 
 == Name
 
-gun - Erlang HTTP client with support for HTTP/1.1, SPDY and Websocket.
+gun - Erlang HTTP client with support for HTTP/1.1, HTTP/2 and Websocket.
 
 == Dependencies
 
 The `gun` application uses the Erlang applications `ranch`
 for abstracting TCP and TLS over a common interface, and
 the `ssl` application for TLS support, required for HTTPS
-and SPDY support. In addition, Gun requires the `crypto`
+and secure HTTP/2 support. In addition, Gun requires the `crypto`
 application (a dependency of `ssl`) for Websocket.
 
 These dependencies must be started for the `gun`

@@ -1,7 +1,7 @@
 == HTTP
 
 This chapter describes how to use the Gun client for
-communicating with an HTTP/1.1 or SPDY server.
+communicating with an HTTP/1.1 or HTTP/2 server.
 
 === Streams
 
@@ -130,7 +130,7 @@ the request has no body.
 It is recommended to send the content-length header if you
 know it in advance, although this is not required. If it
 is not set, HTTP/1.1 will use the chunked transfer-encoding,
-and SPDY will continue normally as it is chunked by design.
+and HTTP/2 will continue normally as it is chunked by design.
 
 .POST "/organizations/ninenines" with delayed body
 
@@ -234,7 +234,7 @@ data messages following. If it contains `fin` there will be
 no data messages. If it contains `nofin` then one or more data
 messages will follow.
 
-When using SPDY this value is sent with the frame and simply
+When using HTTP/2 this value is sent with the frame and simply
 passed on in the message. When using HTTP/1.1 however Gun must
 guess whether data will follow by looking at the response headers.
 
@@ -309,7 +309,7 @@ end.
 
 === Handling streams pushed by the server
 
-The SPDY protocol allows the server to push more than one
+The HTTP/2 protocol allows the server to push more than one
 resource for every request. It will start sending those
 extra resources before it starts sending the response itself,
 so Gun will send you `gun_push` messages before `gun_response`

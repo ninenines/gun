@@ -1,11 +1,11 @@
 = Gun
 
-Gun is an Erlang HTTP client with support for HTTP/1.1, SPDY and Websocket.
+Gun is an Erlang HTTP client with support for HTTP/1.1, HTTP/2 and Websocket.
 
 == Goals
 
 Gun aims to provide an *easy to use* client compatible with
-HTTP, SPDY and Websocket.
+HTTP/1.1, HTTP/2 and Websocket.
 
 Gun is *always connected*. It will maintain a permanent
 connection to the server, reopening it as soon as the server
@@ -19,7 +19,7 @@ developers to focus on writing their code without worrying.
 The project is currently sponsored by
 https://kato.im[Kato.im] and https://sameroom.io[Sameroom].
 
-The SPDY implementation was sponsored by
+The now removed SPDY implementation was sponsored by
 http://www.leofs.org[LeoFS Cloud Storage].
 
 == Support

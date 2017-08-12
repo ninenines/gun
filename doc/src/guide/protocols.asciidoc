@@ -37,29 +37,29 @@ It provides the `gun:ws_upgrade/{2,3,4}` function for that
 purpose. A `gun_ws_upgrade` message will be sent on success;
 a `gun_response` message otherwise.
 
-=== SPDY
+=== HTTP/2
 
-SPDY is a binary protocol based on HTTP, compatible with
+HTTP/2 is a binary protocol based on HTTP, compatible with
 the HTTP semantics, that reduces the complexity of parsing
 requests and responses, compresses the HTTP headers and
 allows the server to push multiple responses to a single
 request.
 
-The SPDY interface is very similar to HTTP/1.1, so this
+The HTTP/2 interface is very similar to HTTP/1.1, so this
 section instead focuses on the differences in the interface
 for the two protocols.
 
-Because a SPDY server can push multiple responses to a
+Because a HTTP/2 server can push multiple responses to a
 single request, Gun might send `gun_push` messages for
 every push received. They can be ignored safely if they
 are not needed.
 
-The `gun:cancel/2` function will use the SPDY stream
+The `gun:cancel/2` function will use the HTTP/2 stream
 cancellation mechanism which allows Gun to inform the
 server to stop sending a response for this particular
 request, saving resources.
 
-It is not possible to upgrade a SPDY connection to Websocket
+It is not possible to upgrade an HTTP/2 connection to Websocket
 due to protocol limitations.
 
 === Websocket
@@ -87,33 +87,33 @@ current protocol.
 .Supported operations per protocol
 [cols="<,3*^",options="header"]
 |===
-| Operation  | HTTP/1.1 | SPDY | Websocket
-| delete     | yes      | yes  | no
-| get        | yes      | yes  | no
-| head       | yes      | yes  | no
-| options    | yes      | yes  | no
-| patch      | yes      | yes  | no
-| post       | yes      | yes  | no
-| put        | yes      | yes  | no
-| request    | yes      | yes  | no
-| data       | yes      | yes  | no
-| await      | yes      | yes  | no
-| await_body | yes      | yes  | no
-| flush      | yes      | yes  | no
-| cancel     | yes      | yes  | no
-| ws_upgrade | yes      | no   | no
-| ws_send    | no       | no   | yes
+| Operation  | HTTP/1.1 | HTTP/2 | Websocket
+| delete     | yes      | yes    | no
+| get        | yes      | yes    | no
+| head       | yes      | yes    | no
+| options    | yes      | yes    | no
+| patch      | yes      | yes    | no
+| post       | yes      | yes    | no
+| put        | yes      | yes    | no
+| request    | yes      | yes    | no
+| data       | yes      | yes    | no
+| await      | yes      | yes    | no
+| await_body | yes      | yes    | no
+| flush      | yes      | yes    | no
+| cancel     | yes      | yes    | no
+| ws_upgrade | yes      | no     | no
+| ws_send    | no       | no     | yes
 |===
 
 .Messages sent per protocol
 [cols="<,3*^",options="header"]
 |===
-| Message               | HTTP/1.1 | SPDY | Websocket
-| gun_push              | no       | yes  | no
-| gun_response          | yes      | yes  | no
-| gun_data              | yes      | yes  | no
-| gun_error (StreamRef) | yes      | yes  | no
-| gun_error             | yes      | yes  | yes
-| gun_ws_upgrade        | yes      | no   | no
-| gun_ws                | no       | no   | yes
+| Message               | HTTP/1.1 | HTTP/2 | Websocket
+| gun_push              | no       | yes    | no
+| gun_response          | yes      | yes    | no
+| gun_data              | yes      | yes    | no
+| gun_error (StreamRef) | yes      | yes    | no
+| gun_error             | yes      | yes    | yes
+| gun_ws_upgrade        | yes      | no     | no
+| gun_ws                | no       | no     | yes
 |===

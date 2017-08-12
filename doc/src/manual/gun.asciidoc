@@ -7,8 +7,8 @@ gun - asynchronous HTTP client
 == Description
 
 The `gun` module provides an asynchronous interface for
-connecting and communicating with Web servers over SPDY,
-HTTP or Websocket.
+connecting and communicating with Web servers over HTTP,
+HTTP/2 or Websocket.
 
 == Types
 
@@ -22,21 +22,21 @@ connect_timeout => timeout()::
 	Connection timeout. Defaults to `infinity`.
 http_opts => http_opts()::
 	Options specific to the HTTP protocol. See below.
-protocols => [http | spdy]::
+http2_opts => http2_opts()::
+	Options specific to the HTTP/2 protocol. See below.
+protocols => [http | http2]::
 	Ordered list of preferred protocols. When the transport is tcp,
 	this list must contain exactly one protocol. When the transport
 	is ssl, this list must contain at least one protocol and will be
-	used using the NPN protocol negotiation method. When the server
-	does not support NPN then http will always be used. Defaults to
-	[http] when the transport is tcp, and [spdy, http] when the
+	used using the ALPN protocol negotiation method. When the server
+	does not support ALPN then http will always be used. Defaults to
+	[http] when the transport is tcp, and [http2, http] when the
 	transport is ssl.
 retry => non_neg_integer()::
 	Number of times Gun will try to reconnect on failure before giving up.
 	Defaults to 5.
 retry_timeout => pos_integer()::
 	Time between retries in milliseconds. Defaults to 5000.
-spdy_opts => spdy_opts()::
-	Options specific to the SPDY protocol. See below.
 trace => boolean()::
 	Whether to enable `dbg` tracing of the connection process. Should
 	only be used during debugging. Defaults to false.
@@ -70,6 +70,15 @@ transform_header_name => fun((LowercaseName :: binary()) -> TransformedName :: b
 version => 'HTTP/1.1' | 'HTTP/1.0'::
 	HTTP version to use. Defaults to 'HTTP/1.1'.
 
+=== http2_opts() = map()
+
+Configuration for the HTTP/2 protocol.
+
+The following keys are defined:
+
+keepalive => pos_integer()::
+	Time between pings in milliseconds. Defaults to 5000.
+
 === req_opts() = map()
 
 Configuration for a particular request.
@@ -78,15 +87,6 @@ The following keys are defined:
 
 reply_to => pid()::
 	The pid of a process that is responsible for the response handling.
-
-=== spdy_opts() = map()
-
-Configuration for the SPDY protocol.
-
-The following keys are defined:
-
-keepalive => pos_integer()::
-	Time between pings in milliseconds. Defaults to 5000.
 
 === ws_opts() = map()
 
@@ -107,7 +107,7 @@ messages being sent.
 === {gun_up, ConnPid, Protocol}
 
 ConnPid = pid():: The pid of the Gun connection process.
-Protocol = http | spdy:: The protocol selected for this connection.
+Protocol = http | http2:: The protocol selected for this connection.
 
 The connection is up.
 
@@ -127,7 +127,7 @@ subsequent messages ignored.
 === {gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams}
 
 ConnPid = pid():: The pid of the Gun connection process.
-Protocol = http | spdy | ws:: The protocol in use when the connection was lost.
+Protocol = http | http2 | ws:: The protocol in use when the connection was lost.
 Reason = normal | closed | {error, atom()}:: The reason for the loss of the connection.
 KilledStreams = [reference()]:: List of streams that have been brutally terminated.
 UnprocessedStreams = [reference()]:: List of streams that have not been processed by the server.
@@ -165,7 +165,7 @@ Headers = [{binary(), binary()}]:: Headers @todo
 
 A resource pushed alongside an HTTP response.
 
-This message can only be sent when the protocol is SPDY.
+This message can only be sent when the protocol is HTTP/2.
 
 @todo I fear we also need the scheme; resource is identified by URI
 @todo Perhaps we really should send the URI entirely, because cache
@@ -685,7 +685,7 @@ the stream and stop relaying messages.
 @todo of a response Gun may also attempt to reconnect rather than
 @todo receive the entire response body.
 
-SPDY streams can however be cancelled at any time.
+HTTP/2 streams can however be cancelled at any time.
 
 === ws_upgrade(ConnPid, Path) -> ws_upgrade(ConnPid, Path, [], #{})
 

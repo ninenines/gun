@@ -1,10 +1,10 @@
 == Introduction
 
-Gun is an Erlang HTTP client with support for HTTP/1.1, SPDY and Websocket.
+Gun is an Erlang HTTP client with support for HTTP/1.1, HTTP/2 and Websocket.
 
 === Prerequisites
 
-Knowledge of Erlang, but also of the HTTP/1.1, SPDY and Websocket
+Knowledge of Erlang, but also of the HTTP/1.1, HTTP/2 and Websocket
 protocols is required in order to read this guide.
 
 === Supported platforms

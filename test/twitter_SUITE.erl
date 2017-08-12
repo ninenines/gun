@@ -16,7 +16,7 @@
 -compile(export_all).
 
 all() ->
-	[http, http2, spdy].
+	[http, http2].
 
 http(_) ->
 	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [http]}),
@@ -26,11 +26,6 @@ http(_) ->
 http2(_) ->
 	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [http2]}),
 	{ok, http2} = gun:await_up(Pid),
-	common(Pid).
-
-spdy(_) ->
-	{ok, Pid} = gun:open("twitter.com", 443, #{protocols => [spdy]}),
-	{ok, spdy} = gun:await_up(Pid),
 	common(Pid).
 
 common(Pid) ->
