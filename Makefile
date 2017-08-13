@@ -9,7 +9,7 @@ PROJECT_VERSION = 1.0.0-pre.2
 PLT_APPS = ssl
 CT_OPTS += -pa test -ct_hooks gun_ct_hook [] # -boot start_sasl
 
-CI_OTP ?= OTP-18.0.3 OTP-18.1.5 OTP-18.2.4.1 OTP-18.3.4.4 OTP-19.0.7 OTP-19.1.6
+CI_OTP ?= OTP-19.0.7 OTP-19.1.6 OTP-19.2.3 OTP-19.3.6.2 OTP-20.0.2
 #CI_HIPE ?= $(lastword $(CI_OTP))
 #CI_ERLLVM ?= $(CI_HIPE)
 
