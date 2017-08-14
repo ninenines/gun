@@ -110,6 +110,20 @@ info(_) ->
 	#{sock_ip := _, sock_port := _} = gun:info(Pid),
 	ok.
 
+keepalive_infinity(_) ->
+	doc("Ensure infinity for keepalive is accepted by all protocols."),
+	{ok, Pid} = gun:open("localhost", 12345, #{
+		http_opts => #{keepalive => infinity},
+		http2_opts => #{keepalive => infinity},
+		retry => 0}),
+	Ref = monitor(process, Pid),
+	receive
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end.
+
 reply_to(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
 	do_reply_to(http),

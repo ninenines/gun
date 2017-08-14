@@ -624,7 +624,10 @@ before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
 	end,
 	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
 	Keepalive = maps:get(keepalive, ProtoOpts, 5000),
-	KeepaliveRef = erlang:send_after(Keepalive, self(), keepalive),
+	KeepaliveRef = case Keepalive of
+		infinity -> undefined;
+		_ -> erlang:send_after(Keepalive, self(), keepalive)
+	end,
 	loop(State#state{keepalive_ref=KeepaliveRef}).
 
 loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, port=Port, opts=Opts,

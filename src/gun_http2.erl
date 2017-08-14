@@ -74,6 +74,8 @@ check_options(Opts) ->
 
 do_check_options([]) ->
 	ok;
+do_check_options([{keepalive, infinity}|Opts]) ->
+	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
 do_check_options([Opt={content_handlers, Handlers}|Opts]) ->

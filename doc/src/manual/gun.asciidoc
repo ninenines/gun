@@ -57,12 +57,12 @@ Configuration for the HTTP protocol.
 
 The following keys are defined:
 
-keepalive => pos_integer()::
+keepalive => timeout()::
 	Time between pings in milliseconds. Since the HTTP protocol has
 	no standardized way to ping the server, Gun will simply send an
 	empty line when the connection is idle. Gun only makes a best
 	effort here as servers usually have configurable limits to drop
-	idle connections. Defaults to 5000.
+	idle connections. Use `infinity` to disable. Defaults to 5000.
 transform_header_name => fun((LowercaseName :: binary()) -> TransformedName :: binary()) | undefined::
 	A function that will be applied to all header names before they
 	are sent to the server. Gun assumes that all header names are in
