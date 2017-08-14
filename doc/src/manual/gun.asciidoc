@@ -49,6 +49,8 @@ transport_opts => proplists:proplist()::
 ws_opts => ws_opts()::
 	Options specific to the Websocket protocol. See below.
 
+// @todo better spec for transport_opts
+
 === http_opts() = map()
 
 Configuration for the HTTP protocol.
