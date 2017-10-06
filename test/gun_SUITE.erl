@@ -57,7 +57,7 @@ detect_owner_gone(_) ->
 	end,
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{owner_gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, normal} ->
 			ok
 	after 1000 ->
 		true = erlang:is_process_alive(Pid),
@@ -86,7 +86,7 @@ detect_owner_gone_ws(_) ->
 	end,
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{owner_gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, normal} ->
 			ok
 	after 1000 ->
 		true = erlang:is_process_alive(Pid),

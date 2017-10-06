@@ -695,7 +695,7 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, por
 		{'DOWN', OwnerRef, process, Owner, Reason} ->
 			Protocol:close(ProtoState),
 			Transport:close(Socket),
-			error({owner_gone, Reason});
+			owner_gone(Reason);
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{loop, State});
@@ -764,7 +764,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, socket=Sock
 		{'DOWN', OwnerRef, process, Owner, Reason} ->
 			Protocol:close(owner_gone, ProtoState),
 			Transport:close(Socket),
-			error({owner_gone, Reason});
+			owner_gone(Reason);
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{ws_loop, State});
@@ -775,6 +775,11 @@ ws_loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, socket=Sock
 		Any ->
 			error_logger:error_msg("Unexpected message: ~w~n", [Any])
 	end.
+
+owner_gone(normal) -> exit(normal);
+owner_gone(shutdown) -> exit(shutdown);
+owner_gone(Shutdown = {shutdown, _}) -> exit(Shutdown);
+owner_gone(Reason) -> error({owner_gone, Reason}).
 
 system_continue(_, _, {retry_loop, State, Retry}) ->
 	retry_loop(State, Retry);
