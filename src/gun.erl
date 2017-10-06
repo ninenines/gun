@@ -353,6 +353,8 @@ await(ServerPid, StreamRef, Timeout) ->
 
 await(ServerPid, StreamRef, Timeout, MRef) ->
 	receive
+		{gun_inform, ServerPid, StreamRef, Status, Headers} ->
+			{inform, Status, Headers};
 		{gun_response, ServerPid, StreamRef, IsFin, Status, Headers} ->
 			{response, IsFin, Status, Headers};
 		{gun_data, ServerPid, StreamRef, IsFin, Data} ->
@@ -442,6 +444,8 @@ flush_pid(ServerPid) ->
 			flush_pid(ServerPid);
 		{gun_down, ServerPid, _, _, _, _} ->
 			flush_pid(ServerPid);
+		{gun_inform, ServerPid, _, _, _} ->
+			flush_pid(ServerPid);
 		{gun_response, ServerPid, _, _, _, _} ->
 			flush_pid(ServerPid);
 		{gun_data, ServerPid, _, _, _} ->
@@ -464,6 +468,8 @@ flush_pid(ServerPid) ->
 
 flush_ref(StreamRef) ->
 	receive
+		{gun_inform, _, StreamRef, _, _} ->
+			flush_pid(StreamRef);
 		{gun_response, _, StreamRef, _, _, _} ->
 			flush_ref(StreamRef);
 		{gun_data, _, StreamRef, _, _} ->
