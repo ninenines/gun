@@ -144,15 +144,22 @@ frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 				{Headers0, DecodeState} ->
 					case lists:keytake(<<":status">>, 1, Headers0) of
 						{value, {_, Status}, Headers} ->
-							ReplyTo ! {gun_response, self(), StreamRef, IsFin, parse_status(Status), Headers},
-							Handlers = case IsFin of
-								fin -> undefined;
-								nofin ->
-									gun_content_handler:init(ReplyTo, StreamRef,
-										Status, Headers, Handlers0)
-							end,
-							remote_fin(Stream#stream{handler_state=Handlers},
-								State#http2_state{decode_state=DecodeState}, IsFin);
+							IntStatus = parse_status(Status),
+							if
+								IntStatus >= 100, IntStatus =< 199 ->
+									ReplyTo ! {gun_inform, self(), StreamRef, IntStatus, Headers},
+									State#http2_state{decode_state=DecodeState};
+								true ->
+									ReplyTo ! {gun_response, self(), StreamRef, IsFin, parse_status(Status), Headers},
+									Handlers = case IsFin of
+										fin -> undefined;
+										nofin ->
+											gun_content_handler:init(ReplyTo, StreamRef,
+												Status, Headers, Handlers0)
+									end,
+									remote_fin(Stream#stream{handler_state=Handlers},
+										State#http2_state{decode_state=DecodeState}, IsFin)
+							end;
 						false ->
 							stream_reset(State, StreamID, {stream_error, protocol_error,
 								'Malformed response; missing :status in HEADERS frame. (RFC7540 8.1.2.4)'})

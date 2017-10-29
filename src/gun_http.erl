@@ -174,6 +174,9 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 	case {Status, StreamRef} of
 		{101, {websocket, _, WsKey, WsExtensions, WsOpts}} ->
 			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsOpts);
+		{_, _} when Status >= 100, Status =< 199 ->
+			ReplyTo ! {gun_inform, self(), stream_ref(StreamRef), Status, Headers},
+			handle(Rest2, State);
 		_ ->
 			In = response_io_from_headers(Method, Version, Status, Headers),
 			IsFin = case In of head -> fin; _ -> nofin end,
@@ -181,11 +184,7 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 				false ->
 					ok;
 				true ->
-					StreamRef2 = case StreamRef of
-						{websocket, SR, _, _, _} -> SR;
-						_ -> StreamRef
-					end,
-					ReplyTo ! {gun_response, self(), StreamRef2,
+					ReplyTo ! {gun_response, self(), stream_ref(StreamRef),
 						IsFin, Status, Headers},
 					case IsFin of
 						fin -> undefined;
@@ -214,6 +213,9 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 						streams=[Stream#stream{handler_state=Handlers}|Tail]})
 			end
 	end.
+
+stream_ref({websocket, StreamRef, _, _, _}) -> StreamRef;
+stream_ref(StreamRef) -> StreamRef.
 
 send_data_if_alive(<<>>, State, nofin) ->
 	State;
