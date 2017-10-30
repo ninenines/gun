@@ -9,7 +9,7 @@ HTTP/1.1, HTTP/2 and Websocket.
 
 Gun is *always connected*. It will maintain a permanent
 connection to the server, reopening it as soon as the server
-closes it, saving time for the requests that come in.
+closes it, saves the time for the requests that come in.
 
 All connections are *supervised* automatically, allowing
 developers to focus on writing their code without worrying.
