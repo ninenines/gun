@@ -27,7 +27,7 @@
 -export([down/1]).
 -export([ws_upgrade/7]).
 
--type io() :: head | {body, non_neg_integer()} | body_close | body_chunked.
+-type io() :: head | {body, non_neg_integer()} | body_close | body_chunked | body_trailer.
 
 %% @todo Make that a record.
 -type websocket_info() :: {websocket, reference(), binary(), [binary()], gun:ws_opts()}. %% key, extensions, options
@@ -101,6 +101,7 @@ handle(Data, State=#http_state{in=head, buffer=Buffer}) ->
 %% Everything sent to the socket until it closes is part of the response body.
 handle(Data, State=#http_state{in=body_close}) ->
 	send_data_if_alive(Data, State, nofin);
+%% Chunked transfer-encoding may contain both data and trailers.
 handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 		buffer=Buffer, connection=Conn}) ->
 	Buffer2 = << Buffer/binary, Data/binary >>,
@@ -121,20 +122,48 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 			send_data_if_alive(Data2,
 				State#http_state{buffer=Rest, in_state=InState2},
 				nofin);
-		{done, _TotalLength, Rest} ->
+		{done, HasTrailers, Rest} ->
+			IsFin = case HasTrailers of
+				trailers -> nofin;
+				no_trailers -> fin
+			end,
 			%% I suppose it doesn't hurt to append an empty binary.
-			State1 = send_data_if_alive(<<>>, State, fin),
-			case Conn of
-				keepalive ->
+			State1 = send_data_if_alive(<<>>, State, IsFin),
+			case {HasTrailers, Conn} of
+				{trailers, _} ->
+					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer});
+				{no_trailers, keepalive} ->
 					handle(Rest, end_stream(State1#http_state{buffer= <<>>}));
-				close ->
+				{no_trailers, close} ->
 					close
 			end;
-		{done, Data2, _TotalLength, Rest} ->
-			State1 = send_data_if_alive(Data2, State, fin),
+		{done, Data2, HasTrailers, Rest} ->
+			IsFin = case HasTrailers of
+				trailers -> nofin;
+				no_trailers -> fin
+			end,
+			State1 = send_data_if_alive(Data2, State, IsFin),
+			case {HasTrailers, Conn} of
+				{trailers, _} ->
+					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer});
+				{no_trailers, keepalive} ->
+					handle(Rest, end_stream(State1#http_state{buffer= <<>>}));
+				{no_trailers, close} ->
+					close
+			end
+	end;
+handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]}) ->
+	Data2 = << Buffer/binary, Data/binary >>,
+	case binary:match(Data2, <<"\r\n\r\n">>) of
+		nomatch -> State#http_state{buffer=Data2};
+		{_, _} ->
+			{Trailers, Rest} = cow_http:parse_headers(Data2),
+			%% @todo We probably want to pass this to gun_content_handler?
+			ReplyTo ! {gun_trailers, self(), stream_ref(StreamRef), Trailers},
 			case Conn of
 				keepalive ->
-					handle(Rest, end_stream(State1#http_state{buffer= <<>>}));
+					handle(Rest, end_stream(State#http_state{buffer= <<>>}));
 				close ->
 					close
 			end

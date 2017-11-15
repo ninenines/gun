@@ -160,9 +160,15 @@ frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 									remote_fin(Stream#stream{handler_state=Handlers},
 										State#http2_state{decode_state=DecodeState}, IsFin)
 							end;
+						%% @todo For now we assume that it's a trailer if there's no :status.
+						%% A better state machine is needed to distinguish between that and errors.
 						false ->
-							stream_reset(State, StreamID, {stream_error, protocol_error,
-								'Malformed response; missing :status in HEADERS frame. (RFC7540 8.1.2.4)'})
+							%% @todo We probably want to pass this to gun_content_handler?
+							ReplyTo ! {gun_trailers, self(), StreamRef, Headers0},
+							remote_fin(Stream, State#http2_state{decode_state=DecodeState}, fin)
+%%						false ->
+%%							stream_reset(State, StreamID, {stream_error, protocol_error,
+%%								'Malformed response; missing :status in HEADERS frame. (RFC7540 8.1.2.4)'})
 					end
 			catch _:_ ->
 				terminate(State, StreamID, {connection_error, compression_error,

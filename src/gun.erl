@@ -359,6 +359,8 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{response, IsFin, Status, Headers};
 		{gun_data, ServerPid, StreamRef, IsFin, Data} ->
 			{data, IsFin, Data};
+		{gun_trailers, ServerPid, StreamRef, Trailers} ->
+			{trailers, Trailers};
 		{gun_push, ServerPid, StreamRef, NewStreamRef, Method, URI, Headers} ->
 			{push, NewStreamRef, Method, URI, Headers};
 		{gun_error, ServerPid, StreamRef, Reason} ->
@@ -395,6 +397,10 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 				<< Acc/binary, Data/binary >>);
 		{gun_data, ServerPid, StreamRef, fin, Data} ->
 			{ok, << Acc/binary, Data/binary >>};
+		%% It's OK to return trailers here because the client
+		%% specifically requested them.
+		{gun_trailers, ServerPid, StreamRef, Trailers} ->
+			{ok, Acc, Trailers};
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, Reason};
 		{gun_error, ServerPid, Reason} ->
