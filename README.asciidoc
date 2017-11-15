@@ -22,7 +22,7 @@ https://kato.im[Kato.im] and https://sameroom.io[Sameroom].
 The now removed SPDY implementation was sponsored by
 http://www.leofs.org[LeoFS Cloud Storage].
 
-== Support
+== Getting help
 
 * Official IRC Channel: #ninenines on irc.freenode.net
 * https://ninenines.eu/services/[Commercial Support]
