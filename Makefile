@@ -16,12 +16,11 @@ DEPS = cowlib ranch
 dep_cowlib = git https://github.com/ninenines/cowlib master
 dep_ranch = git https://github.com/ninenines/ranch master
 
-TEST_DEPS = ct_helper
+TEST_DEPS = ci.erlang.mk ct_helper
 dep_ct_helper = git https://github.com/extend/ct_helper.git master
 
 # CI configuration.
 
-BUILD_DEPS = ci.erlang.mk
 dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
 DEP_EARLY_PLUGINS = ci.erlang.mk
 
