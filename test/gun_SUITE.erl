@@ -202,3 +202,41 @@ transform_header_name(_) ->
 	Ref = gun:get(Pid, "/", [{<<"host">>, <<"google.com">>}]),
 	{response, _, _, _} = gun:await(Pid, Ref),
 	ok.
+
+unix_socket_connect(_) ->
+	case os:type() of
+		{win32, _} ->
+			doc("Unix Domain Sockets are not available on Windows.");
+		_ ->
+			do_unix_socket_connect()
+	end.
+
+do_unix_socket_connect() ->
+	doc("Ensure we can send data via a unix domain socket."),
+	DataDir = "/tmp/gun",
+	SocketPath = filename:join(DataDir, "gun.sock"),
+	ok = filelib:ensure_dir(SocketPath),
+	_ = file:delete(SocketPath),
+	TCPOpts = [
+		{ifaddr, {local, SocketPath}},
+		binary, {nodelay, true}, {active, false},
+		{packet, raw}, {reuseaddr, true}
+	],
+	{ok, LSock} = gen_tcp:listen(0, TCPOpts),
+	Tester = self(),
+	Acceptor = fun() ->
+		{ok, S} = gen_tcp:accept(LSock),
+		{ok, R} = gen_tcp:recv(S, 0),
+		Tester ! {recv, R},
+		ok = gen_tcp:close(S),
+		ok = gen_tcp:close(LSock)
+	end,
+	spawn(Acceptor),
+	{ok, Pid} = gun:open_unix(SocketPath, #{}),
+	_ = gun:get(Pid, "/", [{<<"host">>, <<"localhost">>}]),
+	receive
+		{recv, _} ->
+			ok
+	after 250 ->
+		error(timeout)
+	end.
