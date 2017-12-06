@@ -289,6 +289,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 	Conn = conn_from_headers(Version, Headers2),
 	Out = request_io_from_headers(Headers2),
 	Headers4 = case Out of
+		body_chunked when Version =:= 'HTTP/1.0' -> Headers3;
 		body_chunked -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers3];
 		_ -> Headers3
 	end,
