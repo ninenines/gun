@@ -17,6 +17,7 @@
 %% Connection.
 -export([open/2]).
 -export([open/3]).
+-export([open_unix/2]).
 -export([info/1]).
 -export([close/1]).
 -export([shutdown/1]).
@@ -134,6 +135,24 @@ open(Host, Port) ->
 open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
 	case check_options(maps:to_list(Opts)) of
 		ok ->
+			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
+				OK = {ok, ServerPid} ->
+					consider_tracing(ServerPid, Opts),
+					OK;
+				StartError ->
+					StartError
+			end;
+		CheckError ->
+			CheckError
+	end.
+
+-spec open_unix(Path::string(), opts())
+    -> {ok, pid()} | {error, any()}.
+open_unix(SocketPath, Opts) ->
+    Host = {local, SocketPath},
+    Port = 0,
+    case check_options(maps:to_list(Opts)) of
+        ok ->
 			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
 				OK = {ok, ServerPid} ->
 					consider_tracing(ServerPid, Opts),
