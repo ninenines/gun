@@ -133,26 +133,18 @@ open(Host, Port) ->
 -spec open(inet:hostname(), inet:port_number(), opts())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
-	case check_options(maps:to_list(Opts)) of
-		ok ->
-			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
-				OK = {ok, ServerPid} ->
-					consider_tracing(ServerPid, Opts),
-					OK;
-				StartError ->
-					StartError
-			end;
-		CheckError ->
-			CheckError
-	end.
+    open_(Host, Port, Opts).
 
 -spec open_unix(Path::string(), opts())
     -> {ok, pid()} | {error, any()}.
 open_unix(SocketPath, Opts) ->
     Host = {local, SocketPath},
     Port = 0,
-    case check_options(maps:to_list(Opts)) of
-        ok ->
+    open_(Host, Port, Opts).
+
+open_(Host, Port, Opts) ->
+	case check_options(maps:to_list(Opts)) of
+		ok ->
 			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
 				OK = {ok, ServerPid} ->
 					consider_tracing(ServerPid, Opts),
