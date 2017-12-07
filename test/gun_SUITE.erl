@@ -15,7 +15,7 @@
 -module(gun_SUITE).
 -compile(export_all).
 
--import(ct_helper, [doc/1]).
+-import(ct_helper, [doc/1, config/2]).
 
 all() ->
 	ct_helper:all(?MODULE).
@@ -201,3 +201,30 @@ transform_header_name(_) ->
 	Ref = gun:get(Pid, "/", [{<<"host">>, <<"google.com">>}]),
 	{response, _, _, _} = gun:await(Pid, Ref),
 	ok.
+
+unix_socket_connect(_) ->
+    doc("Ensure we can send data via a unix domain socket."),
+    %% TODO This needs to be a CT-contained directory, not hard-coded.
+    SocketPath = "/tmp/gun.sock",
+    _ = file:delete(SocketPath),
+    TCPOpts = [{ifaddr, {local, SocketPath}},
+               binary, {nodelay, true}, {active, false},
+               {packet, raw}, {reuseaddr, true}],
+    {ok, LSock} = gen_tcp:listen(0, TCPOpts),
+    Tester = self(),
+    Acceptor = fun() ->
+                       {ok, S} = gen_tcp:accept(LSock),
+                       {ok, R} = gen_tcp:recv(S, 0),
+                       Tester ! {recv, R},
+                       ok = gen_tcp:close(S),
+                       ok = gen_tcp:close(LSock)
+               end,
+    spawn(Acceptor),
+    {ok, Pid} = gun:open_unix(SocketPath, #{}),
+    _ref = gun:get(Pid, "/", [{<<"host">>, <<"localhost">>}]),
+    receive
+        {recv, _} ->
+            ok
+    after 250 ->
+        error(timeout)
+    end.
