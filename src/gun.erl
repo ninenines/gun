@@ -133,16 +133,14 @@ open(Host, Port) ->
 -spec open(inet:hostname(), inet:port_number(), opts())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
-    open_(Host, Port, Opts).
+    do_open(Host, Port, Opts).
 
 -spec open_unix(Path::string(), opts())
     -> {ok, pid()} | {error, any()}.
 open_unix(SocketPath, Opts) ->
-    Host = {local, SocketPath},
-    Port = 0,
-    open_(Host, Port, Opts).
+    do_open({local, SocketPath}, 0, Opts).
 
-open_(Host, Port, Opts) ->
+do_open(Host, Port, Opts) ->
 	case check_options(maps:to_list(Opts)) of
 		ok ->
 			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
