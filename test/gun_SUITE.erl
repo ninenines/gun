@@ -15,7 +15,7 @@
 -module(gun_SUITE).
 -compile(export_all).
 
--import(ct_helper, [doc/1, config/2]).
+-import(ct_helper, [doc/1]).
 
 all() ->
 	ct_helper:all(?MODULE).
@@ -203,9 +203,18 @@ transform_header_name(_) ->
 	ok.
 
 unix_socket_connect(_) ->
+    case os:type() of
+        {win32, _} ->
+            doc("Unix Domain Sockets are not available on Windows.");
+        _ ->
+            do_unix_socket_connect()
+    end.
+
+do_unix_socket_connect() ->
     doc("Ensure we can send data via a unix domain socket."),
-    %% TODO This needs to be a CT-contained directory, not hard-coded.
-    SocketPath = "/tmp/gun.sock",
+    DataDir = "/tmp/gun",
+    SocketPath = filename:join(DataDir, "gun.sock"),
+    ok = filelib:ensure_dir(SocketPath),
     _ = file:delete(SocketPath),
     TCPOpts = [{ifaddr, {local, SocketPath}},
                binary, {nodelay, true}, {active, false},
