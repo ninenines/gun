@@ -1,4 +1,4 @@
 -module(fake_transport).
--compile(export_all).
+-export([send/2]).
 
 send(_, _) -> ok.

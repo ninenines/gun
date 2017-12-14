@@ -14,6 +14,7 @@
 
 -module(twitter_SUITE).
 -compile(export_all).
+-compile(nowarn_export_all).
 
 all() ->
 	[http, http2].
