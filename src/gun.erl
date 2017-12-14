@@ -601,7 +601,7 @@ down(State=#state{owner=Owner, opts=Opts, protocol=Protocol, protocol_state=Prot
 		last_error=Reason}, maps:get(retry, Opts, 5)).
 
 retry(#state{last_error=Reason}, 0) ->
-	error({gone, Reason});
+	exit({shutdown, Reason});
 retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(KeepaliveRef) ->
 	_ = erlang:cancel_timer(KeepaliveRef),
 	%% Flush if we have a keepalive message
@@ -784,6 +784,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, socket=Sock
 			error_logger:error_msg("Unexpected message: ~w~n", [Any])
 	end.
 
+-spec owner_gone(_) -> no_return().
 owner_gone(normal) -> exit(normal);
 owner_gone(shutdown) -> exit(shutdown);
 owner_gone(Shutdown = {shutdown, _}) -> exit(Shutdown);

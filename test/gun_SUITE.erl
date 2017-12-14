@@ -25,7 +25,7 @@ connect_timeout(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{connect_timeout => 1000, retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
 	after 5000 ->
 		error(timeout)
@@ -36,7 +36,7 @@ connect_timeout_infinity(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{connect_timeout => infinity, retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
 	after 5000 ->
 		error(timeout)
@@ -72,7 +72,7 @@ detect_owner_gone_ws(_) ->
 		gun:await_up(ConnPid),
 		gun:ws_upgrade(ConnPid, "/", []),
 		receive
-			{gun_ws_upgrade, Pid, ok, _} ->
+			{gun_ws_upgrade, ConnPid, ok, _} ->
 				ok
 		after 1000 ->
 			error(timeout)
@@ -93,12 +93,12 @@ detect_owner_gone_ws(_) ->
 		error(timeout)
 	end.
 
-gone_reason(_) ->
+shutdown_reason(_) ->
 	doc("The last connection failure must be propagated."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, econnrefused}, _}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, econnrefused}} ->
 			ok
 	after 200 ->
 		error(timeout)
@@ -118,7 +118,7 @@ keepalive_infinity(_) ->
 		retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
 	after 5000 ->
 		error(timeout)
@@ -155,7 +155,7 @@ retry_0(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
 	after 200 ->
 		error(timeout)
@@ -166,7 +166,7 @@ retry_1(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
 	after 700 ->
 		error(timeout)
@@ -177,16 +177,16 @@ retry_timeout(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 1000}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
-			error(gone_too_early)
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
+			error(shutdown_too_early)
 	after 800 ->
 		ok
 	end,
 	receive
-		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
 	after 400 ->
-		error(gone_too_late)
+		error(shutdown_too_late)
 	end.
 
 transform_header_name(_) ->
