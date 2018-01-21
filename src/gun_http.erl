@@ -455,7 +455,7 @@ is_stream(#http_state{streams=Streams}, StreamRef) ->
 cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 	Streams2 = [case Ref of
 		StreamRef ->
-			{Ref, false};
+			Tuple#stream{is_alive=false};
 		_ ->
 			Tuple
 	end || Tuple = #stream{ref=Ref} <- Streams],
