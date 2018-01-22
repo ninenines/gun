@@ -11,7 +11,7 @@ protocols is required in order to read this guide.
 
 Gun is tested and supported on Linux.
 
-Gun is developed for Erlang 18+.
+Gun is developed for Erlang 19+.
 
 Gun may be compiled on earlier Erlang versions with small source code
 modifications but there is no guarantee that it will work as intended.
