@@ -693,13 +693,13 @@ HTTP/2 streams can however be cancelled at any time.
 
 Alias of `gun:ws_upgrade/3`.
 
-=== ws_upgrade(ConnPid, Path, Headers) -> ok
+=== ws_upgrade(ConnPid, Path, Headers) -> ws_upgrade(ConnPid, Path, Headers, #{})
 
 Similar to `gun:ws_upgrade/4`, except `WsOpts` is taken from
 the options given in the `gun:open/{2,3}` call when opening
 the connection.
 
-=== ws_upgrade(ConnPid, Path, Headers, WsOpts) -> ok
+=== ws_upgrade(ConnPid, Path, Headers, WsOpts) -> StreamRef
 
 ConnPid = pid():: The pid of the Gun connection process.
 Path = iodata():: Path to the resource.
