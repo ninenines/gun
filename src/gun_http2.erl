@@ -39,7 +39,10 @@
 	%% Remote flow control window (how much we accept to receive).
 	remote_window :: integer(),
 	%% Content handlers state.
-	handler_state :: undefined | gun_content_handler:state()
+	handler_state :: undefined | gun_content_handler:state(),
+	%% Local buffer for sending later
+	send_buffer = queue:new() :: {[], []},
+	send_buffer_len = 0 :: integer()
 }).
 
 -record(http2_state, {
@@ -66,7 +69,11 @@
 
 	%% HPACK decoding and encoding state.
 	decode_state = cow_hpack:init() :: cow_hpack:state(),
-	encode_state = cow_hpack:init() :: cow_hpack:state()
+	encode_state = cow_hpack:init() :: cow_hpack:state(),
+
+	%% Local buffer for sending later
+	send_buffer = queue:new() :: {[], []},
+	send_buffer_len = 0 :: integer()
 }).
 
 check_options(Opts) ->
@@ -337,12 +344,11 @@ request(State=#http2_state{socket=Socket, transport=Transport, encode_state=Enco
 		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
 	{HeaderBlock, EncodeState} = prepare_headers(EncodeState0, Transport, Method, Host, Port, Path, Headers),
 	Transport:send(Socket, cow_http2:headers(StreamID, nofin, HeaderBlock)),
-	%% @todo 16384 is the default SETTINGS_MAX_FRAME_SIZE.
-	%% Use the length set by the server instead, if any.
+	NewState0 = #http2_state{streams=[NewStream|StreamTail]} = new_stream(StreamID, StreamRef, ReplyTo, nofin, fin,
+		State#http2_state{stream_id=StreamID + 2, encode_state=EncodeState}),
 	%% @todo Would be better if we didn't have to convert to binary.
-	send_data(Socket, Transport, StreamID, fin, iolist_to_binary(Body), 16384),
-	new_stream(StreamID, StreamRef, ReplyTo, nofin, fin,
-		State#http2_state{stream_id=StreamID + 2, encode_state=EncodeState}).
+	{NewState, NewStream1} = send_data(NewState0, NewStream, fin, iolist_to_binary(Body)),
+	NewState#http2_state{streams=[NewStream1|StreamTail]}.
 
 prepare_headers(EncodeState, Transport, Method, Host0, Port, Path, Headers0) ->
 	Authority = case lists:keyfind(<<"host">>, 1, Headers0) of
@@ -368,33 +374,77 @@ prepare_headers(EncodeState, Transport, Method, Host0, Port, Path, Headers0) ->
 	|Headers1],
 	cow_hpack:encode(Headers, EncodeState).
 
-data(State=#http2_state{socket=Socket, transport=Transport},
+data(State=#http2_state{},
 		StreamRef, ReplyTo, IsFin, Data) ->
-	case get_stream_by_ref(StreamRef, State) of
+	Found = get_stream_by_ref(StreamRef, State),
+	case Found of
 		#stream{local=fin} ->
 			error_stream_closed(State, StreamRef, ReplyTo);
 		S = #stream{} ->
-			%% @todo 16384 is the default SETTINGS_MAX_FRAME_SIZE.
-			%% Use the length set by the server instead, if any.
 			%% @todo Would be better if we didn't have to convert to binary.
-			send_data(Socket, Transport, S#stream.id, IsFin, iolist_to_binary(Data), 16384),
-			local_fin(S, State, IsFin);
+			{State1, S1} = send_data(State, S, IsFin, iolist_to_binary(Data)),
+			local_fin(S1, State1, IsFin);
 		false ->
 			error_stream_not_found(State, StreamRef, ReplyTo)
 	end.
 
-send_data(State) -> State.
-send_data(State, Stream) -> {State, Stream}.
-
 %% This same function is found in cowboy_http2.
-send_data(Socket, Transport, StreamID, IsFin, Data, Length) ->
+%% Push new data in stream queue
+send_data(State=#http2_state{}, Stream=#stream{send_buffer=Buffer, send_buffer_len=BufferLen}, IsFin, Data) ->
+	Buffer1 = queue:in({IsFin, Data}, Buffer),
+	send_data(State, Stream#stream{send_buffer=Buffer1, send_buffer_len=BufferLen+1}).
+%% Do nothing when there's no buffer in the queue
+send_data(State=#http2_state{}, Stream=#stream{send_buffer_len=0}) ->
+	{State, Stream};
+%% 1. Fetch a buffer from beginning of the queue
+%% 2. Calculate the size to send
+%% 	* If local_window is big enough, send directly and recurse
+%% 	* If not, send first then push the data left back to the beginning of the queue.
+%%    When got window_update frame, the buffer will be sent.
+%% 3. Update stream's local_window and send_buffer
+%% (We don't use Transport:send to send the data, we use send_data(State) to send it for
+%% flow controlling of connection level)
+send_data(State0=#http2_state{}, Stream=#stream{id=StreamID, local_window=LocalWindow,
+		send_buffer=Buffer, send_buffer_len=BufferLen}) ->
+	{{value, {IsFin, Data}}, Buffer1} = queue:out(Buffer),
+	DataSize = byte_size(Data),
 	if
-		Length < byte_size(Data) ->
-			<< Payload:Length/binary, Rest/bits >> = Data,
-			Transport:send(Socket, cow_http2:data(StreamID, nofin, Payload)),
-			send_data(Socket, Transport, StreamID, IsFin, Rest, Length);
+		DataSize > LocalWindow ->
+			<< Payload:LocalWindow/binary, Rest/bits >> = Data,
+			State = send_data(State0, {StreamID, nofin, Payload}),
+			Buffer2 = queue:in_r({IsFin, Rest}, Buffer1),
+			{State, Stream#stream{local_window=0, send_buffer=Buffer2}};
 		true ->
-			Transport:send(Socket, cow_http2:data(StreamID, IsFin, Data))
+			State1 = send_data(State0, {StreamID, IsFin, Data}),
+			send_data(State1, Stream#stream{local_window=LocalWindow-DataSize, send_buffer=Buffer1, send_buffer_len=BufferLen-1})
+	end;
+%% Push new frame in connection queue
+send_data(State=#http2_state{send_buffer=Buffer, send_buffer_len=BufferLen}, Frame) ->
+	Buffer1 = queue:in(Frame, Buffer),
+	send_data(State#http2_state{send_buffer=Buffer1, send_buffer_len=BufferLen+1}).
+%% Do nothing when send_buffer is empty
+send_data(State=#http2_state{send_buffer_len=0}) ->
+	State;
+%% Do nothing when local_window is 0
+send_data(State=#http2_state{local_window=0}) ->
+	State;
+%% Similar with send_data(State, Stream), except:
+%% 1. It's connection level(buffer, local_window)
+%% 2. We use min of local_window and max_frame_size as SendSize
+send_data(State=#http2_state{socket=Socket, transport=Transport, local_window=LocalWindow,
+		local_settings=#{max_frame_size := MaxSize}, send_buffer=Buffer, send_buffer_len=BufferLen}) ->
+	{{value, {StreamID, IsFin, Data}}, Buffer1} = queue:out(Buffer),
+	DataSize = byte_size(Data),
+	SendSize = min(LocalWindow, MaxSize),
+	if
+		DataSize > SendSize ->
+			<< Payload:SendSize/binary, Rest/bits >> = Data,
+			Transport:send(Socket, cow_http2:data(StreamID, nofin, Payload)),
+			Buffer2 = queue:in_r({StreamID, IsFin, Rest}, Buffer1),
+			send_data(State#http2_state{local_window=LocalWindow-SendSize, send_buffer=Buffer2});
+		true ->
+			Transport:send(Socket, cow_http2:data(StreamID, IsFin, Data)),
+			send_data(State#http2_state{local_window=LocalWindow-DataSize, send_buffer=Buffer1, send_buffer_len=BufferLen-1})
 	end.
 
 cancel(State=#http2_state{socket=Socket, transport=Transport},
