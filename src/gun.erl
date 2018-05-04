@@ -125,14 +125,14 @@
 
 %% Connection.
 
--spec open(inet:hostname(), inet:port_number())
+-spec open(inet:hostname() | inet:ipaddress(), inet:port_number())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port) ->
 	open(Host, Port, #{}).
 
--spec open(inet:hostname(), inet:port_number(), opts())
+-spec open(inet:hostname() | inet:ipaddress(), inet:port_number(), opts())
 	-> {ok, pid()} | {error, any()}.
-open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
+open(Host, Port, Opts) when is_list(Host); is_atom(Host); is_tuple(Host) ->
 	do_open(Host, Port, Opts).
 
 -spec open_unix(Path::string(), opts())

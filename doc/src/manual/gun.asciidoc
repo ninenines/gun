@@ -235,7 +235,7 @@ Alias of `gun:open/3`.
 
 === open(Host, Port, Opts) -> {ok, ConnPid} | {error, Reason}
 
-Host = inet:hostname():: Host to connect to.
+Host = inet:hostname() | inet:ipaddress():: Host or IP to connect to.
 Port = inet:port_number():: Port to connect to.
 Opts = opts():: Options for this connection.
 ConnPid = pid():: The pid of the Gun connection process.
