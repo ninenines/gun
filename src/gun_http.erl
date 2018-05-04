@@ -280,9 +280,13 @@ keepalive(State) ->
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers) ->
+	Host2 = case Host of
+		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
+		_ -> Host
+	end,
 	Headers2 = lists:keydelete(<<"transfer-encoding">>, 1, Headers),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2];
+		false -> [{<<"host">>, [Host2, $:, integer_to_binary(Port)]}|Headers2];
 		true -> Headers2
 	end,
 	%% We use Headers2 because this is the smallest list.
@@ -299,10 +303,14 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body) ->
+	Host2 = case Host of
+		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
+		_ -> Host
+	end,
 	Headers2 = lists:keydelete(<<"content-length">>, 1,
 		lists:keydelete(<<"transfer-encoding">>, 1, Headers)),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers2];
+		false -> [{<<"host">>, [Host2, $:, integer_to_binary(Port)]}|Headers2];
 		true -> Headers2
 	end,
 	Headers4 = transform_header_names(State, Headers3),
