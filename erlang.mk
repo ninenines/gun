@@ -17,7 +17,7 @@
 ERLANG_MK_FILENAME := $(realpath $(lastword $(MAKEFILE_LIST)))
 export ERLANG_MK_FILENAME
 
-ERLANG_MK_VERSION = 2017.08.28-19-g8e3d863
+ERLANG_MK_VERSION = 2018.03.05-32-g9e38db3
 ERLANG_MK_WITHOUT = 
 
 # Make 3.81 and 3.82 are deprecated.
@@ -154,9 +154,13 @@ define comma_list
 $(subst $(space),$(comma),$(strip $(1)))
 endef
 
+define escape_dquotes
+$(subst ",\",$1)
+endef
+
 # Adding erlang.mk to make Erlang scripts who call init:get_plain_arguments() happy.
 define erlang
-$(ERL) $(2) -pz $(ERLANG_MK_TMP)/rebar/ebin -eval "$(subst $(newline),,$(subst ",\",$(1)))" -- erlang.mk
+$(ERL) $2 -pz $(ERLANG_MK_TMP)/rebar/ebin -eval "$(subst $(newline),,$(call escape_dquotes,$1))" -- erlang.mk
 endef
 
 ifeq ($(PLATFORM),msys2)
@@ -187,9 +191,11 @@ ERLANG_MK_BUILD_DIR ?= .erlang.mk.build
 
 erlang-mk: WITHOUT ?= $(ERLANG_MK_WITHOUT)
 erlang-mk:
-	git clone $(ERLANG_MK_REPO) $(ERLANG_MK_BUILD_DIR)
 ifdef ERLANG_MK_COMMIT
+	git clone $(ERLANG_MK_REPO) $(ERLANG_MK_BUILD_DIR)
 	cd $(ERLANG_MK_BUILD_DIR) && git checkout $(ERLANG_MK_COMMIT)
+else
+	git clone --depth 1 $(ERLANG_MK_REPO) $(ERLANG_MK_BUILD_DIR)
 endif
 	if [ -f $(ERLANG_MK_BUILD_CONFIG) ]; then cp $(ERLANG_MK_BUILD_CONFIG) $(ERLANG_MK_BUILD_DIR)/build.config; fi
 	$(MAKE) -C $(ERLANG_MK_BUILD_DIR) WITHOUT='$(strip $(WITHOUT))'
@@ -248,6 +254,10 @@ distclean-kerl:
 	$(gen_verbose) rm -rf $(KERL)
 
 # Allow users to select which version of Erlang/OTP to use for a project.
+
+ifneq ($(strip $(LATEST_ERLANG_OTP)),)
+ERLANG_OTP := $(notdir $(lastword $(sort $(wildcard $(KERL_INSTALL_DIR)/*[^-native]))))
+endif
 
 ERLANG_OTP ?=
 ERLANG_HIPE ?=
@@ -615,14 +625,6 @@ pkg_cl_homepage = https://github.com/tonyrog/cl
 pkg_cl_fetch = git
 pkg_cl_repo = https://github.com/tonyrog/cl
 pkg_cl_commit = master
-
-PACKAGES += classifier
-pkg_classifier_name = classifier
-pkg_classifier_description = An Erlang Bayesian Filter and Text Classifier
-pkg_classifier_homepage = https://github.com/inaka/classifier
-pkg_classifier_fetch = git
-pkg_classifier_repo = https://github.com/inaka/classifier
-pkg_classifier_commit = master
 
 PACKAGES += clique
 pkg_clique_name = clique
@@ -1023,14 +1025,6 @@ pkg_dnssd_homepage = https://github.com/benoitc/dnssd_erlang
 pkg_dnssd_fetch = git
 pkg_dnssd_repo = https://github.com/benoitc/dnssd_erlang
 pkg_dnssd_commit = master
-
-PACKAGES += dtl
-pkg_dtl_name = dtl
-pkg_dtl_description = Django Template Language: A full-featured port of the Django template engine to Erlang.
-pkg_dtl_homepage = https://github.com/oinksoft/dtl
-pkg_dtl_fetch = git
-pkg_dtl_repo = https://github.com/oinksoft/dtl
-pkg_dtl_commit = master
 
 PACKAGES += dynamic_compile
 pkg_dynamic_compile_name = dynamic_compile
@@ -2000,14 +1994,6 @@ pkg_gold_fever_fetch = git
 pkg_gold_fever_repo = https://github.com/inaka/gold_fever
 pkg_gold_fever_commit = master
 
-PACKAGES += gossiperl
-pkg_gossiperl_name = gossiperl
-pkg_gossiperl_description = Gossip middleware in Erlang
-pkg_gossiperl_homepage = http://gossiperl.com/
-pkg_gossiperl_fetch = git
-pkg_gossiperl_repo = https://github.com/gossiperl/gossiperl
-pkg_gossiperl_commit = master
-
 PACKAGES += gpb
 pkg_gpb_name = gpb
 pkg_gpb_description = A Google Protobuf implementation for Erlang
@@ -2031,6 +2017,22 @@ pkg_grapherl_homepage = https://github.com/eproxus/grapherl
 pkg_grapherl_fetch = git
 pkg_grapherl_repo = https://github.com/eproxus/grapherl
 pkg_grapherl_commit = master
+
+PACKAGES += grpc
+pkg_grpc_name = grpc
+pkg_grpc_description = gRPC server in Erlang
+pkg_grpc_homepage = https://github.com/Bluehouse-Technology/grpc
+pkg_grpc_fetch = git
+pkg_grpc_repo = https://github.com/Bluehouse-Technology/grpc
+pkg_grpc_commit = master
+
+PACKAGES += grpc_client
+pkg_grpc_client_name = grpc_client
+pkg_grpc_client_description = gRPC client in Erlang
+pkg_grpc_client_homepage = https://github.com/Bluehouse-Technology/grpc_client
+pkg_grpc_client_fetch = git
+pkg_grpc_client_repo = https://github.com/Bluehouse-Technology/grpc_client
+pkg_grpc_client_commit = master
 
 PACKAGES += gun
 pkg_gun_name = gun
@@ -2888,6 +2890,14 @@ pkg_oauth2_fetch = git
 pkg_oauth2_repo = https://github.com/kivra/oauth2
 pkg_oauth2_commit = master
 
+PACKAGES += observer_cli
+pkg_observer_cli_name = observer_cli
+pkg_observer_cli_description = Visualize Erlang/Elixir Nodes On The Command Line
+pkg_observer_cli_homepage = http://zhongwencool.github.io/observer_cli
+pkg_observer_cli_fetch = git
+pkg_observer_cli_repo = https://github.com/zhongwencool/observer_cli
+pkg_observer_cli_commit = master
+
 PACKAGES += octopus
 pkg_octopus_name = octopus
 pkg_octopus_description = Small and flexible pool manager written in Erlang
@@ -2935,6 +2945,14 @@ pkg_openpoker_homepage = https://github.com/hpyhacking/openpoker
 pkg_openpoker_fetch = git
 pkg_openpoker_repo = https://github.com/hpyhacking/openpoker
 pkg_openpoker_commit = master
+
+PACKAGES += otpbp
+pkg_otpbp_name = otpbp
+pkg_otpbp_description = Parse transformer for use new OTP functions in old Erlang/OTP releases (R15, R16, 17, 18, 19)
+pkg_otpbp_homepage = https://github.com/Ledest/otpbp
+pkg_otpbp_fetch = git
+pkg_otpbp_repo = https://github.com/Ledest/otpbp
+pkg_otpbp_commit = master
 
 PACKAGES += pal
 pkg_pal_name = pal
@@ -4276,7 +4294,7 @@ export NO_AUTOPATCH
 
 # Verbosity.
 
-dep_verbose_0 = @echo " DEP   " $(1);
+dep_verbose_0 = @echo " DEP   $1 ($(call dep_commit,$1))";
 dep_verbose_2 = set -x;
 dep_verbose = $(dep_verbose_$(V))
 
@@ -4482,11 +4500,33 @@ define dep_autopatch_rebar.erl
 		end,
 		Write("\n")
 	end(),
+	GetHexVsn = fun(N) ->
+		case file:consult("$(call core_native_path,$(DEPS_DIR)/$1/rebar.lock)") of
+			{ok, Lock} ->
+				io:format("~p~n", [Lock]),
+				case lists:keyfind("1.1.0", 1, Lock) of
+					{_, LockPkgs} ->
+						io:format("~p~n", [LockPkgs]),
+						case lists:keyfind(atom_to_binary(N, latin1), 1, LockPkgs) of
+							{_, {pkg, _, Vsn}, _} ->
+								io:format("~p~n", [Vsn]),
+								{N, {hex, binary_to_list(Vsn)}};
+							_ ->
+								false
+						end;
+					_ ->
+						false
+				end;
+			_ ->
+				false
+		end
+	end,
 	fun() ->
 		File = case lists:keyfind(deps, 1, Conf) of
 			false -> [];
 			{_, Deps} ->
 				[begin case case Dep of
+							N when is_atom(N) -> GetHexVsn(N);
 							{N, S} when is_atom(N), is_list(S) -> {N, {hex, S}};
 							{N, S} when is_tuple(S) -> {N, S};
 							{N, _, S} -> {N, S};
@@ -4523,7 +4563,8 @@ define dep_autopatch_rebar.erl
 	Write("\npre-deps::\n"),
 	Write("\npre-app::\n"),
 	PatchHook = fun(Cmd) ->
-		case Cmd of
+		Cmd2 = re:replace(Cmd, "^([g]?make)(.*)( -C.*)", "\\\\1\\\\3\\\\2", [{return, list}]),
+		case Cmd2 of
 			"make -C" ++ Cmd1 -> "$$\(MAKE) -C" ++ Escape(Cmd1);
 			"gmake -C" ++ Cmd1 -> "$$\(MAKE) -C" ++ Escape(Cmd1);
 			"make " ++ Cmd1 -> "$$\(MAKE) -f Makefile.orig.mk " ++ Escape(Cmd1);
@@ -4693,7 +4734,10 @@ define dep_autopatch_appsrc_script.erl
 	Bindings0 = erl_eval:new_bindings(),
 	Bindings1 = erl_eval:add_binding('CONFIG', Conf0, Bindings0),
 	Bindings = erl_eval:add_binding('SCRIPT', AppSrcScript, Bindings1),
-	{ok, [Conf]} = file:script(AppSrcScript, Bindings),
+	Conf = case file:script(AppSrcScript, Bindings) of
+		{ok, [C]} -> C;
+		{ok, C} -> C
+	end,
 	ok = file:write_file(AppSrc, io_lib:format("~p.~n", [Conf])),
 	halt()
 endef
@@ -4748,7 +4792,7 @@ endef
 define dep_fetch_hex
 	mkdir -p $(ERLANG_MK_TMP)/hex $(DEPS_DIR)/$1; \
 	$(call core_http_get,$(ERLANG_MK_TMP)/hex/$1.tar,\
-		https://s3.amazonaws.com/s3.hex.pm/tarballs/$1-$(strip $(word 2,$(dep_$1))).tar); \
+		https://repo.hex.pm/tarballs/$1-$(strip $(word 2,$(dep_$1))).tar); \
 	tar -xOf $(ERLANG_MK_TMP)/hex/$1.tar contents.tar.gz | tar -C $(DEPS_DIR)/$1 -xzf -;
 endef
 
@@ -5028,6 +5072,14 @@ define makedep.erl
 	E = ets:new(makedep, [bag]),
 	G = digraph:new([acyclic]),
 	ErlFiles = lists:usort(string:tokens("$(ERL_FILES)", " ")),
+	DepsDir = "$(call core_native_path,$(DEPS_DIR))",
+	AppsDir = "$(call core_native_path,$(APPS_DIR))",
+	DepsDirsSrc = "$(if $(wildcard $(DEPS_DIR)/*/src), $(call core_native_path,$(wildcard $(DEPS_DIR)/*/src)))",
+	DepsDirsInc = "$(if $(wildcard $(DEPS_DIR)/*/include), $(call core_native_path,$(wildcard $(DEPS_DIR)/*/include)))",
+	AppsDirsSrc = "$(if $(wildcard $(APPS_DIR)/*/src), $(call core_native_path,$(wildcard $(APPS_DIR)/*/src)))",
+	AppsDirsInc = "$(if $(wildcard $(APPS_DIR)/*/include), $(call core_native_path,$(wildcard $(APPS_DIR)/*/include)))",
+	DepsDirs = lists:usort(string:tokens(DepsDirsSrc++DepsDirsInc, " ")),
+	AppsDirs = lists:usort(string:tokens(AppsDirsSrc++AppsDirsInc, " ")),
 	Modules = [{list_to_atom(filename:basename(F, ".erl")), F} || F <- ErlFiles],
 	Add = fun (Mod, Dep) ->
 		case lists:keyfind(Dep, 1, Modules) of
@@ -5042,33 +5094,50 @@ define makedep.erl
 	end,
 	AddHd = fun (F, Mod, DepFile) ->
 		case file:open(DepFile, [read]) of
-			{error, enoent} -> ok;
+			{error, enoent} ->
+				ok;
 			{ok, Fd} ->
-				F(F, Fd, Mod),
 				{_, ModFile} = lists:keyfind(Mod, 1, Modules),
-				ets:insert(E, {ModFile, DepFile})
+				case ets:match(E, {ModFile, DepFile}) of
+					[] ->
+						ets:insert(E, {ModFile, DepFile}),
+						F(F, Fd, Mod,0);
+					_ -> ok
+				end
 		end
 	end,
+	SearchHrl = fun
+		F(_Hrl, []) -> {error,enoent};
+		F(Hrl, [Dir|Dirs]) ->
+			HrlF = filename:join([Dir,Hrl]),
+			case filelib:is_file(HrlF) of
+				true  ->
+				{ok, HrlF};
+				false -> F(Hrl,Dirs)
+			end
+	end,
 	Attr = fun
-		(F, Mod, behavior, Dep) -> Add(Mod, Dep);
-		(F, Mod, behaviour, Dep) -> Add(Mod, Dep);
-		(F, Mod, compile, {parse_transform, Dep}) -> Add(Mod, Dep);
-		(F, Mod, compile, Opts) when is_list(Opts) ->
+		(_F, Mod, behavior, Dep) ->
+			Add(Mod, Dep);
+		(_F, Mod, behaviour, Dep) ->
+			Add(Mod, Dep);
+		(_F, Mod, compile, {parse_transform, Dep}) ->
+			Add(Mod, Dep);
+		(_F, Mod, compile, Opts) when is_list(Opts) ->
 			case proplists:get_value(parse_transform, Opts) of
 				undefined -> ok;
 				Dep -> Add(Mod, Dep)
 			end;
 		(F, Mod, include, Hrl) ->
-			case filelib:is_file("include/" ++ Hrl) of
-				true -> AddHd(F, Mod, "include/" ++ Hrl);
-				false ->
-					case filelib:is_file("src/" ++ Hrl) of
-						true -> AddHd(F, Mod, "src/" ++ Hrl);
-						false -> false
-					end
+			case SearchHrl(Hrl, ["src", "include",AppsDir,DepsDir]++AppsDirs++DepsDirs) of
+				{ok, FoundHrl} -> AddHd(F, Mod, FoundHrl);
+				{error, _} -> false
 			end;
-		(F, Mod, include_lib, "$1/include/" ++ Hrl) -> AddHd(F, Mod, "include/" ++ Hrl);
-		(F, Mod, include_lib, Hrl) -> AddHd(F, Mod, "include/" ++ Hrl);
+		(F, Mod, include_lib, Hrl) ->
+			case SearchHrl(Hrl, ["src", "include",AppsDir,DepsDir]++AppsDirs++DepsDirs) of
+				{ok, FoundHrl} -> AddHd(F, Mod, FoundHrl);
+				{error, _} -> false
+			end;
 		(F, Mod, import, {Imp, _}) ->
 			IsFile =
 				case lists:keyfind(Imp, 1, Modules) of
@@ -5081,21 +5150,29 @@ define makedep.erl
 			end;
 		(_, _, _, _) -> ok
 	end,
-	MakeDepend = fun(F, Fd, Mod) ->
-		case io:parse_erl_form(Fd, undefined) of
-			{ok, {attribute, _, Key, Value}, _} ->
-				Attr(F, Mod, Key, Value),
-				F(F, Fd, Mod);
-			{eof, _} ->
-				file:close(Fd);
-			_ ->
-				F(F, Fd, Mod)
-		end
+	MakeDepend = fun
+		(F, Fd, Mod, StartLocation) ->
+			{ok, Filename} = file:pid2name(Fd),
+			case io:parse_erl_form(Fd, undefined, StartLocation) of
+				{ok, AbsData, EndLocation} ->
+					case AbsData of
+						{attribute, _, Key, Value} ->
+							Attr(F, Mod, Key, Value),
+							F(F, Fd, Mod, EndLocation);
+						_ -> F(F, Fd, Mod, EndLocation)
+					end;
+				{eof, _ } -> file:close(Fd);
+				{error, ErrorDescription } ->
+					file:close(Fd);
+				{error, ErrorInfo, ErrorLocation} ->
+					F(F, Fd, Mod, ErrorLocation)
+			end,
+			ok
 	end,
 	[begin
 		Mod = list_to_atom(filename:basename(F, ".erl")),
 		{ok, Fd} = file:open(F, [read]),
-		MakeDepend(MakeDepend, Fd, Mod)
+		MakeDepend(MakeDepend, Fd, Mod,0)
 	end || F <- ErlFiles],
 	Depend = sofs:to_external(sofs:relation_to_family(sofs:relation(ets:tab2list(E)))),
 	CompileFirst = [X || X <- lists:reverse(digraph_utils:topsort(G)), [] =/= digraph:in_neighbours(G, X)],
@@ -5251,17 +5328,17 @@ endif
 ifeq ($(wildcard src),)
 test-build:: ERLC_OPTS=$(TEST_ERLC_OPTS)
 test-build:: clean deps test-deps
-	$(verbose) $(MAKE) --no-print-directory test-dir ERLC_OPTS="$(TEST_ERLC_OPTS)"
+	$(verbose) $(MAKE) --no-print-directory test-dir ERLC_OPTS="$(call escape_dquotes,$(TEST_ERLC_OPTS))"
 else
 ifeq ($(wildcard ebin/test),)
 test-build:: ERLC_OPTS=$(TEST_ERLC_OPTS)
 test-build:: clean deps test-deps $(PROJECT).d
-	$(verbose) $(MAKE) --no-print-directory app-build test-dir ERLC_OPTS="$(TEST_ERLC_OPTS)"
+	$(verbose) $(MAKE) --no-print-directory app-build test-dir ERLC_OPTS="$(call escape_dquotes,$(TEST_ERLC_OPTS))"
 	$(gen_verbose) touch ebin/test
 else
 test-build:: ERLC_OPTS=$(TEST_ERLC_OPTS)
 test-build:: deps test-deps $(PROJECT).d
-	$(verbose) $(MAKE) --no-print-directory app-build test-dir ERLC_OPTS="$(TEST_ERLC_OPTS)"
+	$(verbose) $(MAKE) --no-print-directory app-build test-dir ERLC_OPTS="$(call escape_dquotes,$(TEST_ERLC_OPTS))"
 endif
 
 clean:: clean-test-dir
@@ -5645,6 +5722,51 @@ code_change(_OldVsn, StateName, StateData, _Extra) ->
 	{ok, StateName, StateData}.
 endef
 
+define tpl_gen_statem
+-module($(n)).
+-behaviour(gen_statem).
+
+%% API.
+-export([start_link/0]).
+
+%% gen_statem.
+-export([callback_mode/0]).
+-export([init/1]).
+-export([state_name/3]).
+-export([handle_event/4]).
+-export([terminate/3]).
+-export([code_change/4]).
+
+-record(state, {
+}).
+
+%% API.
+
+-spec start_link() -> {ok, pid()}.
+start_link() ->
+	gen_statem:start_link(?MODULE, [], []).
+
+%% gen_statem.
+
+callback_mode() ->
+	state_functions.
+
+init([]) ->
+	{ok, state_name, #state{}}.
+
+state_name(_EventType, _EventData, StateData) ->
+	{next_state, state_name, StateData}.
+
+handle_event(_EventType, _EventData, StateName, StateData) ->
+	{next_state, StateName, StateData}.
+
+terminate(_Reason, _StateName, _StateData) ->
+	ok.
+
+code_change(_OldVsn, StateName, StateData, _Extra) ->
+	{ok, StateName, StateData}.
+endef
+
 define tpl_cowboy_loop
 -module($(n)).
 -behaviour(cowboy_loop_handler).
@@ -5841,13 +5963,14 @@ ifndef n
 	$(error Usage: $(MAKE) new t=TEMPLATE n=NAME [in=APP])
 endif
 ifdef in
-	$(verbose) $(MAKE) -C $(APPS_DIR)/$(in)/ new t=$t n=$n in=
+	$(call render_template,tpl_$(t),$(APPS_DIR)/$(in)/src/$(n).erl)
 else
 	$(call render_template,tpl_$(t),src/$(n).erl)
 endif
 
 list-templates:
-	$(verbose) echo Available templates: $(sort $(patsubst tpl_%,%,$(filter tpl_%,$(.VARIABLES))))
+	$(verbose) @echo Available templates:
+	$(verbose) printf "    %s\n" $(sort $(patsubst tpl_%,%,$(filter tpl_%,$(.VARIABLES))))
 
 # Copyright (c) 2014-2016, Loïc Hoguin <essen@ninenines.eu>
 # This file is part of erlang.mk and subject to the terms of the ISC License.
@@ -6242,6 +6365,7 @@ export DIALYZER_PLT
 PLT_APPS ?=
 DIALYZER_DIRS ?= --src -r $(wildcard src) $(ALL_APPS_DIRS)
 DIALYZER_OPTS ?= -Werror_handling -Wrace_conditions -Wunmatched_returns # -Wunderspecs
+DIALYZER_PLT_OPTS ?=
 
 # Core targets.
 
@@ -6275,8 +6399,8 @@ endef
 $(DIALYZER_PLT): deps app
 	$(eval DEPS_LOG := $(shell test -f $(ERLANG_MK_TMP)/deps.log && \
 		while read p; do test -d $$p/ebin && echo $$p/ebin; done <$(ERLANG_MK_TMP)/deps.log))
-	$(verbose) dialyzer --build_plt --apps erts kernel stdlib \
-		$(PLT_APPS) $(OTP_DEPS) $(LOCAL_DEPS) $(DEPS_LOG)
+	$(verbose) dialyzer --build_plt $(DIALYZER_PLT_OPTS) --apps \
+		erts kernel stdlib $(PLT_APPS) $(OTP_DEPS) $(LOCAL_DEPS) $(DEPS_LOG)
 
 plt: $(DIALYZER_PLT)
 
@@ -6288,7 +6412,7 @@ dialyze:
 else
 dialyze: $(DIALYZER_PLT)
 endif
-	$(verbose) dialyzer --no_native `$(ERL) -eval "$(subst $(newline),,$(subst ",\",$(call filter_opts.erl)))" -extra $(ERLC_OPTS)` $(DIALYZER_DIRS) $(DIALYZER_OPTS)
+	$(verbose) dialyzer --no_native `$(ERL) -eval "$(subst $(newline),,$(call escape_dquotes,$(call filter_opts.erl)))" -extra $(ERLC_OPTS)` $(DIALYZER_DIRS) $(DIALYZER_OPTS)
 
 # Copyright (c) 2013-2016, Loïc Hoguin <essen@ninenines.eu>
 # This file is part of erlang.mk and subject to the terms of the ISC License.
@@ -6461,20 +6585,25 @@ help::
 # Plugin-specific targets.
 
 define eunit.erl
-	case "$(COVER)" of
-		"" -> ok;
+	Enabled = case "$(COVER)" of
+		"" -> false;
 		_ ->
-			case cover:compile_beam_directory("ebin") of
-				{error, _} -> halt(1);
-				_ -> ok
+			case filelib:is_dir("ebin") of
+				false -> false;
+				true ->
+					case cover:compile_beam_directory("ebin") of
+						{error, _} -> halt(1);
+						_ -> true
+					end
 			end
 	end,
 	case eunit:test($1, [$(EUNIT_OPTS)]) of
 		ok -> ok;
 		error -> halt(2)
 	end,
-	case "$(COVER)" of
-		"" -> ok;
+	case {Enabled, "$(COVER)"} of
+		{false, _} -> ok;
+		{_, ""} -> ok;
 		_ ->
 			cover:export("$(COVER_DATA_DIR)/eunit.coverdata")
 	end,
@@ -6520,7 +6649,10 @@ ifeq ($(filter proper,$(DEPS) $(TEST_DEPS)),proper)
 tests:: proper
 
 define proper_check.erl
-	code:add_pathsa(["$(call core_native_path,$(CURDIR)/ebin)", "$(call core_native_path,$(DEPS_DIR)/*/ebin)"]),
+	code:add_pathsa([
+		"$(call core_native_path,$(CURDIR)/ebin)",
+		"$(call core_native_path,$(DEPS_DIR)/*/ebin)",
+		"$(call core_native_path,$(TEST_DIR))"]),
 	Module = fun(M) ->
 		[true] =:= lists:usort([
 			case atom_to_list(F) of
@@ -6558,7 +6690,8 @@ proper: test-build
 endif
 else
 proper: test-build
-	$(eval MODULES := $(patsubst %,'%',$(sort $(notdir $(basename $(wildcard ebin/*.beam))))))
+	$(eval MODULES := $(patsubst %,'%',$(sort $(notdir $(basename \
+		$(wildcard ebin/*.beam) $(call core_find,$(TEST_DIR)/,*.beam))))))
 	$(gen_verbose) $(call erlang,$(call proper_check.erl,all,undefined,$(MODULES)))
 endif
 endif
@@ -6604,6 +6737,7 @@ distclean:: distclean-relx-rel
 # Plugin-specific targets.
 
 $(RELX):
+	$(verbose) mkdir -p $(ERLANG_MK_TMP)
 	$(gen_verbose) $(call core_http_get,$(RELX),$(RELX_URL))
 	$(verbose) chmod +x $(RELX)
 
@@ -6683,6 +6817,69 @@ build-shell-deps: $(ALL_SHELL_DEPS_DIRS)
 
 shell: build-shell-deps
 	$(gen_verbose) $(SHELL_ERL) -pa $(SHELL_PATHS) $(SHELL_OPTS)
+
+# Copyright 2017, Stanislaw Klekot <dozzie@jarowit.net>
+# This file is part of erlang.mk and subject to the terms of the ISC License.
+
+.PHONY: distclean-sphinx sphinx
+
+# Configuration.
+
+SPHINX_BUILD ?= sphinx-build
+SPHINX_SOURCE ?= doc
+SPHINX_CONFDIR ?=
+SPHINX_FORMATS ?= html
+SPHINX_DOCTREES ?= $(ERLANG_MK_TMP)/sphinx.doctrees
+SPHINX_OPTS ?=
+
+#sphinx_html_opts =
+#sphinx_html_output = html
+#sphinx_man_opts =
+#sphinx_man_output = man
+#sphinx_latex_opts =
+#sphinx_latex_output = latex
+
+# Helpers.
+
+sphinx_build_0 = @echo " SPHINX" $1; $(SPHINX_BUILD) -N -q
+sphinx_build_1 = $(SPHINX_BUILD) -N
+sphinx_build_2 = set -x; $(SPHINX_BUILD)
+sphinx_build = $(sphinx_build_$(V))
+
+define sphinx.build
+$(call sphinx_build,$1) -b $1 -d $(SPHINX_DOCTREES) $(if $(SPHINX_CONFDIR),-c $(SPHINX_CONFDIR)) $(SPHINX_OPTS) $(sphinx_$1_opts) -- $(SPHINX_SOURCE) $(call sphinx.output,$1)
+
+endef
+
+define sphinx.output
+$(if $(sphinx_$1_output),$(sphinx_$1_output),$1)
+endef
+
+# Targets.
+
+ifneq ($(wildcard $(if $(SPHINX_CONFDIR),$(SPHINX_CONFDIR),$(SPHINX_SOURCE))/conf.py),)
+docs:: sphinx
+distclean:: distclean-sphinx
+endif
+
+help::
+	$(verbose) printf "%s\n" "" \
+		"Sphinx targets:" \
+		"  sphinx      Generate Sphinx documentation." \
+		"" \
+		"ReST sources and 'conf.py' file are expected in directory pointed by" \
+		"SPHINX_SOURCE ('doc' by default). SPHINX_FORMATS lists formats to build (only" \
+		"'html' format is generated by default); target directory can be specified by" \
+		'setting sphinx_$${format}_output, for example: sphinx_html_output = output/html' \
+		"Additional Sphinx options can be set in SPHINX_OPTS."
+
+# Plugin-specific targets.
+
+sphinx:
+	$(foreach F,$(SPHINX_FORMATS),$(call sphinx.build,$F))
+
+distclean-sphinx:
+	$(gen_verbose) rm -rf $(filter-out $(SPHINX_SOURCE),$(foreach F,$(SPHINX_FORMATS),$(call sphinx.output,$F)))
 
 # Copyright (c) 2017, Jean-Sébastien Pédron <jean-sebastien@rabbitmq.com>
 # This file is contributed to erlang.mk and subject to the terms of the ISC License.
