@@ -281,6 +281,7 @@ keepalive(State) ->
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers) ->
 	Host2 = case Host of
+		{local, _SocketPath} -> <<>>;
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host
 	end,
@@ -304,6 +305,7 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body) ->
 	Host2 = case Host of
+		{local, _SocketPath} -> <<>>;
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host
 	end,

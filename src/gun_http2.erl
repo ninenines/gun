@@ -353,6 +353,7 @@ request(State0=#http2_state{socket=Socket, transport=Transport, encode_state=Enc
 
 prepare_headers(EncodeState, Transport, Method, Host0, Port, Path, Headers0) ->
 	Host2 = case Host0 of
+		{local, _SocketPath} -> <<>>;
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host0
 	end,
