@@ -2,7 +2,7 @@
 
 == Name
 
-gun - asynchronous HTTP client
+gun - Asynchronous HTTP client
 
 == Description
 
@@ -10,711 +10,242 @@ The `gun` module provides an asynchronous interface for
 connecting and communicating with Web servers over HTTP,
 HTTP/2 or Websocket.
 
-== Types
+== Exports
 
-=== opts() = map()
+Connection:
 
-Configuration for the connection.
+* link:man:gun:open(3)[gun:open(3)] - Open a connection to the given host and port
+* link:man:gun:open_unix(3)[gun:open_unix(3)] - Open a connection to the given Unix domain socket
+// @todo * link:man:gun:shutdown(3)[gun:shutdown(3)] - Gracefully close the connection
+* link:man:gun:close(3)[gun:close(3)] - Brutally close the connection
+* link:man:gun:info(3)[gun:info(3)] - Obtain information about the connection
 
-The following keys are defined:
+Requests:
 
-connect_timeout => timeout()::
-	Connection timeout. Defaults to `infinity`.
-http_opts => http_opts()::
-	Options specific to the HTTP protocol. See below.
-http2_opts => http2_opts()::
-	Options specific to the HTTP/2 protocol. See below.
-protocols => [http | http2]::
-	Ordered list of preferred protocols. When the transport is tcp,
-	this list must contain exactly one protocol. When the transport
-	is ssl, this list must contain at least one protocol and will be
-	used using the ALPN protocol negotiation method. When the server
-	does not support ALPN then http will always be used. Defaults to
-	[http] when the transport is tcp, and [http2, http] when the
-	transport is ssl.
-retry => non_neg_integer()::
-	Number of times Gun will try to reconnect on failure before giving up.
-	Defaults to 5.
-retry_timeout => pos_integer()::
-	Time between retries in milliseconds. Defaults to 5000.
-trace => boolean()::
-	Whether to enable `dbg` tracing of the connection process. Should
-	only be used during debugging. Defaults to false.
-transport => tcp | ssl::
-	Whether to use SSL or plain TCP. The default varies depending on the
-	port used. Port 443 defaults to ssl. All other ports default to tcp.
-transport_opts => proplists:proplist()::
-	Transport options. They are TCP options or SSL options depending on
-	the selected transport.
-ws_opts => ws_opts()::
-	Options specific to the Websocket protocol. See below.
+* link:man:gun:get(3)[gun:get(3)] - Get a resource representation
+* link:man:gun:head(3)[gun:head(3)] - Get headers of a resource representation
+* link:man:gun:options(3)[gun:options(3)] - Query the capabilities of the server or a resource
+* link:man:gun:patch(3)[gun:patch(3)] - Apply a set of changes to a resource
+* link:man:gun:post(3)[gun:post(3)] - Process the enclosed representation according to a resource's own semantics
+* link:man:gun:put(3)[gun:put(3)] - Create or replace a resource
+* link:man:gun:delete(3)[gun:delete(3)] - Delete a resource
+* link:man:gun:request(3)[gun:request(3)] - Perform the given request
+* link:man:gun:data(3)[gun:data(3)] - Stream the body of a request
 
-// @todo better spec for transport_opts
+Messages:
 
-=== http_opts() = map()
+* link:man:gun:await(3)[gun:await(3)] - Wait for a response
+* link:man:gun:await_body(3)[gun:await_body(3)] - Wait for the complete response body
+* link:man:gun:await_up(3)[gun:await(3)] - Wait for the connection to be up
+* link:man:gun:flush(3)[gun:flush(3)] - Flush all messages related to a connection or a stream
 
-Configuration for the HTTP protocol.
+Streams:
 
-The following keys are defined:
+* link:man:gun:cancel(3)[gun:cancel(3)] - Cancel the given stream
 
-keepalive => timeout()::
-	Time between pings in milliseconds. Since the HTTP protocol has
-	no standardized way to ping the server, Gun will simply send an
-	empty line when the connection is idle. Gun only makes a best
-	effort here as servers usually have configurable limits to drop
-	idle connections. Use `infinity` to disable. Defaults to 5000.
-transform_header_name => fun((LowercaseName :: binary()) -> TransformedName :: binary()) | undefined::
-	A function that will be applied to all header names before they
-	are sent to the server. Gun assumes that all header names are in
-	lower case. This function is useful if you, for example, need to
-	re-case header names in the event that the server incorrectly
-	considers header name case to be significant.
-version => 'HTTP/1.1' | 'HTTP/1.0'::
-	HTTP version to use. Defaults to 'HTTP/1.1'.
+Websocket:
 
-=== http2_opts() = map()
-
-Configuration for the HTTP/2 protocol.
-
-The following keys are defined:
-
-keepalive => pos_integer()::
-	Time between pings in milliseconds. Defaults to 5000.
-
-=== req_opts() = map()
-
-Configuration for a particular request.
-
-The following keys are defined:
-
-reply_to => pid()::
-	The pid of a process that is responsible for the response handling.
-
-=== ws_opts() = map()
-
-Configuration for the Websocket protocol.
-
-The following keys are defined:
-
-compress => boolean()::
-	Whether to enable permessage-deflate compression. This does
-	not guarantee that compression will be used as it is the
-	server that ultimately decides. Defaults to false.
+* link:man:gun:ws_upgrade(3)[gun:ws_upgrade(3)] - Upgrade to Websocket
+* link:man:gun:ws_send(3)[gun:ws_send(3)] - Send one or more Websocket frame(s)
 
 == Messages
 
-Calling functions from this module may result in the following
-messages being sent.
+Gun will inform the calling process of events asynchronously
+by sending any of the following messages:
 
-=== {gun_up, ConnPid, Protocol}
+Connection:
 
-ConnPid = pid():: The pid of the Gun connection process.
-Protocol = http | http2:: The protocol selected for this connection.
+* link:man:gun_up(3)[gun_up(3)] - The connection is up
+* link:man:gun_down(3)[gun_down(3)] - The connection is down
+* link:man:gun_upgrade(3)[gun_upgrade(3)] - Successful protocol upgrade
+* link:man:gun_error(3)[gun_error(3)] - Stream or connection-wide error
 
-The connection is up.
+Responses:
 
-This message informs the owner process that the connection or
-reconnection completed.
+* link:man:gun_push(3)[gun_push(3)] - Server-initiated push
+* link:man:gun_inform(3)[gun_inform(3)] - Informational response
+* link:man:gun_response(3)[gun_response(3)] - Response
+* link:man:gun_data(3)[gun_data(3)] - Response body
+* link:man:gun_trailers(3)[gun_trailers(3)] - Response trailers
 
-The protocol selected during the connection is sent in this
-message. It can be used to determine the capabilities of the
-server.
+Websocket:
 
-Gun will now start processing the messages it received while
-waiting for the connection to be up. If this is a reconnection,
-then this may not be desirable for all requests. Those requests
-should be cancelled when the connection goes down, and any
-subsequent messages ignored.
+* link:man:gun_ws(3)[gun_ws(3)] - Websocket frame
 
-=== {gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams}
+The response messages will be sent to the process that opened
+the connection by default. The `reply_to` request option can
+be used to redirect request-specific messages to a different
+process.
 
-ConnPid = pid():: The pid of the Gun connection process.
-Protocol = http | http2 | ws:: The protocol in use when the connection was lost.
-Reason = normal | closed | {error, atom()}:: The reason for the loss of the connection.
-KilledStreams = [reference()]:: List of streams that have been brutally terminated.
-UnprocessedStreams = [reference()]:: List of streams that have not been processed by the server.
+== Types
 
-The connection is down.
+=== http_opts()
 
-This message informs the owner process that the connection is
-currently down. Gun will automatically attempt to reconnect
-depending on the `retry` and `retry_timeout` options.
+[source,erlang]
+----
+http_opts() :: #{
+    keepalive             => timeout(),
+    transform_header_name => fun((binary()) -> binary()),
+    version               => 'HTTP/1.1' | 'HTTP/1.0'
+}
+----
 
-The reason of the termination is there for debugging purposes
-only. You should not rely on this value to know what streams
-were processed or completed.
+Configuration for the HTTP protocol.
 
-The _killed streams_ are the active streams that did not complete
-before the closing of the connection. Whether they can be retried
-safely depends on the protocol used and the idempotence property
-of the requests.
+The default value is given next to the option name:
 
-The _unprocessed streams_ are streams that the server did not
-start processing yet. They may be retried safely depending on
-what streams were killed before.
+// @todo Document content_handlers and gun_sse.
 
-When the connection goes back up, Gun will not attempt to retry
-requests. It will also not upgrade to Websocket automatically
-if that was the protocol in use when the connection was lost.
+keepalive (5000)::
 
-=== {gun_push, ConnPid, StreamRef, NewStreamRef, URI, Headers}
+Time between pings in milliseconds. Since the HTTP protocol has
+no standardized way to ping the server, Gun will simply send an
+empty line when the connection is idle. Gun only makes a best
+effort here as servers usually have configurable limits to drop
+idle connections. Use `infinity` to disable.
 
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream initiated by the owner process.
-NewStreamRef = reference():: Identifier of the stream being pushed.
-URI = binary():: URI of the resource.
-Headers = [{binary(), binary()}]:: Headers @todo
+transform_header_name - see below::
 
-A resource pushed alongside an HTTP response.
+A function that will be applied to all header names before they
+are sent to the server. Gun assumes that all header names are in
+lower case. This function is useful if you, for example, need to
+re-case header names in the event that the server incorrectly
+considers the case of header names to be significant.
 
-This message can only be sent when the protocol is HTTP/2.
+version (`'HTTP/1.1'`)::
 
-@todo I fear we also need the scheme; resource is identified by URI
-@todo Perhaps we really should send the URI entirely, because cache
-@todo relies on URI to work and this feature is for caching...
-@todo Not sure why Method is there, spec says it is only for GET
+HTTP version to use.
 
-=== {gun_response, ConnPid, StreamRef, IsFin, Status, Headers}
+=== http2_opts()
 
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream initiated by the owner process.
-IsFin = fin | nofin:: Whether this message terminates the response.
-Status = binary():: Status line for the response.
-Headers = [{binary(), binary()}]:: Headers sent with the response.
+[source,erlang]
+----
+http2_opts() :: #{
+    keepalive => timeout()
+}
+----
 
-A response to an HTTP request.
+Configuration for the HTTP/2 protocol.
 
-=== {gun_data, ConnPid, StreamRef, IsFin, Data}
+The default value is given next to the option name:
 
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream this data belongs to.
-IsFin = fin | nofin:: Whether this message terminates the response.
-Data = binary():: Data from the stream.
+// @todo Document content_handlers and gun_sse.
 
-Data associated with a stream.
+keepalive (5000)::
 
-The stream in question can be either one initiated by the owner
-process or a stream initiated by the server through the push
-mechanism. In any case a `gun_response` or a `gun_push` message
-will be sent before any `gun_data` message.
+Time between pings in milliseconds.
 
-=== {gun_error, ConnPid, StreamRef, Reason}
+// @todo Allow and document max_frame_size_sent.
 
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream this error relates to.
-Reason = any():: Error reason.
+=== opts()
 
-Stream-specific error.
+[source,erlang]
+----
+opts() :: #{
+    connect_timeout => timeout(),
+    http_opts       => http_opts(),
+    http2_opts      => http2_opts(),
+    protocols       => [http | http2],
+    retry           => non_neg_integer(),
+    retry_timeout   => pos_integer(),
+    trace           => boolean(),
+    transport       => tcp | ssl,
+    transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()]
+    ws_opts         => ws_opts()
+}
+----
 
-=== {gun_error, ConnPid, Reason}
+Configuration for the connection.
 
-ConnPid = pid():: The pid of the Gun connection process.
-Reason = any():: Error reason.
+The default value is given next to the option name:
 
-General error.
+connect_timeout (infinity)::
 
-=== {gun_ws_upgrade, ConnPid, ok, Headers}
+Connection timeout.
 
-ConnPid = pid():: The pid of the Gun connection process.
-Headers = [{binary(), binary()}]:: Headers sent with the response.
+http_opts (#{})::
 
-Successful upgrade to the Websocket protocol.
+Options specific to the HTTP protocol.
 
-=== {gun_ws, ConnPid, Frame}
+http2_opts (#{})::
 
-ConnPid = pid():: The pid of the Gun connection process.
-Frame = @todo:: Frame.
+Options specific to the HTTP/2 protocol.
 
-Websocket frame.
+protocols - see below::
 
-== Exports
+Ordered list of preferred protocols. When the transport is `tcp`,
+this list must contain exactly one protocol. When the transport
+is `ssl`, this list must contain at least one protocol and will be
+used to negotiate a protocol via ALPN. When the server does not
+support ALPN then `http` will always be used. Defaults to
+`[http]` when the transport is `tcp`, and `[http2, http]` when the
+transport is `ssl`.
 
-=== open(Host, Port) -> open(Host, Port, [])
+retry (5)::
 
-Alias of `gun:open/3`.
+Number of times Gun will try to reconnect on failure before giving up.
 
-=== open(Host, Port, Opts) -> {ok, ConnPid} | {error, Reason}
+retry_timeout (5000)::
 
-Host = inet:hostname() | inet:ipaddress():: Host or IP to connect to.
-Port = inet:port_number():: Port to connect to.
-Opts = opts():: Options for this connection.
-ConnPid = pid():: The pid of the Gun connection process.
-Reason = any():: Error reason. @todo really any?
+Time between retries in milliseconds.
 
-Open a connection to the given host and port.
+trace (false)::
 
-=== close(ConnPid) -> ok
+Whether to enable `dbg` tracing of the connection process. Should
+only be used during debugging.
 
-ConnPid = pid():: The pid of the Gun connection process.
+transport - see below::
 
-Brutally close the connection.
+Whether to use SSL or plain TCP. The default varies depending on the
+port used. Port 443 defaults to `ssl`. All other ports default to `tcp`.
 
-=== shutdown(ConnPid) -> ok
+transport_opts ([])::
 
-ConnPid = pid():: The pid of the Gun connection process.
+Transport options. They are TCP options or SSL options depending on
+the selected transport.
 
-Gracefully close the connection.
+ws_opts (#{})::
 
-A monitor can be used to be notified when the connection is
-effectively closed.
+Options specific to the Websocket protocol.
 
-=== delete(ConnPid, Path) -> delete(ConnPid, Path, [], #{})
+=== req_opts()
 
-Alias of `gun:delete/4`.
+[source,erlang]
+----
+req_opts() :: #{
+    reply_to => pid()
+}
+----
 
-=== delete(ConnPid, Path, Headers) -> delete(ConnPid, Path, Headers, #{})
+Configuration for a particular request.
 
-Alias of `gun:delete/4`.
+The default value is given next to the option name:
 
-=== delete(ConnPid, Path, Headers, ReqOpts) -> StreamRef
+reply_to (`self()`)::
 
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
+The pid of the process that will receive the response messages.
 
-Delete a resource.
+=== ws_opts()
 
-=== get(ConnPid, Path) -> get(ConnPid, Path, [], #{})
+[source,erlang]
+----
+ws_opts() :: #{
+    compress => boolean()
+}
+----
 
-Alias of `gun:get/4`.
+Configuration for the Websocket protocol.
 
-=== get(ConnPid, Path, Headers) -> get(ConnPid, Path, Headers, #{})
+The default value is given next to the option name:
 
-Alias of `gun:get/4`.
+compress => boolean()::
 
-=== get(ConnPid, Path, Headers, ReqOpts) -> StreamRef
+Whether to enable permessage-deflate compression. This does
+not guarantee that compression will be used as it is the
+server that ultimately decides. Defaults to false.
 
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
+// @todo Document default_protocol, protocols and user_opts.
 
-Get a resource.
+== See also
 
-=== head(ConnPid, Path) -> head(ConnPid, Path, [], #{})
-
-Alias of `gun:head/4`.
-
-=== head(ConnPid, Path, Headers) -> head(ConnPid, Path, Headers, #{})
-
-Alias of `gun:head/4`.
-
-=== head(ConnPid, Path, Headers, ReqOpts) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Get headers of a resource.
-
-This function performs the same operation as `get/{2,3}` except
-the server will not send the resource representation, only the
-response's status line and headers.
-
-While servers should send the same headers they would if the
-request was a GET, like `content-length`, it is not always
-the case and differences may exist.
-
-=== options(ConnPid, Path) -> options(ConnPid, Path, [], #{})
-
-Alias of `gun:options/4`.
-
-=== options(ConnPid, Path, Headers) -> options(ConnPid, Path, Headers, #{})
-
-Alias of `gun:options/4`.
-
-=== options(ConnPid, Path, Headers, ReqOpts) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Obtain information about the capabilities of the server or of a resource.
-
-The special path `"*"` can be used to obtain information about
-the server as a whole. Any other path will return information
-about the resource only.
-
-=== patch(ConnPid, Path, Headers) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Request that a set of changes be applied to the resource.
-
-This function expects either `content-length` or `content-type`
-to be set to know a body is going to be sent afterwards.
-Gun will assume the request has no body otherwise. It is
-highly recommended to set both when possible.
-
-The body sent in this request should be a patch document
-with instructions on how to update the resource.
-
-You can use the `gun:data/4` function to send the body, if any.
-
-=== patch(ConnPid, Path, Headers, Body) -> patch(ConnPid, Path, Headers, Body, #{})
-
-Alias of `gun:patch/5`.
-
-=== patch(ConnPid, Path, Headers, Body, ReqOpts) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-Body = iodata():: Body of the request.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Request that a set of changes be applied to the resource.
-
-It is highly recommended to set the `content-type` header
-to inform the server what media type the body contains.
-Gun will automatically set the `content-length` header.
-
-The body sent in this request should be a patch document
-with instructions on how to update the resource.
-
-The complete request is sent when calling this function.
-It is not possible to stream more of the body after
-calling it.
-
-=== post(ConnPid, Path, Headers) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Process the enclosed representation according to the resource's own semantics.
-
-This function expects either `content-length` or `content-type`
-to be set to know a body is going to be sent afterwards.
-Gun will assume the request has no body otherwise. It is
-highly recommended to set both when possible.
-
-The body sent in this request will be processed
-according to the resource's own semantics. A new
-resource may be created as a result, and may be
-located at a different URI.
-
-You can use the `gun:data/4` function to send the body, if any.
-
-=== post(ConnPid, Path, Headers, Body) -> post(ConnPid, Path, Headers, Body, #{})
-
-Alias of `gun:post/5`.
-
-=== post(ConnPid, Path, Headers, Body, ReqOpts) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-Body = iodata():: Body of the request.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Process the enclosed representation according to the resource's own semantics.
-
-It is highly recommended to set the `content-type` header
-to inform the server what media type the body contains.
-Gun will automatically set the `content-length` header.
-
-The body sent in this request will be processed
-according to the resource's own semantics. A new
-resource may be created as a result, and may be
-located at a different URI.
-
-The complete request is sent when calling this function.
-It is not possible to stream more of the body after
-calling it.
-
-=== put(ConnPid, Path, Headers) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Create or replace a resource.
-
-The body of the request is the entire representation of the resource.
-
-This function expects either `content-length` or `content-type`
-to be set to know a body is going to be sent afterwards.
-Gun will assume the request has no body otherwise. It is
-highly recommended to set both when possible.
-
-You can use the `gun:data/4` function to send the body, if any.
-
-=== put(ConnPid, Path, Headers, Body) -> put(ConnPid, Path, Headers, Body, #{})
-
-Alias of `gun:put/5`.
-
-=== put(ConnPid, Path, Headers, Body, ReqOpts) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-Body = iodata():: Body of the request.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Create or replace a resource.
-
-The body of the request is the entire representation of the resource.
-
-It is highly recommended to set the `content-type` header
-to inform the server what media type the body contains.
-Gun will automatically set the `content-length` header.
-
-The complete request is sent when calling this function.
-It is not possible to stream more of the body after
-calling it.
-
-=== request(ConnPid, Method, Path, Headers) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Method = iodata():: Request method.
-Path = iodata():: Path of the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Perform the given request.
-
-This is a general purpose function that should only be used
-when existing method-specific functions don't apply.
-
-This function expects either `content-length` or `content-type`
-to be set to know a body is going to be sent afterwards.
-Gun will assume the request has no body otherwise. It is
-highly recommended to set both when possible.
-
-You can use the `gun:data/4` function to send the body, if any.
-
-=== request(ConnPid, Method, Path, Headers, Body) -> request(ConnPid, Method, Path, Headers, Body, #{})
-
-Alias of `gun:request/6`.
-
-=== request(ConnPid, Method, Path, Headers, Body, ReqOpts) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Method = iodata():: Request method.
-Path = iodata():: Path of the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-Body = iodata():: Body of the request.
-ReqOpts = req_opts():: Request options.
-StreamRef = reference():: Identifier of the stream for this request.
-
-Perform the given request.
-
-This is a general purpose function that should only be used
-when existing method-specific functions don't apply.
-
-It is highly recommended to set the `content-type` header
-to inform the server what media type the body contains.
-Gun will automatically set the `content-length` header.
-
-The complete request is sent when calling this function.
-It is not possible to stream more of the body after
-calling it.
-
-=== data(ConnPid, StreamRef, IsFin, Data) -> ok
-
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream this data belongs to.
-IsFin = fin | nofin:: Whether this message terminates the request.
-Data = iodata():: Data to be sent with the request.
-
-Stream the body of a request.
-
-@todo empty chunks
-
-This function can only be used if the request identified by
-`StreamRef` came with headers indicating the presence of a
-body and that body not being given when creating the request.
-
-All calls to this function must use `nofin` except for the
-last which must use `fin` to indicate the end of the request
-body.
-
-Empty data is allowed regardless of the value of `IsFin`.
-Gun will not send empty data chunks unless required to
-indicate the request body is finished, however.
-
-=== await(ConnPid, StreamRef) -> await(ConnPid, StreamRef, 5000, MonitorRef)
-
-Alias of `gun:await/4`.
-
-A monitor `MonitorRef` is automatically created for the duration of
-this call and an error will be returned if the Gun connection process
-terminates.
-
-=== await(ConnPid, StreamRef, MonitorRef) -> await(ConnPid, StreamRef, 5000, MonitorRef)
-
-Alias of `gun:await/4`.
-
-=== await(ConnPid, StreamRef, Timeout) -> await(ConnPid, StreamRef, Timeout, MonitorRef)
-
-Alias of `gun:await/4`.
-
-A monitor `MonitorRef` is automatically created for the duration of
-this call and an error will be returned if the Gun connection process
-terminates.
-
-=== await(ConnPid, StreamRef, Timeout, MonitorRef) -> tuple() -- see below
-
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream to await messages from.
-Timeout = timeout():: How long this function will wait for messages.
-MonitorRef = reference():: Monitor reference for the Gun connection process.
-
-Wait for a response message.
-
-This function can be used when a synchronous handling of
-responses is desired. It will only return when a message
-for the given stream is received, on error or on timeout.
-
-The return values are described in the next few subsections.
-
-==== {response, IsFin, Status, Headers}
-
-IsFin = fin | nofin:: Whether this message terminates the response.
-Status = binary():: Status line for the response.
-Headers = [{binary(), binary()}]:: Headers sent with the response.
-
-Equivalent of a `gun_response` message.
-
-==== {data, IsFin, Data}
-
-IsFin = fin | nofin:: Whether this message terminates the response.
-Data = binary():: Data from the stream.
-
-Equivalent of a `gun_data` message.
-
-==== {push, NewStreamRef, URI, Headers}
-
-NewStreamRef = reference():: Identifier of the stream being pushed.
-URI = binary():: URI of the resource.
-Headers = [{binary(), binary()}]:: Headers @todo
-
-Equivalent of a `gun_push` message.
-
-@todo Same changes as gun_push
-
-==== {error, Reason}
-
-Reason = any():: Error reason. @todo any?
-
-Equivalent of a `gun_error` message.
-
-@todo I think we want to distinguish a stream error, a general error,
-@todo a DOWN and a timeout error
-
-=== await_body(ConnPid, StreamRef) -> await_body(ConnPid, StreamRef, 5000, MonitorRef)
-
-Alias of `gun:await_body/4`.
-
-A monitor `MonitorRef` is automatically created for the duration of
-this call and an error will be returned if the Gun connection process
-terminates.
-
-=== await_body(ConnPid, StreamRef, MonitorRef) -> await_body(ConnPid, StreamRef, 5000, MonitorRef)
-
-Alias of `gun:await_body/4`.
-
-=== await_body(ConnPid, StreamRef, Timeout) -> await_body(ConnPid, StreamRef, Timeout, MonitorRef)
-
-Alias of `gun:await_body/4`.
-
-A monitor `MonitorRef` is automatically created for the duration of
-this call and an error will be returned if the Gun connection process
-terminates.
-
-=== await_body(ConnPid, StreamRef, Timeout, MonitorRef) -> {ok, Body} | {error, Reason}
-
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream to await messages from.
-Timeout = timeout():: How long this function will wait for each message.
-MonitorRef = reference():: Monitor reference for the Gun connection process.
-Body = binary():: Body for the given stream.
-Reason = any():: Error reason. @todo any?
-
-Wait for a response body.
-
-This function can be used when a synchronous handling of
-responses is desired. It will only return when it has
-finished fetching the entire response body.
-
-The timeout value is *per message*. The actual function call
-can last much longer for large bodies.
-
-@todo I think we want to distinguish a stream error, a general error,
-@todo a DOWN and a timeout error
-
-@todo guide might be a little incorrect about await/await_body
-
-=== flush(ConnPid) -> ok
-
-ConnPid = pid():: The pid of the Gun connection process.
-
-Flush all messages from the Gun connection process from the mailbox.
-
-=== flush(StreamRef) -> ok
-
-StreamRef = reference():: Stream identifier.
-
-Flush all messages related to the given stream.
-
-=== cancel(ConnPid, StreamRef) -> ok
-
-ConnPid = pid():: The pid of the Gun connection process.
-StreamRef = reference():: Identifier of the stream to cancel.
-
-Cancel the given stream.
-
-HTTP/1.1 streams can't be cancelled. Gun will simply silence
-the stream and stop relaying messages.
-
-@todo Depending on the length
-@todo of a response Gun may also attempt to reconnect rather than
-@todo receive the entire response body.
-
-HTTP/2 streams can however be cancelled at any time.
-
-=== ws_upgrade(ConnPid, Path) -> ws_upgrade(ConnPid, Path, [])
-
-Alias of `gun:ws_upgrade/3`.
-
-=== ws_upgrade(ConnPid, Path, Headers) -> StreamRef
-
-Similar to `gun:ws_upgrade/4`, except `WsOpts` is taken from
-the options given in the `gun:open/{2,3}` call when opening
-the connection.
-
-=== ws_upgrade(ConnPid, Path, Headers, WsOpts) -> StreamRef
-
-ConnPid = pid():: The pid of the Gun connection process.
-Path = iodata():: Path to the resource.
-Headers = [{binary(), iodata()}]:: Additional request headers.
-WsOpts = map():: Options for the Websocket connection.
-
-Request the connection to be upgraded to the Websocket protocol.
-
-This function can only be used when the current protocol is `http`.
-
-=== ws_send(ConnPid, Frames) -> ok
-
-ConnPid = pid():: The pid of the Gun connection process.
-Frames = @todo:: @todo
-
-Send one or more Websocket frames.
-
-This function can only be used following a successful `ws_upgrade` call.
+link:man:gun(7)[gun(7)]

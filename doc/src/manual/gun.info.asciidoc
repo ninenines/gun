@@ -1,0 +1,49 @@
+= gun:info(3)
+
+== Name
+
+gun:info - Obtain information about the connection
+
+== Description
+
+[source,erlang]
+----
+info(ConnPid) -> Info
+
+ConnPid :: pid()
+Info :: #{
+    sock_ip   => inet:ip_address(),
+    sock_port => inet:port_number()
+}
+----
+
+Obtain information about the connection.
+
+== Arguments
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+== Return value
+
+A map is returned containing various informations about
+the connection.
+
+== Changelog
+
+* *1.0*: Function introduced.
+
+== Examples
+
+.Obtain information about the connection
+[source,erlang]
+----
+Info = gun:info(ConnPid).
+----
+
+== See also
+
+link:man:gun(3)[gun(3)],
+link:man:gun:open(3)[gun:open(3)],
+link:man:gun:open_unix(3)[gun:open_unix(3)]

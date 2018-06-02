@@ -2,23 +2,40 @@
 
 == Name
 
-gun - Erlang HTTP client with support for HTTP/1.1, HTTP/2 and Websocket.
+gun - HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP
+
+== Description
+
+Gun is an HTTP client for Erlang/OTP with support for the
+HTTP/1.1, HTTP/2 and Websocket protocols.
+
+Gun aims to provide an easy to use, asynchronous and
+always-connected client. It maintains a permanent connection
+to the server and reconnects automatically when necessary.
+
+== Modules
+
+* link:man:gun(3)[gun(3)] - Asynchronous HTTP client
 
 == Dependencies
 
-The `gun` application uses the Erlang applications `ranch`
-for abstracting TCP and TLS over a common interface, and
-the `ssl` application for TLS support, required for HTTPS
-and secure HTTP/2 support. In addition, Gun requires the `crypto`
-application (a dependency of `ssl`) for Websocket.
+// @todo I do not want a dependency on Ranch, remove it
+* link:man:cowlib(7)[cowlib(7)] - Support library for manipulating Web protocols
+* ssl - Secure communication over sockets
 
-These dependencies must be started for the `gun`
-application to work. In an embedded environment
-this means that they need to be started with the
-`application:start/{1,2}` function before the `gun`
-application is started.
+All these applications must be started before the `gun`
+application. To start Gun and all dependencies at once:
+
+[source,erlang]
+----
+{ok, _} = application:ensure_all_started(gun).
+----
 
 == Environment
 
 The `gun` application does not define any application
 environment configuration parameters.
+
+== See also
+
+link:man:cowlib(7)[cowlib(7)]
