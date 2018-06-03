@@ -150,7 +150,7 @@ opts() :: #{
     retry_timeout   => pos_integer(),
     trace           => boolean(),
     transport       => tcp | ssl,
-    transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()]
+    transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
     ws_opts         => ws_opts()
 }
 ----
