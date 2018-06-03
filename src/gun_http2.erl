@@ -80,15 +80,16 @@ check_options(Opts) ->
 
 do_check_options([]) ->
 	ok;
-do_check_options([{keepalive, infinity}|Opts]) ->
-	do_check_options(Opts);
-do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
-	do_check_options(Opts);
 do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
 	case gun_content_handler:check_option(Handlers) of
 		ok -> do_check_options(Opts);
 		error -> {error, {options, {http, Opt}}}
 	end;
+do_check_options([{keepalive, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
+	do_check_options(Opts);
+%% @todo max_frame_size_sent
 do_check_options([Opt|_]) ->
 	{error, {options, {http2, Opt}}}.
 

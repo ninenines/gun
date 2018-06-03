@@ -60,18 +60,18 @@ check_options(Opts) ->
 
 do_check_options([]) ->
 	ok;
-do_check_options([{keepalive, infinity}|Opts]) ->
-	do_check_options(Opts);
-do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
-	do_check_options(Opts);
-do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
-	do_check_options(Opts);
 do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
 	case gun_content_handler:check_option(Handlers) of
 		ok -> do_check_options(Opts);
 		error -> {error, {options, {http, Opt}}}
 	end;
+do_check_options([{keepalive, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
+	do_check_options(Opts);
 do_check_options([{transform_header_name, F}|Opts]) when is_function(F) ->
+	do_check_options(Opts);
+do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
 	do_check_options(Opts);
 do_check_options([Opt|_]) ->
 	{error, {options, {http, Opt}}}.
