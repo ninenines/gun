@@ -486,6 +486,8 @@ flush_pid(ServerPid) ->
 			flush_pid(ServerPid);
 		{gun_data, ServerPid, _, _, _} ->
 			flush_pid(ServerPid);
+		{gun_trailers, ServerPid, _, _} ->
+			flush_pid(ServerPid);
 		{gun_push, ServerPid, _, _, _, _, _, _} ->
 			flush_pid(ServerPid);
 		{gun_error, ServerPid, _, _} ->
@@ -509,6 +511,8 @@ flush_ref(StreamRef) ->
 		{gun_response, _, StreamRef, _, _, _} ->
 			flush_ref(StreamRef);
 		{gun_data, _, StreamRef, _, _} ->
+			flush_ref(StreamRef);
+		{gun_trailers, _, StreamRef, _} ->
 			flush_ref(StreamRef);
 		{gun_push, _, StreamRef, _, _, _, _, _} ->
 			flush_ref(StreamRef);
