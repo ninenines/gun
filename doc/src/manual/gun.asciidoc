@@ -94,7 +94,7 @@ Configuration for the HTTP protocol.
 
 The default value is given next to the option name:
 
-// @todo Document content_handlers and gun_sse.
+// @todo Document content_handlers and gun_sse_h.
 
 keepalive (5000)::
 
@@ -129,7 +129,7 @@ Configuration for the HTTP/2 protocol.
 
 The default value is given next to the option name:
 
-// @todo Document content_handlers and gun_sse.
+// @todo Document content_handlers and gun_sse_h.
 
 keepalive (5000)::
 

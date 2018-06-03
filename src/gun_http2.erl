@@ -96,7 +96,7 @@ do_check_options([Opt|_]) ->
 name() -> http2.
 
 init(Owner, Socket, Transport, Opts) ->
-	Handlers = maps:get(content_handlers, Opts, [gun_data]),
+	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	State = #http2_state{owner=Owner, socket=Socket,
 		transport=Transport, opts=Opts, content_handlers=Handlers},
 	#http2_state{local_settings=Settings} = State,
