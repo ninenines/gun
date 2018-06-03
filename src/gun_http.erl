@@ -201,8 +201,8 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
 	case {Status, StreamRef} of
-		{101, {websocket, _, WsKey, WsExtensions, WsOpts}} ->
-			ws_handshake(Rest2, State, Headers, WsKey, WsExtensions, WsOpts);
+		{101, {websocket, RealStreamRef, WsKey, WsExtensions, WsOpts}} ->
+			ws_handshake(Rest2, State, RealStreamRef, Headers, WsKey, WsExtensions, WsOpts);
 		{_, _} when Status >= 100, Status =< 199 ->
 			ReplyTo ! {gun_inform, self(), stream_ref(StreamRef), Status, Headers},
 			handle(Rest2, State);
@@ -511,26 +511,31 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, owner=Owner, ou
 	new_stream(State#http_state{connection=keepalive, out=head},
 		{websocket, StreamRef, Key, GunExtensions, WsOpts}, Owner, <<"GET">>).
 
-ws_handshake(Buffer, State, Headers, Key, GunExtensions, Opts) ->
+ws_handshake(Buffer, State, StreamRef, Headers, Key, GunExtensions, Opts) ->
 	%% @todo check upgrade, connection
 	case lists:keyfind(<<"sec-websocket-accept">>, 1, Headers) of
 		false ->
 			close;
 		{_, Accept} ->
 			case cow_ws:encode_key(Key) of
-				Accept -> ws_handshake_extensions(Buffer, State, Headers, GunExtensions, Opts);
-				_ -> close
+				Accept ->
+					ws_handshake_extensions(Buffer, State, StreamRef,
+						Headers, GunExtensions, Opts);
+				_ ->
+					close
 			end
 	end.
 
-ws_handshake_extensions(Buffer, State, Headers, GunExtensions, Opts) ->
+ws_handshake_extensions(Buffer, State, StreamRef, Headers, GunExtensions, Opts) ->
 	case lists:keyfind(<<"sec-websocket-extensions">>, 1, Headers) of
 		false ->
-			ws_handshake_protocols(Buffer, State, Headers, #{}, Opts);
+			ws_handshake_protocols(Buffer, State, StreamRef, Headers, #{}, Opts);
 		{_, ExtHd} ->
 			case ws_validate_extensions(cow_http_hd:parse_sec_websocket_extensions(ExtHd), GunExtensions, #{}, Opts) of
-				close -> close;
-				Extensions -> ws_handshake_protocols(Buffer, State, Headers, Extensions, Opts)
+				close ->
+					close;
+				Extensions ->
+					ws_handshake_protocols(Buffer, State, StreamRef, Headers, Extensions, Opts)
 			end
 	end.
 
@@ -552,23 +557,24 @@ ws_validate_extensions(_, _, _, _) ->
 	close.
 
 %% @todo Validate protocols.
-ws_handshake_protocols(Buffer, State, Headers, Extensions, Opts) ->
+ws_handshake_protocols(Buffer, State, StreamRef, Headers, Extensions, Opts) ->
 	case lists:keyfind(<<"sec-websocket-protocol">>, 1, Headers) of
 		false ->
-			ws_handshake_end(Buffer, State, Headers, Extensions,
-				maps:get(default_protocol, Opts, gun_ws_handler), Opts);
+			ws_handshake_end(Buffer, State, StreamRef, Headers, Extensions,
+				maps:get(default_protocol, Opts, gun_ws_h), Opts);
 		{_, Proto} ->
 			ProtoOpt = maps:get(protocols, Opts, []),
 			case lists:keyfind(Proto, 1, ProtoOpt) of
 				{_, Handler} ->
-					ws_handshake_end(Buffer, State, Headers, Extensions, Handler, Opts);
+					ws_handshake_end(Buffer, State, StreamRef,
+						Headers, Extensions, Handler, Opts);
 				false ->
 					close
 			end
 	end.
 
 ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Transport},
-		Headers, Extensions, Handler, Opts) ->
+		StreamRef, Headers, Extensions, Handler, Opts) ->
 	%% Send ourselves the remaining buffer, if any.
 	_ = case Buffer of
 		<<>> ->
@@ -577,4 +583,4 @@ ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Trans
 			{OK, _, _} = Transport:messages(),
 			self() ! {OK, Socket, Buffer}
 	end,
-	gun_ws:init(Owner, Socket, Transport, Headers, Extensions, Handler, Opts).
+	gun_ws:init(Owner, Socket, Transport, StreamRef, Headers, Extensions, Handler, Opts).

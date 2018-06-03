@@ -12,24 +12,27 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
--module(gun_ws_handler).
+-module(gun_ws_h).
 
--export([init/3]).
+-export([init/4]).
 -export([handle/2]).
 
 -record(state, {
 	reply_to :: pid(),
+	stream_ref :: reference(),
 	frag_buffer = <<>> :: binary()
 }).
 
-init(ReplyTo, _, _) ->
-	#state{reply_to=ReplyTo}.
+init(ReplyTo, StreamRef, _, _) ->
+	#state{reply_to=ReplyTo, stream_ref=StreamRef}.
 
-handle({fragment, nofin, _, Payload}, State=#state{frag_buffer=SoFar}) ->
+handle({fragment, nofin, _, Payload},
+		State=#state{frag_buffer=SoFar}) ->
 	State#state{frag_buffer= << SoFar/binary, Payload/binary >>};
-handle({fragment, fin, Type, Payload}, State=#state{reply_to=ReplyTo, frag_buffer=SoFar}) ->
-	ReplyTo ! {gun_ws, self(), {Type, << SoFar/binary, Payload/binary >>}},
+handle({fragment, fin, Type, Payload},
+		State=#state{reply_to=ReplyTo, stream_ref=StreamRef, frag_buffer=SoFar}) ->
+	ReplyTo ! {gun_ws, self(), StreamRef, {Type, << SoFar/binary, Payload/binary >>}},
 	State#state{frag_buffer= <<>>};
-handle(Frame, State=#state{reply_to=ReplyTo}) ->
-	ReplyTo ! {gun_ws, self(), Frame},
+handle(Frame, State=#state{reply_to=ReplyTo, stream_ref=StreamRef}) ->
+	ReplyTo ! {gun_ws, self(), StreamRef, Frame},
 	State.

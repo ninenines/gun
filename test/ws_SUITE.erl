@@ -31,7 +31,7 @@ init_per_group(autobahn, Config) ->
 	Out = os:cmd("pip show autobahntestsuite ; pip2 show autobahntestsuite"),
 	case string:str(Out, "autobahntestsuite") of
 		0 ->
-			ct:print("Skipping the autobahn group because the "
+			ct:pal("Skipping the autobahn group because the "
 				"Autobahn Test Suite is not installed.~nTo install it, "
 				"please follow the instructions on this page:~n~n    "
 				"http://autobahn.ws/testsuite/installation.html"),
@@ -91,13 +91,13 @@ receive_infinity(Port) ->
 	end.
 
 get_case_count() ->
-	{Pid, Ref} = connect("/getCaseCount"),
+	{Pid, MRef, StreamRef} = connect("/getCaseCount"),
 	receive
-		{gun_ws, Pid, {text, N}} ->
-			close(Pid, Ref),
+		{gun_ws, Pid, StreamRef, {text, N}} ->
+			close(Pid, MRef),
 			binary_to_integer(N);
 		Msg ->
-			ct:print("Unexpected message ~p", [Msg]),
+			ct:pal("Unexpected message ~p", [Msg]),
 			terminate(),
 			error(failed)
 	end.
@@ -105,36 +105,36 @@ get_case_count() ->
 run_cases(Total, Total) ->
 	ok;
 run_cases(N, Total) ->
-	{Pid, Ref} = connect(["/runCase?case=", integer_to_binary(N + 1), "&agent=Gun"]),
-	loop(Pid, Ref),
+	{Pid, MRef, StreamRef} = connect(["/runCase?case=", integer_to_binary(N + 1), "&agent=Gun"]),
+	loop(Pid, MRef, StreamRef),
 	update_reports(),
 	run_cases(N + 1, Total).
 
-loop(Pid, Ref) ->
+loop(Pid, MRef, StreamRef) ->
 	receive
-		{gun_ws, Pid, close} ->
+		{gun_ws, Pid, StreamRef, close} ->
 			gun:ws_send(Pid, close),
-			loop(Pid, Ref);
-		{gun_ws, Pid, {close, Code, _}} ->
+			loop(Pid, MRef, StreamRef);
+		{gun_ws, Pid, StreamRef, {close, Code, _}} ->
 			gun:ws_send(Pid, {close, Code, <<>>}),
-			loop(Pid, Ref);
-		{gun_ws, Pid, Frame} ->
+			loop(Pid, MRef, StreamRef);
+		{gun_ws, Pid, StreamRef, Frame} ->
 			gun:ws_send(Pid, Frame),
-			loop(Pid, Ref);
+			loop(Pid, MRef, StreamRef);
 		{gun_down, Pid, ws, _, _, _} ->
-			close(Pid, Ref);
-		{'DOWN', Ref, process, Pid, normal} ->
-			close(Pid, Ref);
+			close(Pid, MRef);
+		{'DOWN', MRef, process, Pid, normal} ->
+			close(Pid, MRef);
 		Msg ->
-			ct:print("Unexpected message ~p", [Msg]),
-			close(Pid, Ref)
+			ct:pal("Unexpected message ~p", [Msg]),
+			close(Pid, MRef)
 	end.
 
 update_reports() ->
-	{Pid, Ref} = connect("/updateReports?agent=Gun"),
+	{Pid, MRef, StreamRef} = connect("/updateReports?agent=Gun"),
 	receive
-		{gun_ws, Pid, close} ->
-			close(Pid, Ref)
+		{gun_ws, Pid, StreamRef, close} ->
+			close(Pid, MRef)
 	after 5000 ->
 		error(failed)
 	end.
@@ -143,22 +143,22 @@ log_output() ->
 	ok.
 
 connect(Path) ->
-	{ok, Pid} = gun:open("127.0.0.1", 33080, #{retry=>0}),
+	{ok, Pid} = gun:open("127.0.0.1", 33080, #{retry => 0}),
 	{ok, http} = gun:await_up(Pid),
-	Ref = monitor(process, Pid),
-	gun:ws_upgrade(Pid, Path, [], #{compress => true}),
+	MRef = monitor(process, Pid),
+	StreamRef = gun:ws_upgrade(Pid, Path, [], #{compress => true}),
 	receive
-		{gun_ws_upgrade, Pid, ok, _} ->
+		{gun_upgrade, Pid, StreamRef, [<<"websocket">>], _} ->
 			ok;
 		Msg ->
-			ct:print("Unexpected message ~p", [Msg]),
+			ct:pal("Unexpected message ~p", [Msg]),
 			terminate(),
 			error(failed)
 	end,
-	{Pid, Ref}.
+	{Pid, MRef, StreamRef}.
 
-close(Pid, Ref) ->
-	demonitor(Ref),
+close(Pid, MRef) ->
+	demonitor(MRef),
 	gun:close(Pid),
 	gun:flush(Pid).
 

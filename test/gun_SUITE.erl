@@ -73,7 +73,7 @@ detect_owner_gone_ws(_) ->
 		gun:await_up(ConnPid),
 		gun:ws_upgrade(ConnPid, "/", []),
 		receive
-			{gun_ws_upgrade, ConnPid, ok, _} ->
+			{gun_upgrade, ConnPid, _, [<<"websocket">>], _} ->
 				ok
 		after 1000 ->
 			error(timeout)

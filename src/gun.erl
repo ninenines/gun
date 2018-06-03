@@ -381,6 +381,7 @@ await(ServerPid, StreamRef, Timeout) ->
 	demonitor(MRef, [flush]),
 	Res.
 
+%% @todo Add gun_upgrade and gun_ws?
 await(ServerPid, StreamRef, Timeout, MRef) ->
 	receive
 		{gun_inform, ServerPid, StreamRef, Status, Headers} ->
@@ -494,9 +495,9 @@ flush_pid(ServerPid) ->
 			flush_pid(ServerPid);
 		{gun_error, ServerPid, _} ->
 			flush_pid(ServerPid);
-		{gun_ws_upgrade, ServerPid, _, _} ->
+		{gun_upgrade, ServerPid, _, _, _} ->
 			flush_pid(ServerPid);
-		{gun_ws, ServerPid, _} ->
+		{gun_ws, ServerPid, _, _} ->
 			flush_pid(ServerPid);
 		{'DOWN', _, process, ServerPid, _} ->
 			flush_pid(ServerPid)
@@ -517,6 +518,10 @@ flush_ref(StreamRef) ->
 		{gun_push, _, StreamRef, _, _, _, _, _} ->
 			flush_ref(StreamRef);
 		{gun_error, _, StreamRef, _} ->
+			flush_ref(StreamRef);
+		{gun_upgrade, _, StreamRef, _, _} ->
+			flush_ref(StreamRef);
+		{gun_ws, _, StreamRef, _} ->
 			flush_ref(StreamRef)
 	after 0 ->
 		ok
