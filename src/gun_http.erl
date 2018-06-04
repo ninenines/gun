@@ -500,7 +500,7 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, owner=Owner, ou
 		{<<"sec-websocket-key">>, Key}
 		|Headers2
 	],
-	IsSecure = Transport:secure(),
+	IsSecure = Transport =:= gun_tls,
 	Headers = case lists:keymember(<<"host">>, 1, Headers0) of
 		true -> Headers3;
 		false when Port =:= 80, not IsSecure -> [{<<"host">>, Host}|Headers3];

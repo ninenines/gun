@@ -149,7 +149,7 @@ opts() :: #{
     retry           => non_neg_integer(),
     retry_timeout   => pos_integer(),
     trace           => boolean(),
-    transport       => tcp | ssl,
+    transport       => tcp | tls,
     transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
     ws_opts         => ws_opts()
 }
@@ -175,11 +175,11 @@ protocols - see below::
 
 Ordered list of preferred protocols. When the transport is `tcp`,
 this list must contain exactly one protocol. When the transport
-is `ssl`, this list must contain at least one protocol and will be
+is `tls`, this list must contain at least one protocol and will be
 used to negotiate a protocol via ALPN. When the server does not
 support ALPN then `http` will always be used. Defaults to
 `[http]` when the transport is `tcp`, and `[http2, http]` when the
-transport is `ssl`.
+transport is `tls`.
 
 retry (5)::
 
@@ -196,12 +196,12 @@ only be used during debugging.
 
 transport - see below::
 
-Whether to use SSL or plain TCP. The default varies depending on the
-port used. Port 443 defaults to `ssl`. All other ports default to `tcp`.
+Whether to use TLS or plain TCP. The default varies depending on the
+port used. Port 443 defaults to `tls`. All other ports default to `tcp`.
 
 transport_opts ([])::
 
-Transport options. They are TCP options or SSL options depending on
+Transport options. They are TCP options or TLS options depending on
 the selected transport.
 
 ws_opts (#{})::

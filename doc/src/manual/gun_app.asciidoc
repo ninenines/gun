@@ -19,7 +19,6 @@ to the server and reconnects automatically when necessary.
 
 == Dependencies
 
-// @todo I do not want a dependency on Ranch, remove it
 * link:man:cowlib(7)[cowlib(7)] - Support library for manipulating Web protocols
 * ssl - Secure communication over sockets
 

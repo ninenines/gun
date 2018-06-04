@@ -99,7 +99,7 @@
     retry           => non_neg_integer(),
     retry_timeout   => pos_integer(),
     trace           => boolean(),
-    transport       => tcp | ssl,
+    transport       => tcp | tls | ssl,
     transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
     ws_opts         => ws_opts()
 }.
@@ -161,7 +161,12 @@ open(Host, Port, Opts) when is_list(Host); is_atom(Host); is_tuple(Host) ->
 open_unix(SocketPath, Opts) ->
 	do_open({local, SocketPath}, 0, Opts).
 
-do_open(Host, Port, Opts) ->
+do_open(Host, Port, Opts0) ->
+	%% We accept both ssl and tls but only use tls in the code.
+	Opts = case Opts0 of
+		#{transport := ssl} -> Opts0#{transport => tls};
+		_ -> Opts0
+	end,
 	case check_options(maps:to_list(Opts)) of
 		ok ->
 			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
@@ -215,7 +220,7 @@ check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
 check_options([{trace, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);
-check_options([{transport, T}|Opts]) when T =:= tcp; T =:= ssl ->
+check_options([{transport, T}|Opts]) when T =:= tcp; T =:= tls ->
 	check_options(Opts);
 check_options([{transport_opts, L}|Opts]) when is_list(L) ->
 	check_options(Opts);
@@ -588,17 +593,17 @@ init(Parent, Owner, Host, Port, Opts) ->
 	ok = proc_lib:init_ack(Parent, {ok, self()}),
 	Retry = maps:get(retry, Opts, 5),
 	Transport = case maps:get(transport, Opts, default_transport(Port)) of
-		tcp -> ranch_tcp;
-		ssl -> ranch_ssl
+		tcp -> gun_tcp;
+		tls -> gun_tls
 	end,
 	OwnerRef = monitor(process, Owner),
 	connect(#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
 		host=Host, port=Port, opts=Opts, transport=Transport}, Retry).
 
-default_transport(443) -> ssl;
+default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
-connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_ssl}, Retries) ->
+connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=gun_tls}, Retries) ->
 	Protocols = [case P of
 		http -> <<"http/1.1">>;
 		http2 -> <<"h2">>

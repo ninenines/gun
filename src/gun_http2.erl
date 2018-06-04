@@ -370,9 +370,9 @@ prepare_headers(EncodeState, Transport, Method, Host0, Port, Path, Headers0) ->
 		lists:keydelete(<<"upgrade">>, 1, Headers0)))))),
 	Headers = [
 		{<<":method">>, Method},
-		{<<":scheme">>, case Transport:secure() of
-			true -> <<"https">>;
-			false -> <<"http">>
+		{<<":scheme">>, case Transport of
+			gun_tls -> <<"https">>;
+			gun_tcp -> <<"http">>
 		end},
 		{<<":authority">>, Authority},
 		{<<":path">>, Path}
@@ -465,17 +465,17 @@ send_data(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		min(RemoteMaxFrameSize, ConfiguredMaxFrameSize)
 	),
 	case Data of
-		{sendfile, Offset, Bytes, Path} when Bytes =< MaxSendSize ->
-			Transport:send(Socket, cow_http2:data_header(StreamID, IsFin, Bytes)),
-			Transport:sendfile(Socket, Path, Offset, Bytes),
-			{State#http2_state{local_window=ConnWindow - Bytes},
-				Stream#stream{local=IsFin, local_window=StreamWindow - Bytes}};
-		{sendfile, Offset, Bytes, Path} ->
-			Transport:send(Socket, cow_http2:data_header(StreamID, nofin, MaxSendSize)),
-			Transport:sendfile(Socket, Path, Offset, MaxSendSize),
-			send_data(State#http2_state{local_window=ConnWindow - MaxSendSize},
-				Stream#stream{local_window=StreamWindow - MaxSendSize},
-				IsFin, {sendfile, Offset + MaxSendSize, Bytes - MaxSendSize, Path}, In);
+%		{sendfile, Offset, Bytes, Path} when Bytes =< MaxSendSize ->
+%			Transport:send(Socket, cow_http2:data_header(StreamID, IsFin, Bytes)),
+%			Transport:sendfile(Socket, Path, Offset, Bytes),
+%			{State#http2_state{local_window=ConnWindow - Bytes},
+%				Stream#stream{local=IsFin, local_window=StreamWindow - Bytes}};
+%		{sendfile, Offset, Bytes, Path} ->
+%			Transport:send(Socket, cow_http2:data_header(StreamID, nofin, MaxSendSize)),
+%			Transport:sendfile(Socket, Path, Offset, MaxSendSize),
+%			send_data(State#http2_state{local_window=ConnWindow - MaxSendSize},
+%				Stream#stream{local_window=StreamWindow - MaxSendSize},
+%				IsFin, {sendfile, Offset + MaxSendSize, Bytes - MaxSendSize, Path}, In);
 		Iolist0 ->
 			IolistSize = iolist_size(Iolist0),
 			if
@@ -500,7 +500,7 @@ send_trailers(State=#http2_state{socket=Socket, transport=Transport, encode_stat
 
 queue_data(Stream=#stream{local_buffer=Q0, local_buffer_size=Size0}, IsFin, Data, In) ->
 	DataSize = case Data of
-		{sendfile, _, Bytes, _} -> Bytes;
+%		{sendfile, _, Bytes, _} -> Bytes;
 		Iolist -> iolist_size(Iolist)
 	end,
 	Q = queue:In({IsFin, DataSize, Data}, Q0),

@@ -27,7 +27,7 @@ use it.
 [source,erlang]
 ----
 1> application:ensure_all_started(gun).
-{ok,[ranch,crypto,cowlib,asn1,public_key,ssl,gun]}
+{ok,[crypto,cowlib,asn1,public_key,ssl,gun]}
 ----
 
 === Stopping
