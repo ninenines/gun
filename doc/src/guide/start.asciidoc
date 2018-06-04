@@ -1,21 +1,21 @@
+[[start]]
 == Starting and stopping
 
 This chapter describes how to start and stop the Gun application.
 
 === Setting up
 
-Before Gun can be used it needs to be in Erlang's `ERL_LIBS` path variable.
-If you use `erlang.mk` or a similar build tool, you only need to specify
-Gun as a dependency to your application and the tool will take care
-of downloading Gun and setting up paths.
+Specify Gun as a dependency to your application in your favorite
+build tool.
 
-With `erlang.mk` this is done by adding `gun` to the `DEPS` variable
+With Erlang.mk this is done by adding `gun` to the `DEPS` variable
 in your Makefile.
 
-.Adding Gun as an erlang.mk dependency
-
+.Adding Gun as an Erlang.mk dependency
 [source,make]
+----
 DEPS = gun
+----
 
 === Starting
 
@@ -23,7 +23,6 @@ Gun is an _OTP application_. It needs to be started before you can
 use it.
 
 .Starting Gun in an Erlang shell
-
 [source,erlang]
 ----
 1> application:ensure_all_started(gun).
@@ -33,35 +32,12 @@ use it.
 === Stopping
 
 You can stop Gun using the `application:stop/1` function, however
-only Gun will be stopped. This is the equivalent of `application:start/1`.
+only Gun will be stopped. This is the reverse of `application:start/1`.
 The `application_ensure_all_started/1` function has no equivalent for
 stopping all applications.
 
 .Stopping Gun
-
 [source,erlang]
+----
 application:stop(gun).
-
-=== Using Gun with releases
-
-An _OTP release_ starts applications automatically. All you need
-to do is to set up your application resource file so that Gun can
-be included in the release. The application resource file can be
-found in `ebin/your_application.app`, or in `src/your_application.app.src`
-if you are using a build tool like `erlang.mk`.
-
-The key you need to change is the `applications` key. By default
-it only includes `kernel` and `stdlib`. You need to add `gun` to
-that list.
-
-.Adding Gun to the application resource file
-
-[source,erlang]
-{applications, [
-	kernel,
-	stdlib,
-	gun
-]}
-
-Do not put an extra comma at the end, the comma is a separator
-between the elements of the list.
+----

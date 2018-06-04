@@ -1,3 +1,4 @@
+[[http]]
 == HTTP
 
 This chapter describes how to use the Gun client for
@@ -7,7 +8,7 @@ communicating with an HTTP/1.1 or HTTP/2 server.
 
 Every time a request is initiated,  Gun creates a _stream_.
 A _stream reference_ uniquely identifies a set of request and
-response(s) and must be used to perform additional operations
+response and must be used to perform additional operations
 with a stream or to identify its messages.
 
 Stream references use the Erlang _reference_ data type and
@@ -24,7 +25,9 @@ not be used.
 
 .Cancelling a stream
 [source,erlang]
+----
 gun:cancel(ConnPid, StreamRef).
+----
 
 === Sending requests
 
@@ -45,39 +48,43 @@ handling of responses will be explained further on.
 
 ==== GET and HEAD
 
-Use `gun:get/{2,3,4}` to request a resource.
+Use `gun:get/2,3,4` to request a resource.
 
 .GET "/organizations/ninenines"
-
 [source,erlang]
+----
 StreamRef = gun:get(ConnPid, "/organizations/ninenines").
+----
 
 .GET "/organizations/ninenines" with custom headers
-
 [source,erlang]
+----
 StreamRef = gun:get(ConnPid, "/organizations/ninenines", [
-	{<<"accept">>, "application/json"},
-	{<<"user-agent">>, "revolver/1.0"}
+    {<<"accept">>, "application/json"},
+    {<<"user-agent">>, "revolver/1.0"}
 ]).
+----
 
 Note that the list of headers has the field name as a binary.
 The field value is iodata, which is either a binary or an
 iolist.
 
-Use `gun:head/{2,3,4}` if you don't need the response body.
+Use `gun:head/2,3,4` if you don't need the response body.
 
 .HEAD "/organizations/ninenines"
-
 [source,erlang]
+----
 StreamRef = gun:head(ConnPid, "/organizations/ninenines").
+----
 
 .HEAD "/organizations/ninenines" with custom headers
-
 [source,erlang]
+----
 StreamRef = gun:head(ConnPid, "/organizations/ninenines", [
-	{<<"accept">>, "application/json"},
-	{<<"user-agent">>, "revolver/1.0"}
+    {<<"accept">>, "application/json"},
+    {<<"user-agent">>, "revolver/1.0"}
 ]).
+----
 
 It is not possible to send a request body with a GET or HEAD
 request.
@@ -87,7 +94,7 @@ request.
 HTTP defines three methods to create or update a resource.
 
 POST is generally used when the resource identifier (URI) isn't known
-in advance when creating the resource. POST can also be used to
+in advance when creating a resource. POST can also be used to
 replace an existing resource, although PUT is more appropriate
 in that situation.
 
@@ -101,7 +108,7 @@ desirable. The request body of a PATCH method may be a partial
 representation or a list of instructions on how to update the
 resource.
 
-The `gun:post/{4,5}`, `gun:put/{4,5}` and `gun:patch/{4,5}` functions
+The `gun:post/4,5`, `gun:put/4,5` and `gun:patch/4,5` functions
 take a body as their fourth argument. These functions do
 not require any body-specific header to be set, although
 it is always recommended to set the content-type header.
@@ -112,12 +119,13 @@ can be replaced by `gun:put` or `gun:patch` for performing
 a PUT or PATCH request, respectively.
 
 .POST "/organizations/ninenines"
-
 [source,erlang]
+----
 Body = "{\"msg\": \"Hello world!\"}",
 StreamRef = gun:post(ConnPid, "/organizations/ninenines", [
-	{<<"content-type">>, "application/json"}
+    {<<"content-type">>, "application/json"}
 ], Body).
+----
 
 The `gun:post/3`, `gun:put/3` and `gun:patch/3` functions
 do not take a body in their arguments. If a body is to be
@@ -133,14 +141,15 @@ is not set, HTTP/1.1 will use the chunked transfer-encoding,
 and HTTP/2 will continue normally as it is chunked by design.
 
 .POST "/organizations/ninenines" with delayed body
-
 [source,erlang]
+----
 Body = "{\"msg\": \"Hello world!\"}",
 StreamRef = gun:post(ConnPid, "/organizations/ninenines", [
-	{<<"content-length">>, integer_to_binary(length(Body))},
-	{<<"content-type">>, "application/json"}
+    {<<"content-length">>, integer_to_binary(length(Body))},
+    {<<"content-type">>, "application/json"}
 ]),
 gun:data(ConnPid, StreamRef, fin, Body).
+----
 
 The atom `fin` indicates this is the last chunk of data to
 be sent. You can call the `gun:data/4` function as many
@@ -148,79 +157,82 @@ times as needed until you have sent the entire body. The
 last call must use `fin` and all the previous calls must
 use `nofin`. The last chunk may be empty.
 
-@todo what to do about empty chunk, ignore?
-
 .Streaming the request body
-
 [source,erlang]
 ----
 sendfile(ConnPid, StreamRef, Filepath) ->
-	{ok, IoDevice} = file:open(Filepath, [read, binary, raw]),
-	do_sendfile(ConnPid, StreamRef, IoDevice).
+    {ok, IoDevice} = file:open(Filepath, [read, binary, raw]),
+    do_sendfile(ConnPid, StreamRef, IoDevice).
 
 do_sendfile(ConnPid, StreamRef, IoDevice) ->
-	case file:read(IoDevice, 8000) of
-		eof ->
-			gun:data(ConnPid, StreamRef, fin, <<>>),
-			file:close(IoDevice);
-		{ok, Bin} ->
-			gun:data(ConnPid, StreamRef, nofin, Bin),
-			do_sendfile(ConnPid, StreamRef, IoDevice)
-	end.
+    case file:read(IoDevice, 8000) of
+        eof ->
+            gun:data(ConnPid, StreamRef, fin, <<>>),
+            file:close(IoDevice);
+        {ok, Bin} ->
+            gun:data(ConnPid, StreamRef, nofin, Bin),
+            do_sendfile(ConnPid, StreamRef, IoDevice)
+    end.
 ----
 
 ==== DELETE
 
-Use `gun:delete/{2,3,4}` to delete a resource.
+Use `gun:delete/2,3,4` to delete a resource.
 
 .DELETE "/organizations/ninenines"
-
 [source,erlang]
+----
 StreamRef = gun:delete(ConnPid, "/organizations/ninenines").
+----
 
 .DELETE "/organizations/ninenines" with custom headers
-
 [source,erlang]
+----
 StreamRef = gun:delete(ConnPid, "/organizations/ninenines", [
-	{<<"user-agent">>, "revolver/1.0"}
+    {<<"user-agent">>, "revolver/1.0"}
 ]).
+----
 
 ==== OPTIONS
 
-Use `gun:options/{2,3}` to request information about a resource.
+Use `gun:options/2,3` to request information about a resource.
 
 .OPTIONS "/organizations/ninenines"
-
 [source,erlang]
+----
 StreamRef = gun:options(ConnPid, "/organizations/ninenines").
+----
 
 .OPTIONS "/organizations/ninenines" with custom headers
-
 [source,erlang]
+----
 StreamRef = gun:options(ConnPid, "/organizations/ninenines", [
-	{<<"user-agent">>, "revolver/1.0"}
+    {<<"user-agent">>, "revolver/1.0"}
 ]).
+----
 
 You can also use this function to request information about
 the server itself.
 
 .OPTIONS "*"
-
 [source,erlang]
+----
 StreamRef = gun:options(ConnPid, "*").
+----
 
 ==== Requests with an arbitrary method
 
-The `gun:request/{4,5,6}` function can be used to send requests
+The `gun:request/4,5,6` function can be used to send requests
 with a configurable method name. It is mostly useful when you
 need a method that Gun does not understand natively.
 
 .Example of a TRACE request
-
 [source,erlang]
+----
 gun:request(ConnPid, "TRACE", "/", [
-	{<<"max-forwards">>, "30"}
+    {<<"max-forwards">>, "30"}
 ]).
+----
 
 === Processing responses
 
@@ -242,36 +254,35 @@ You can receive messages directly, or you can use the _await_
 functions to let Gun receive them for you.
 
 .Receiving a response using receive
-
 [source,erlang]
 ----
 print_body(ConnPid, MRef) ->
-	StreamRef = gun:get(ConnPid, "/"),
-	receive
-		{gun_response, ConnPid, StreamRef, fin, Status, Headers} ->
-			no_data;
-		{gun_response, ConnPid, StreamRef, nofin, Status, Headers} ->
-			receive_data(ConnPid, MRef, StreamRef);
-		{'DOWN', MRef, process, ConnPid, Reason} ->
-			error_logger:error_msg("Oops!"),
-			exit(Reason)
-	after 1000 ->
-		exit(timeout)
-	end.
+    StreamRef = gun:get(ConnPid, "/"),
+    receive
+        {gun_response, ConnPid, StreamRef, fin, Status, Headers} ->
+            no_data;
+        {gun_response, ConnPid, StreamRef, nofin, Status, Headers} ->
+            receive_data(ConnPid, MRef, StreamRef);
+        {'DOWN', MRef, process, ConnPid, Reason} ->
+            error_logger:error_msg("Oops!"),
+            exit(Reason)
+    after 1000 ->
+        exit(timeout)
+    end.
 
 receive_data(ConnPid, MRef, StreamRef) ->
-	receive
-		{gun_data, ConnPid, StreamRef, nofin, Data} ->
-			io:format("~s~n", [Data]),
-			receive_data(ConnPid, MRef, StreamRef);
-		{gun_data, ConnPid, StreamRef, fin, Data} ->
-			io:format("~s~n", [Data]);
-		{'DOWN', MRef, process, ConnPid, Reason} ->
-			error_logger:error_msg("Oops!"),
-			exit(Reason)
-	after 1000 ->
-		exit(timeout)
-	end.
+    receive
+        {gun_data, ConnPid, StreamRef, nofin, Data} ->
+            io:format("~s~n", [Data]),
+            receive_data(ConnPid, MRef, StreamRef);
+        {gun_data, ConnPid, StreamRef, fin, Data} ->
+            io:format("~s~n", [Data]);
+        {'DOWN', MRef, process, ConnPid, Reason} ->
+            error_logger:error_msg("Oops!"),
+            exit(Reason)
+    after 1000 ->
+        exit(timeout)
+    end.
 ----
 
 While it may seem verbose, using messages like this has the
@@ -283,29 +294,30 @@ at the same time.
 You can also use Gun in a synchronous manner by using the _await_
 functions.
 
-The `gun:await/{2,3,4}` function will wait until it receives
+The `gun:await/2,3,4` function will wait until it receives
 a response to, a pushed resource related to, or data from
 the given stream.
 
-When calling `gun:await/{2,3}` and not passing a monitor
+When calling `gun:await/2,3` and not passing a monitor
 reference, one is automatically created for you for the
 duration of the call.
 
-The `gun:await_body/{2,3,4}` works similarly, but returns the
+The `gun:await_body/2,3,4` works similarly, but returns the
 body received. Both functions can be combined to receive the
 response and its body sequentially.
 
 .Receiving a response using await
-
 [source,erlang]
+----
 StreamRef = gun:get(ConnPid, "/"),
 case gun:await(ConnPid, StreamRef) of
-	{response, fin, Status, Headers} ->
-		no_data;
-	{response, nofin, Status, Headers} ->
-		{ok, Body} = gun:await_body(ConnPid, StreamRef),
-		io:format("~s~n", [Body])
+    {response, fin, Status, Headers} ->
+        no_data;
+    {response, nofin, Status, Headers} ->
+        {ok, Body} = gun:await_body(ConnPid, StreamRef),
+        io:format("~s~n", [Body])
 end.
+----
 
 === Handling streams pushed by the server
 
@@ -323,26 +335,28 @@ The `gun_push` message contains both the new stream reference
 and the stream reference of the original request.
 
 .Receiving a pushed response using receive
-
 [source,erlang]
+----
 receive
-	{gun_push, ConnPid, OriginalStreamRef, PushedStreamRef,
-			Method, Host, Path, Headers} ->
-		enjoy()
+    {gun_push, ConnPid, OriginalStreamRef, PushedStreamRef,
+            Method, Host, Path, Headers} ->
+        enjoy()
 end.
+----
 
-If you use the `gun:await/{2,3,4}` function, however, Gun
+If you use the `gun:await/2,3,4` function, however, Gun
 will use the original reference to identify the message but
 will return a tuple that doesn't contain it.
 
 .Receiving a pushed response using await
-
 [source,erlang]
-{push, PushedStreamRef, Method, Host, Path, Headers}
-	= gun:await(ConnPid, OriginalStreamRef).
+----
+{push, PushedStreamRef, Method, URI, Headers}
+    = gun:await(ConnPid, OriginalStreamRef).
+----
 
-The `PushedStreamRef` variable can then be used with `gun:await_body/{2,3,4}`
-if needed.
+The `PushedStreamRef` variable can then be used with `gun:await/2,3,4`
+and `gun:await_body/2,3,4`.
 
 === Flushing unwanted messages
 
@@ -352,14 +366,16 @@ can use it to get rid of all messages related to a connection,
 or just the messages related to a stream.
 
 .Flush all messages from a Gun connection
-
 [source,erlang]
+----
 gun:flush(ConnPid).
+----
 
 .Flush all messages from a specific stream
-
 [source,erlang]
+----
 gun:flush(StreamRef).
+----
 
 === Redirecting responses to a different process
 
@@ -367,7 +383,8 @@ Gun allows you to specify which process will handle responses
 to a request via the `reply_to` request option.
 
 .GET "/organizations/ninenines" to a different process
-
 [source,erlang]
+----
 StreamRef = gun:get(ConnPid, "/organizations/ninenines", [],
-	#{reply_to => Pid}).
+    #{reply_to => Pid}).
+----

@@ -1,3 +1,4 @@
+[[protocols]]
 == Supported protocols
 
 This chapter describes the protocols supported and the
@@ -10,31 +11,36 @@ sends a request, the server sends back a response.
 
 Gun provides convenience functions for performing GET, HEAD,
 OPTIONS, POST, PATCH, PUT, and DELETE requests. All these
-functions are aliases of `gun:request/{4,5,6}` for each respective
+functions are aliases of `gun:request/4,5,6` for the respective
 methods. Gun also provides a `gun:data/4` function for streaming
 the request body.
 
+Gun will send a `gun_inform` message for every intermediate
+informational responses received. They will always be sent
+before the `gun_response` message.
+
 Gun will send a `gun_response` message for every response
 received, followed by zero or more `gun_data` messages for
-the response body. If something goes wrong, a `gun_error`
+the response body, which is optionally terminated by a
+`gun_trailers` message. If something goes wrong, a `gun_error`
 will be sent instead.
 
 Gun provides convenience functions for dealing with messages.
-The `gun:await/{2,3,4}` function waits for a response to the given
-request, and the `gun:await_body/{2,3,4}` function for the
-response's body. The `gun:flush/1` function can be used to clear all
+The `gun:await/2,3,4` function waits for a response to the given
+request, and the `gun:await_body/2,3,4` function for the
+response body. The `gun:flush/1` function can be used to clear all
 messages related to a request or a connection from the mailbox
-of the process.
+of the calling process.
 
 The function `gun:cancel/2` can be used to silence the
 response to a request previously sent if it is no longer
 needed. When using HTTP/1.1 there is no multiplexing so
 Gun will have to receive the response fully before any
-other response can be received.
+other responses can be received.
 
 Finally, Gun can upgrade an HTTP/1.1 connection to Websocket.
-It provides the `gun:ws_upgrade/{2,3,4}` function for that
-purpose. A `gun_ws_upgrade` message will be sent on success;
+It provides the `gun:ws_upgrade/2,3,4` function for that
+purpose. A `gun_upgrade` message will be sent on success;
 a `gun_response` message otherwise.
 
 === HTTP/2
@@ -42,25 +48,26 @@ a `gun_response` message otherwise.
 HTTP/2 is a binary protocol based on HTTP, compatible with
 the HTTP semantics, that reduces the complexity of parsing
 requests and responses, compresses the HTTP headers and
-allows the server to push multiple responses to a single
-request.
+allows the server to push additional resources along with
+the normal response to the original request.
 
 The HTTP/2 interface is very similar to HTTP/1.1, so this
 section instead focuses on the differences in the interface
 for the two protocols.
 
-Because a HTTP/2 server can push multiple responses to a
-single request, Gun might send `gun_push` messages for
-every push received. They can be ignored safely if they
-are not needed.
+Gun will send `gun_push` messages for every push received.
+They will always be sent before the `gun_response` message.
+They can be ignored safely if they are not needed, or they
+can be canceled.
 
 The `gun:cancel/2` function will use the HTTP/2 stream
 cancellation mechanism which allows Gun to inform the
 server to stop sending a response for this particular
 request, saving resources.
 
-It is not possible to upgrade an HTTP/2 connection to Websocket
-due to protocol limitations.
+It is not currently possible to upgrade an HTTP/2 connection
+to Websocket. Support for this will be added in a future
+release.
 
 === Websocket
 
@@ -110,10 +117,11 @@ current protocol.
 |===
 | Message               | HTTP/1.1 | HTTP/2 | Websocket
 | gun_push              | no       | yes    | no
+| gun_inform            | yes      | yes    | no
 | gun_response          | yes      | yes    | no
 | gun_data              | yes      | yes    | no
-| gun_error (StreamRef) | yes      | yes    | no
+| gun_trailers          | yes      | yes    | no
 | gun_error             | yes      | yes    | yes
-| gun_ws_upgrade        | yes      | no     | no
+| gun_upgrade           | yes      | no     | no
 | gun_ws                | no       | no     | yes
 |===

@@ -46,7 +46,7 @@ Streams:
 Websocket:
 
 * link:man:gun:ws_upgrade(3)[gun:ws_upgrade(3)] - Upgrade to Websocket
-* link:man:gun:ws_send(3)[gun:ws_send(3)] - Send one or more Websocket frame(s)
+* link:man:gun:ws_send(3)[gun:ws_send(3)] - Send Websocket frames
 
 == Messages
 
