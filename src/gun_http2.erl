@@ -524,6 +524,8 @@ down(#http2_state{streams=Streams}) ->
 terminate(#http2_state{streams=Streams}, Reason) ->
 	%% Because a particular stream is unknown,
 	%% we're sending the error message to all streams.
+	%% @todo We should not send duplicate messages to processes.
+	%% @todo We should probably also inform the owner process.
 	_ = [ReplyTo ! {gun_error, self(), Reason} || #stream{reply_to=ReplyTo} <- Streams],
 	%% @todo Send GOAWAY frame.
 	%% @todo LastGoodStreamID
