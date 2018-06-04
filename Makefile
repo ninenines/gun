@@ -13,7 +13,7 @@ CT_OPTS += -pa test -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib master
+dep_cowlib = git https://github.com/ninenines/cowlib 2.4.0
 
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper
 dep_ct_helper = git https://github.com/extend/ct_helper.git master
