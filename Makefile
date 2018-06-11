@@ -15,6 +15,8 @@ LOCAL_DEPS = ssl
 DEPS = cowlib
 dep_cowlib = git https://github.com/ninenines/cowlib 2.4.0
 
+DOC_DEPS = asciideck
+
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper
 dep_ct_helper = git https://github.com/extend/ct_helper.git master
 
