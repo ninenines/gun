@@ -36,7 +36,7 @@ Messages:
 
 * link:man:gun:await(3)[gun:await(3)] - Wait for a response
 * link:man:gun:await_body(3)[gun:await_body(3)] - Wait for the complete response body
-* link:man:gun:await_up(3)[gun:await(3)] - Wait for the connection to be up
+* link:man:gun:await_up(3)[gun:await_up(3)] - Wait for the connection to be up
 * link:man:gun:flush(3)[gun:flush(3)] - Flush all messages related to a connection or a stream
 
 Streams:
