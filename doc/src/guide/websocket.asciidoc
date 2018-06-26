@@ -93,7 +93,7 @@ gun:ws_send(ConnPid, {text, "Hello!"}).
 //----
 
 Note that if you send a close frame, Gun will close the connection
-cleanly and will not attempt to reconnect afterwards.
+cleanly but will attempt to reconnect afterwards.
 
 === Receiving data
 
