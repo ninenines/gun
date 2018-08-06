@@ -96,40 +96,40 @@
 	| {close, ws_close_code(), iodata()}.
 
 -type opts() :: #{
-    connect_timeout => timeout(),
-    http_opts       => http_opts(),
-    http2_opts      => http2_opts(),
-    protocols       => [http | http2],
-    retry           => non_neg_integer(),
-    retry_timeout   => pos_integer(),
-    trace           => boolean(),
-    transport       => tcp | tls | ssl,
-    transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
-    ws_opts         => ws_opts()
+	connect_timeout => timeout(),
+	http_opts       => http_opts(),
+	http2_opts      => http2_opts(),
+	protocols       => [http | http2],
+	retry           => non_neg_integer(),
+	retry_timeout   => pos_integer(),
+	trace           => boolean(),
+	transport       => tcp | tls | ssl,
+	transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
+	ws_opts         => ws_opts()
 }.
 -export_type([opts/0]).
 %% @todo Add an option to disable/enable the notowner behavior.
 
 -type req_opts() :: #{
-    reply_to => pid()
+	reply_to => pid()
 }.
 -export_type([req_opts/0]).
 
 -type http_opts() :: #{
-    keepalive             => timeout(),
-    transform_header_name => fun((binary()) -> binary()),
-    version               => 'HTTP/1.1' | 'HTTP/1.0'
+	keepalive             => timeout(),
+	transform_header_name => fun((binary()) -> binary()),
+	version               => 'HTTP/1.1' | 'HTTP/1.0'
 }.
 -export_type([http_opts/0]).
 
 -type http2_opts() :: #{
-    keepalive => timeout()
+	keepalive => timeout()
 }.
 -export_type([http2_opts/0]).
 
 %% @todo keepalive
 -type ws_opts() :: #{
-    compress => boolean()
+	compress => boolean()
 }.
 -export_type([ws_opts/0]).
 
