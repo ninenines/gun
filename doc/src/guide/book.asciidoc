@@ -4,6 +4,8 @@
 
 = Gun User Guide
 
+= Interface
+
 include::introduction.asciidoc[Introduction]
 
 include::start.asciidoc[Starting and stopping]
@@ -15,3 +17,7 @@ include::connect.asciidoc[Connection]
 include::http.asciidoc[Using HTTP]
 
 include::websocket.asciidoc[Using Websocket]
+
+= Additional information
+
+include::migrating_from_1.0.asciidoc[Migrating from Gun 1.0 to 1.1]
