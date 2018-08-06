@@ -14,8 +14,7 @@ init(Req, State) ->
 
 info(timeout, Req, State) ->
 	erlang:send_after(1000, self(), timeout),
-	Time = calendar:system_time_to_rfc3339(erlang:system_time(second)),
 	cowboy_req:stream_events(#{
-		data => Time
+		data => cowboy_clock:rfc1123()
 	}, nofin, Req),
 	{ok, Req, State}.
