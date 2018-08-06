@@ -31,16 +31,16 @@
 	ref :: reference(),
 	reply_to :: pid(),
 	%% Whether we finished sending data.
-	local = nofin :: cowboy_stream:fin(),
+	local = nofin :: fin | nofin,
 	%% Local flow control window (how much we can send).
 	local_window :: integer(),
 	%% Buffered data waiting for the flow control window to increase.
 	local_buffer = queue:new() :: queue:queue(
 		{fin | nofin, non_neg_integer(), iolist()}),
 	local_buffer_size = 0 :: non_neg_integer(),
-	local_trailers = undefined :: undefined | cowboy:http_headers(),
+	local_trailers = undefined :: undefined | cow_http:headers(),
 	%% Whether we finished receiving data.
-	remote = nofin :: cowboy_stream:fin(),
+	remote = nofin :: fin | nofin,
 	%% Remote flow control window (how much we accept to receive).
 	remote_window :: integer(),
 	%% Content handlers state.
