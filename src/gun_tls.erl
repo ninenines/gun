@@ -25,7 +25,7 @@ messages() -> {ssl, ssl_closed, ssl_error}.
 
 -spec connect(inet:ip_address() | inet:hostname(),
 	inet:port_number(), any(), timeout())
-	-> {ok, inet:socket()} | {error, atom()}.
+	-> {ok, ssl:sslsocket()} | {error, atom()}.
 connect(Host, Port, Opts, Timeout) when is_integer(Port) ->
 	ssl:connect(Host, Port,
 		Opts ++ [binary, {active, false}, {packet, raw}],
