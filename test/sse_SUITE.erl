@@ -16,19 +16,37 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
+-import(ct_helper, [config/2]).
+
 all() ->
 	[http, http2].
 
-http(_) ->
-	{ok, Pid} = gun:open("sse.now.sh", 443, #{
+init_per_suite(Config) ->
+	gun_test:init_cowboy_tls(?MODULE, #{
+		env => #{dispatch => cowboy_router:compile(init_routes())}
+	}, Config).
+
+end_per_suite(Config) ->
+	cowboy:stop_listener(config(ref, Config)).
+
+init_routes() -> [
+	{"localhost", [
+		{"/", sse_clock_h, []}
+	]}
+].
+
+http(Config) ->
+	{ok, Pid} = gun:open("localhost", config(port, Config), #{
+		transport => tls,
 		protocols => [http],
 		http_opts => #{content_handlers => [gun_sse_h, gun_data_h]}
 	}),
 	{ok, http} = gun:await_up(Pid),
 	common(Pid).
 
-http2(_) ->
-	{ok, Pid} = gun:open("sse.now.sh", 443, #{
+http2(Config) ->
+	{ok, Pid} = gun:open("localhost", config(port, Config), #{
+		transport => tls,
 		protocols => [http2],
 		http2_opts => #{content_handlers => [gun_sse_h, gun_data_h]}
 	}),
@@ -37,23 +55,29 @@ http2(_) ->
 
 common(Pid) ->
 	Ref = gun:get(Pid, "/", [
-		{<<"host">>, <<"sse.now.sh">>},
+		{<<"host">>, <<"localhost">>},
 		{<<"accept">>, <<"text/event-stream">>}
 	]),
 	receive
-		{gun_response, Pid, Ref, nofin, Status, Headers} ->
-			ct:print("response ~p ~p", [Status, Headers]),
+		{gun_response, Pid, Ref, nofin, 200, Headers} ->
+			{_, <<"text/event-stream">>}
+				= lists:keyfind(<<"content-type">>, 1, Headers),
 			event_loop(Pid, Ref, 3)
 	after 5000 ->
 		error(timeout)
 	end.
 
-event_loop(_, _, 0) ->
-	ok;
+event_loop(Pid, _, 0) ->
+	gun:close(Pid);
 event_loop(Pid, Ref, N) ->
 	receive
 		{gun_sse, Pid, Ref, Event} ->
-			ct:print("event ~p", [Event]),
+			#{
+				last_event_id := <<>>,
+				event_type := <<"message">>,
+				data := Data
+			} = Event,
+			true = is_list(Data) orelse is_binary(Data),
 			event_loop(Pid, Ref, N - 1)
 	after 10000 ->
 		error(timeout)

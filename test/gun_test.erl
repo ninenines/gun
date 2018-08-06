@@ -1,4 +1,4 @@
-%% Copyright (c) 2015-2018, Loïc Hoguin <essen@ninenines.eu>
+%% Copyright (c) 2018, Loïc Hoguin <essen@ninenines.eu>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
@@ -12,11 +12,13 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
--module(gun_ct_hook).
+-module(gun_test).
+-compile(export_all).
+-compile(nowarn_export_all).
 
--export([init/2]).
+%% Cowboy listeners.
 
-init(_, _) ->
-	ct_helper:start([cowboy, gun]),
-	ct_helper:make_certs_in_ets(),
-	{ok, undefined}.
+init_cowboy_tls(Ref, ProtoOpts, Config) ->
+	Opts = ct_helper:get_certs_from_ets(),
+	{ok, _} = cowboy:start_tls(Ref, Opts ++ [{port, 0}], ProtoOpts),
+	[{ref, Ref}, {port, ranch:get_port(Ref)}|Config].
