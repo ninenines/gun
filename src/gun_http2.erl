@@ -162,7 +162,7 @@ frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 										fin -> undefined;
 										nofin ->
 											gun_content_handler:init(ReplyTo, StreamRef,
-												Status, Headers, Handlers0)
+												IntStatus, Headers, Handlers0)
 									end,
 									remote_fin(Stream#stream{handler_state=Handlers},
 										State#http2_state{decode_state=DecodeState}, IsFin)
