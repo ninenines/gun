@@ -31,16 +31,16 @@
 	ref :: reference(),
 	reply_to :: pid(),
 	%% Whether we finished sending data.
-	local = nofin :: cowboy_stream:fin(),
+	local = nofin :: fin | nofin,
 	%% Local flow control window (how much we can send).
 	local_window :: integer(),
 	%% Buffered data waiting for the flow control window to increase.
 	local_buffer = queue:new() :: queue:queue(
 		{fin | nofin, non_neg_integer(), iolist()}),
 	local_buffer_size = 0 :: non_neg_integer(),
-	local_trailers = undefined :: undefined | cowboy:http_headers(),
+	local_trailers = undefined :: undefined | cow_http:headers(),
 	%% Whether we finished receiving data.
-	remote = nofin :: cowboy_stream:fin(),
+	remote = nofin :: fin | nofin,
 	%% Remote flow control window (how much we accept to receive).
 	remote_window :: integer(),
 	%% Content handlers state.
@@ -128,6 +128,8 @@ parse(Data0, State0=#http2_state{buffer=Buffer}) ->
 	end.
 
 %% DATA frame.
+frame({headers,StreamID,IsFin,head_fin,_,_,_,HeaderBlock}, State)->
+	frame({headers, StreamID, IsFin, head_fin, HeaderBlock}, State);
 frame({data, StreamID, IsFin, Data}, State0=#http2_state{remote_window=ConnWindow}) ->
 	case get_stream_by_id(StreamID, State0) of
 		Stream0 = #stream{remote=nofin, remote_window=StreamWindow, handler_state=Handlers0} ->
@@ -142,8 +144,6 @@ frame({data, StreamID, IsFin, Data}, State0=#http2_state{remote_window=ConnWindo
 			stream_reset(State0, StreamID, {stream_error, stream_closed,
 				'DATA frame received for a closed or non-existent stream. (RFC7540 6.1)'})
 	end;
-frame({headers,StreamID,IsFin,head_fin,_,_,_,HeaderBlock}, State)->
-	frame({headers, StreamID, IsFin, head_fin, HeaderBlock}, State);
 %% Single HEADERS frame headers block.
 frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 		State=#http2_state{decode_state=DecodeState0, content_handlers=Handlers0}) ->
@@ -164,7 +164,7 @@ frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 										fin -> undefined;
 										nofin ->
 											gun_content_handler:init(ReplyTo, StreamRef,
-												Status, Headers, Handlers0)
+												IntStatus, Headers, Handlers0)
 									end,
 									remote_fin(Stream#stream{handler_state=Handlers},
 										State#http2_state{decode_state=DecodeState}, IsFin)
