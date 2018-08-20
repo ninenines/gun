@@ -143,6 +143,10 @@ frame({data, StreamID, IsFin, Data}, State0=#http2_state{remote_window=ConnWindo
 				'DATA frame received for a closed or non-existent stream. (RFC7540 6.1)'})
 	end;
 %% Single HEADERS frame headers block.
+frame({headers,StreamID, IsFin, head_fin, shared, HeaderBlock},
+		State=#http2_state{decode_state=DecodeState0, content_handlers=Handlers0}) ->
+	frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
+		State=#http2_state{decode_state=DecodeState0, content_handlers=Handlers0});
 frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 		State=#http2_state{decode_state=DecodeState0, content_handlers=Handlers0}) ->
 	case get_stream_by_id(StreamID, State) of
