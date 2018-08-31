@@ -26,3 +26,5 @@ http://www.leofs.org[LeoFS Cloud Storage].
 
 * Official IRC Channel: #ninenines on irc.freenode.net
 * https://ninenines.eu/services/[Commercial Support]
+* https://ninenines.eu/docs/en/gun/1.1/manual/[Manual]
+* https://ninenines.eu/docs/en/gun/1.1/guide/[User Guide]
