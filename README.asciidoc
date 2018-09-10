@@ -22,7 +22,21 @@ https://kato.im[Kato.im] and https://sameroom.io[Sameroom].
 The now removed SPDY implementation was sponsored by
 http://www.leofs.org[LeoFS Cloud Storage].
 
+== Online documentation
+
+* https://ninenines.eu/docs/en/gun/1.1/guide[User guide]
+* https://ninenines.eu/docs/en/gun/1.1/manual[Function reference]
+
+== Offline documentation
+
+* While still online, run `make docs`
+* User guide available in `doc/` in PDF and HTML formats
+* Function reference man pages available in `doc/man3/` and `doc/man7/`
+* Run `make install-docs` to install man pages on your system
+* Full documentation in Asciidoc available in `doc/src/`
+
 == Getting help
 
 * Official IRC Channel: #ninenines on irc.freenode.net
+* https://github.com/ninenines/gun/issues[Issues tracker]
 * https://ninenines.eu/services/[Commercial Support]
