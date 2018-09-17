@@ -32,6 +32,10 @@ Requests:
 * link:man:gun:request(3)[gun:request(3)] - Perform the given request
 * link:man:gun:data(3)[gun:data(3)] - Stream the body of a request
 
+Proxies:
+
+* link:man:gun:connect(3)[gun:connect(3)] - Establish a tunnel to the origin server
+
 Messages:
 
 * link:man:gun:await(3)[gun:await(3)] - Wait for a response
@@ -78,6 +82,59 @@ be used to redirect request-specific messages to a different
 process.
 
 == Types
+
+=== connect_destination()
+
+[source,erlang]
+----
+connect_destination() :: #{
+    host      := inet:hostname() | inet:ip_address(),
+    port      := inet:port_number(),
+
+    username  => iodata(),
+    password  => iodata(),
+    protocol  => http | http2,
+    transport => tcp | tls,
+
+    tls_opts              => [ssl:connect_option()],
+    tls_handshake_timeout => timeout()
+}
+----
+
+Destination of a CONNECT request.
+
+The default value, if any, is given next to the option name:
+
+host, port::
+
+Destination hostname and port number. Mandatory.
++
+Upon successful completion of the CONNECT request, Gun will
+begin using these as the host and port of the origin server
+for subsequent requests.
+
+username, password::
+
+Proxy authorization credentials. They are only sent when
+both options are provided.
+
+protocol (http)::
+
+Protocol that will be used for tunneled requests.
+
+transport (tcp)::
+
+Transport that will be used for tunneled requests. Note that
+due to Erlang/OTP limitations it is not possible to tunnel
+a TLS connection inside a TLS tunnel.
+
+tls_opts ([])::
+
+Options to use for tunneled TLS connections.
+
+tls_handshake_timeout (infinity)::
+
+Handshake timeout for tunneled TLS connections.
 
 === http_opts()
 
@@ -245,6 +302,10 @@ not guarantee that compression will be used as it is the
 server that ultimately decides. Defaults to false.
 
 // @todo Document default_protocol, protocols and user_opts.
+
+== Changelog
+
+* *1.2*: Introduce the type `connect_destination()`.
 
 == See also
 
