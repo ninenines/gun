@@ -69,7 +69,7 @@ name() -> ws.
 init(Owner, Socket, Transport, StreamRef, Headers, Extensions, Handler, Opts) ->
 	Owner ! {gun_upgrade, self(), StreamRef, [<<"websocket">>], Headers},
 	HandlerState = Handler:init(Owner, StreamRef, Headers, Opts),
-	{upgrade, ?MODULE, #ws_state{owner=Owner, socket=Socket, transport=Transport,
+	{switch_protocol, ?MODULE, #ws_state{owner=Owner, socket=Socket, transport=Transport,
 		extensions=Extensions, handler=Handler, handler_state=HandlerState}}.
 
 %% Do not handle anything if we received a close frame.

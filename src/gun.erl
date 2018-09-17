@@ -55,6 +55,11 @@
 %% Streaming data.
 -export([data/4]).
 
+%% Tunneling.
+-export([connect/2]).
+-export([connect/3]).
+-export([connect/4]).
+
 %% Awaiting gun messages.
 -export([await/2]).
 -export([await/3]).
@@ -110,6 +115,22 @@
 -export_type([opts/0]).
 %% @todo Add an option to disable/enable the notowner behavior.
 
+-type connect_destination() :: #{
+	host := inet:hostname() | inet:ip_address(),
+	port := inet:port_number(),
+	username => iodata(),
+	password => iodata(),
+	protocol => http | http2,
+	transport => tcp | tls,
+	tls_opts => [ssl:connect_option()],
+	tls_handshake_timeout => timeout()
+}.
+-export_type([connect_destination/0]).
+
+%% @todo When/if HTTP/2 CONNECT gets implemented, we will want an option here
+%% to indicate that the request must be sent on an existing CONNECT stream.
+%% This is of course not required for HTTP/1.1 since the CONNECT takes over
+%% the entire connection.
 -type req_opts() :: #{
 	reply_to => pid()
 }.
@@ -137,8 +158,10 @@
 	parent :: pid(),
 	owner :: pid(),
 	owner_ref :: reference(),
-	host :: inet:hostname(),
+	host :: inet:hostname() | inet:ip_address(),
 	port :: inet:port_number(),
+	origin_host :: inet:hostname() | inet:ip_address(),
+	origin_port :: inet:port_number(),
 	opts :: opts(),
 	keepalive_ref :: undefined | reference(),
 	socket :: undefined | inet:socket() | ssl:sslsocket(),
@@ -358,6 +381,7 @@ request(ServerPid, Method, Path, Headers) ->
 request(ServerPid, Method, Path, Headers, Body) ->
 	request(ServerPid, Method, Path, Headers, Body, #{}).
 
+%% @todo Accept header names as maps.
 -spec request(pid(), iodata(), iodata(), headers(), iodata(), req_opts()) -> reference().
 request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
 	StreamRef = make_ref(),
@@ -371,6 +395,23 @@ request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
 data(ServerPid, StreamRef, IsFin, Data) ->
 	_ = ServerPid ! {data, self(), StreamRef, IsFin, Data},
 	ok.
+
+%% Tunneling.
+
+-spec connect(pid(), connect_destination()) -> reference().
+connect(ServerPid, Destination) ->
+	connect(ServerPid, Destination, [], #{}).
+
+-spec connect(pid(), connect_destination(), headers()) -> reference().
+connect(ServerPid, Destination, Headers) ->
+	connect(ServerPid, Destination, Headers, #{}).
+
+-spec connect(pid(), connect_destination(), headers(), req_opts()) -> reference().
+connect(ServerPid, Destination, Headers, ReqOpts) ->
+	StreamRef = make_ref(),
+	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	_ = ServerPid ! {connect, ReplyTo, StreamRef, Destination, Headers},
+	StreamRef.
 
 %% Awaiting gun messages.
 
@@ -565,6 +606,8 @@ ws_upgrade(ServerPid, Path, Headers, Opts) ->
 	_ = ServerPid ! {ws_upgrade, self(), StreamRef, Path, Headers, Opts},
 	StreamRef.
 
+%% @todo ws_send/2 will need to be deprecated in favor of a variant with StreamRef.
+%% But it can be kept for the time being since it can still work for HTTP/1.1.
 -spec ws_send(pid(), ws_frame() | [ws_frame()]) -> ok.
 ws_send(ServerPid, Frames) ->
 	_ = ServerPid ! {ws_send, self(), Frames},
@@ -601,13 +644,14 @@ init(Parent, Owner, Host, Port, Opts) ->
 		tls -> gun_tls
 	end,
 	OwnerRef = monitor(process, Owner),
-	connect(#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
-		host=Host, port=Port, opts=Opts, transport=Transport}, Retry).
+	transport_connect(#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
+		host=Host, port=Port, origin_host=Host, origin_port=Port,
+		opts=Opts, transport=Transport}, Retry).
 
 default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
-connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=gun_tls}, Retries) ->
+transport_connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=gun_tls}, Retries) ->
 	Protocols = [case P of
 		http -> <<"http/1.1">>;
 		http2 -> <<"h2">>
@@ -626,7 +670,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=gun_tl
 		{error, Reason} ->
 			retry(State#state{last_error=Reason}, Retries)
 	end;
-connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
+transport_connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
 	TransportOpts = [binary, {active, false}
 		|maps:get(transport_opts, Opts, [])],
 	case Transport:connect(Host, Port, TransportOpts, maps:get(connect_timeout, Opts, infinity)) of
@@ -670,7 +714,7 @@ retry_loop(State=#state{parent=Parent, opts=Opts}, Retries) ->
 	_ = erlang:send_after(maps:get(retry_timeout, Opts, 5000), self(), retry),
 	receive
 		retry ->
-			connect(State, Retries);
+			transport_connect(State, Retries);
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{retry_loop, State, Retries})
@@ -690,20 +734,18 @@ before_loop(State=#state{opts=Opts, protocol=Protocol}) ->
 	end,
 	loop(State#state{keepalive_ref=KeepaliveRef}).
 
-loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, port=Port, opts=Opts,
-		socket=Socket, transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
+loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
+		origin_host=Host, origin_port=Port, opts=Opts, socket=Socket,
+		transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->
 	{OK, Closed, Error} = Transport:messages(),
 	Transport:setopts(Socket, [{active, once}]),
 	receive
 		{OK, Socket, Data} ->
 			case Protocol:handle(Data, ProtoState) of
-				close ->
-					Transport:close(Socket),
-					down(State, normal);
-				{upgrade, Protocol2, ProtoState2} ->
-					ws_loop(State#state{protocol=Protocol2, protocol_state=ProtoState2});
-				ProtoState2 ->
-					loop(State#state{protocol_state=ProtoState2})
+				Commands when is_list(Commands) ->
+					commands(Commands, State);
+				Command ->
+					commands([Command], State)
 			end;
 		{Closed, Socket} ->
 			Protocol:close(ProtoState),
@@ -735,6 +777,9 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, por
 		{data, ReplyTo, StreamRef, IsFin, Data} ->
 			ProtoState2 = Protocol:data(ProtoState,
 				StreamRef, ReplyTo, IsFin, Data),
+			loop(State#state{protocol_state=ProtoState2});
+		{connect, ReplyTo, StreamRef, Destination, Headers} ->
+			ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers),
 			loop(State#state{protocol_state=ProtoState2});
 		{cancel, ReplyTo, StreamRef} ->
 			ProtoState2 = Protocol:cancel(ProtoState, StreamRef, ReplyTo),
@@ -785,6 +830,31 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, host=Host, por
 			error_logger:error_msg("Unexpected message: ~w~n", [Any]),
 			loop(State)
 	end.
+
+commands([], State) ->
+	loop(State);
+commands([close|_], State=#state{socket=Socket, transport=Transport}) ->
+	Transport:close(Socket),
+	down(State, normal);
+commands([Error={error, _}|_], State=#state{socket=Socket, transport=Transport}) ->
+	Transport:close(Socket),
+	down(State, Error);
+commands([{state, ProtoState}|Tail], State) ->
+	commands(Tail, State#state{protocol_state=ProtoState});
+%% @todo The scheme should probably not be ignored.
+commands([{origin, _Scheme, Host, Port}|Tail], State) ->
+	commands(Tail, State#state{origin_host=Host, origin_port=Port});
+commands([{switch_transport, Transport, Socket}|Tail], State) ->
+	commands(Tail, State#state{socket=Socket, transport=Transport});
+%% @todo The two loops should be reunified and this clause generalized.
+commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State) ->
+	ws_loop(State#state{protocol=Protocol, protocol_state=ProtoState});
+%% @todo And this state should probably not be ignored.
+commands([{switch_protocol, Protocol, _ProtoState0}|Tail],
+		State=#state{owner=Owner, opts=Opts, socket=Socket, transport=Transport}) ->
+	ProtoOpts = maps:get(http2_opts, Opts, #{}),
+	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
+	commands(Tail, State#state{protocol=Protocol, protocol_state=ProtoState}).
 
 ws_loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, socket=Socket,
 		transport=Transport, protocol=Protocol, protocol_state=ProtoState}) ->

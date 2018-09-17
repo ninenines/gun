@@ -15,6 +15,7 @@
 -module(gun_tls).
 
 -export([messages/0]).
+-export([connect/3]).
 -export([connect/4]).
 -export([send/2]).
 -export([setopts/2]).
@@ -22,6 +23,11 @@
 -export([close/1]).
 
 messages() -> {ssl, ssl_closed, ssl_error}.
+
+-spec connect(inet:socket(), any(), timeout())
+	-> {ok, ssl:sslsocket()} | {error, atom()}.
+connect(Socket, Opts, Timeout) ->
+	ssl:connect(Socket, Opts, Timeout).
 
 -spec connect(inet:ip_address() | inet:hostname(),
 	inet:port_number(), any(), timeout())

@@ -124,7 +124,7 @@ parse(Data0, State0=#http2_state{buffer=Buffer}) ->
 		Error = {connection_error, _, _} ->
 			terminate(State0, Error);
 		more ->
-			State0#http2_state{buffer=Data}
+			{state, State0#http2_state{buffer=Data}}
 	end.
 
 %% DATA frame.
