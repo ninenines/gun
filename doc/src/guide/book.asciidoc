@@ -20,4 +20,6 @@ include::websocket.asciidoc[Using Websocket]
 
 = Additional information
 
+include::migrating_from_1.1.asciidoc[Migrating from Gun 1.1 to 1.2]
+
 include::migrating_from_1.0.asciidoc[Migrating from Gun 1.0 to 1.1]
