@@ -192,8 +192,12 @@ do_connect_h2(Transport) ->
 	<<"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
 		Len:24, 4:8, 0:40, %% SETTINGS
 		Rest/bits>> = do_receive(OriginPid),
-	<<_:Len/binary>> = Rest,
-	<<_:24, 1:8, _/bits>> = do_receive(OriginPid),
+	_ = case Rest of
+		<<_:Len/binary>> ->
+			<<_:24, 1:8, _/bits>> = do_receive(OriginPid);
+		<<_:Len/binary, _:24, 1:8, _/bits>> ->
+			ok
+	end,
 	gun:close(ConnPid).
 
 connect_through_multiple_proxies(_) ->
