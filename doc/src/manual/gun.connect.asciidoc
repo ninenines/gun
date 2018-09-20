@@ -85,8 +85,8 @@ StreamRef = gun:connect(ConnPid, #{
 {ok, http} = gun:await_up(ConnPid),
 StreamRef = gun:connect(ConnPid, #{
     host => "origin-server.example.org",
-    port => 80,
-    protocol => http2,
+    port => 443,
+    protocols => [http2],
     transport => tls
 }),
 {response, fin, 200, _} = gun:await(ConnPid, StreamRef),

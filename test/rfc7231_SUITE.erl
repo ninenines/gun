@@ -88,13 +88,18 @@ do_proxy_loop(ClientSocket, OriginSocket) ->
 	end.
 
 do_origin_start(Transport) ->
+	do_origin_start(Transport, http).
+
+do_origin_start(Transport, Protocol) ->
 	Self = self(),
 	Pid = spawn_link(fun() ->
 		case Transport of
 			tcp ->
 				do_origin_init_tcp(Self);
-			tls ->
-				do_origin_init_tls(Self)
+			tls when Protocol =:= http ->
+				do_origin_init_tls(Self);
+			tls when Protocol =:= http2 ->
+				do_origin_init_tls_h2(Self)
 		end
 	end),
 	Port = do_receive(Pid),
@@ -114,6 +119,17 @@ do_origin_init_tls(Parent) ->
 	Parent ! {self(), Port},
 	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 1000),
 	ok = ssl:ssl_accept(ClientSocket, 1000),
+	do_origin_loop(Parent, ClientSocket, ssl).
+
+do_origin_init_tls_h2(Parent) ->
+	Opts = ct_helper:get_certs_from_ets(),
+	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false},
+		{alpn_preferred_protocols, [<<"h2">>]}|Opts]),
+	{ok, {_, Port}} = ssl:sockname(ListenSocket),
+	Parent ! {self(), Port},
+	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 1000),
+	ok = ssl:ssl_accept(ClientSocket, 1000),
+	{ok, <<"h2">>} = ssl:negotiated_protocol(ClientSocket),
 	do_origin_loop(Parent, ClientSocket, ssl).
 
 do_origin_loop(Parent, ClientSocket, ClientTransport) ->
@@ -146,7 +162,7 @@ connect_https(_) ->
 	do_connect_http(tls).
 
 do_connect_http(Transport) ->
-	{ok, OriginPid, OriginPort} = do_origin_start(Transport),
+	{ok, OriginPid, OriginPort} = do_origin_start(Transport, http),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
@@ -175,7 +191,7 @@ connect_h2(_) ->
 	do_connect_h2(tls).
 
 do_connect_h2(Transport) ->
-	{ok, OriginPid, OriginPort} = do_origin_start(Transport),
+	{ok, OriginPid, OriginPort} = do_origin_start(Transport, http2),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
@@ -184,7 +200,7 @@ do_connect_h2(Transport) ->
 		host => "localhost",
 		port => OriginPort,
 		transport => Transport,
-		protocol => http2
+		protocols => [http2]
 	}),
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = do_receive(ProxyPid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),

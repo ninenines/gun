@@ -221,29 +221,34 @@ handle_head(Data, State=#http_state{socket=Socket, version=ClientVersion,
 			State2 = end_stream(State#http_state{streams=[Stream|Tail]}),
 			NewHost = maps:get(host, Destination),
 			NewPort = maps:get(port, Destination),
-			DestProtocol = maps:get(protocol, Destination, http),
 			case Destination of
 				#{transport := tls} ->
 					TLSOpts = maps:get(tls_opts, Destination, []),
 					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
 					case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
-						{ok, TLSSocket} when DestProtocol =:= http2 ->
-							[{switch_transport, gun_tls, TLSSocket},
-								{switch_protocol, gun_http2, State2},
-								{origin, <<"https">>, NewHost, NewPort}];
 						{ok, TLSSocket} ->
-							[{state, State2#http_state{socket=TLSSocket, transport=gun_tls}},
-								{switch_transport, gun_tls, TLSSocket},
-								{origin, <<"https">>, NewHost, NewPort}];
+							case ssl:negotiated_protocol(TLSSocket) of
+								{ok, <<"h2">>} ->
+									[{switch_transport, gun_tls, TLSSocket},
+										{switch_protocol, gun_http2, State2},
+										{origin, <<"https">>, NewHost, NewPort}];
+								_ ->
+									[{state, State2#http_state{socket=TLSSocket, transport=gun_tls}},
+										{switch_transport, gun_tls, TLSSocket},
+										{origin, <<"https">>, NewHost, NewPort}]
+							end;
 						Error ->
 							Error
 					end;
-				_ when DestProtocol =:= http2 ->
-					[{switch_protocol, gun_http2, State2},
-						{origin, <<"http">>, NewHost, NewPort}];
 				_ ->
-					[{state, State2},
-						{origin, <<"http">>, NewHost, NewPort}]
+					case maps:get(protocols, Destination, [http]) of
+						[http] ->
+							[{state, State2},
+								{origin, <<"http">>, NewHost, NewPort}];
+						[http2] ->
+							[{switch_protocol, gun_http2, State2},
+								{origin, <<"http">>, NewHost, NewPort}]
+					end
 			end;
 		{_, _} when Status >= 100, Status =< 199 ->
 			ReplyTo ! {gun_inform, self(), stream_ref(StreamRef), Status, Headers},

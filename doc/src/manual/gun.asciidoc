@@ -93,7 +93,7 @@ connect_destination() :: #{
 
     username  => iodata(),
     password  => iodata(),
-    protocol  => http | http2,
+    protocols => [http | http2],
     transport => tcp | tls,
 
     tls_opts              => [ssl:connect_option()],

@@ -120,7 +120,8 @@
 	port := inet:port_number(),
 	username => iodata(),
 	password => iodata(),
-	protocol => http | http2,
+	protocol => http | http2, %% @todo Remove in Gun 2.0.
+	protocols => [http | http2],
 	transport => tcp | tls,
 	tls_opts => [ssl:connect_option()],
 	tls_handshake_timeout => timeout()
@@ -652,14 +653,9 @@ default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
 transport_connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=gun_tls}, Retries) ->
-	Protocols = [case P of
-		http -> <<"http/1.1">>;
-		http2 -> <<"h2">>
-	end || P <- maps:get(protocols, Opts, [http2, http])],
-	TransportOpts = [binary, {active, false},
-		{alpn_advertised_protocols, Protocols},
-		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
-		|maps:get(transport_opts, Opts, [])],
+	TransportOpts = [binary, {active, false}|ensure_alpn(
+		maps:get(protocols, Opts, [http2, http]),
+		maps:get(transport_opts, Opts, []))],
 	case Transport:connect(Host, Port, TransportOpts, maps:get(connect_timeout, Opts, infinity)) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
@@ -683,6 +679,16 @@ transport_connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transp
 		{error, Reason} ->
 			retry(State#state{last_error=Reason}, Retries)
 	end.
+
+ensure_alpn(Protocols0, TransportOpts) ->
+	Protocols = [case P of
+		http -> <<"http/1.1">>;
+		http2 -> <<"h2">>
+	end || P <- Protocols0],
+	[
+		{alpn_advertised_protocols, Protocols},
+		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
+	|TransportOpts].
 
 up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, ProtoOptsKey) ->
 	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
@@ -778,7 +784,25 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
 			ProtoState2 = Protocol:data(ProtoState,
 				StreamRef, ReplyTo, IsFin, Data),
 			loop(State#state{protocol_state=ProtoState2});
-		{connect, ReplyTo, StreamRef, Destination, Headers} ->
+		{connect, ReplyTo, StreamRef, Destination0, Headers} ->
+			%% The protocol option has been deprecated in favor of the protocols option.
+			%% Nobody probably ended up using it, but let's not break the interface.
+			Destination1 = case Destination0 of
+				#{protocols := _} ->
+					Destination0;
+				#{protocol := DestProto} ->
+					Destination0#{protocols => [DestProto]};
+				_ ->
+					Destination0
+			end,
+			Destination = case Destination1 of
+				#{transport := tls} ->
+					Destination1#{tls_opts => ensure_alpn(
+						maps:get(protocols, Destination1, [http]),
+						maps:get(tls_opts, Destination1, []))};
+				_ ->
+					Destination1
+			end,
 			ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers),
 			loop(State#state{protocol_state=ProtoState2});
 		{cancel, ReplyTo, StreamRef} ->
