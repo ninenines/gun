@@ -34,12 +34,15 @@ do_proxy_start(Status) ->
 	do_proxy_start(Status, []).
 
 do_proxy_start(Status, ConnectRespHeaders) ->
+	do_proxy_start(Status, ConnectRespHeaders, 0).
+
+do_proxy_start(Status, ConnectRespHeaders, Delay) ->
 	Self = self(),
-	Pid = spawn_link(fun() -> do_proxy_init(Self, Status, ConnectRespHeaders) end),
+	Pid = spawn_link(fun() -> do_proxy_init(Self, Status, ConnectRespHeaders, Delay) end),
 	Port = do_receive(Pid),
 	{ok, Pid, Port}.
 
-do_proxy_init(Parent, Status, ConnectRespHeaders) ->
+do_proxy_init(Parent, Status, ConnectRespHeaders, Delay) ->
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Parent ! {self(), Port},
@@ -47,6 +50,7 @@ do_proxy_init(Parent, Status, ConnectRespHeaders) ->
 	{ok, Data} = gen_tcp:recv(ClientSocket, 0, 1000),
 	{Method= <<"CONNECT">>, Authority, Version, Rest} = cow_http:parse_request_line(Data),
 	{Headers, <<>>} = cow_http:parse_headers(Rest),
+	timer:sleep(Delay),
 	Parent ! {self(), {request, Method, Authority, Version, Headers}},
 	{OriginHost, OriginPort} = cow_http_hd:parse_host(Authority),
 	ok = gen_tcp:send(ClientSocket, [
@@ -109,7 +113,7 @@ do_origin_init_tcp(Parent) ->
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Parent ! {self(), Port},
-	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 1000),
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
 	do_origin_loop(Parent, ClientSocket, gen_tcp).
 
 do_origin_init_tls(Parent) ->
@@ -117,8 +121,8 @@ do_origin_init_tls(Parent) ->
 	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false}|Opts]),
 	{ok, {_, Port}} = ssl:sockname(ListenSocket),
 	Parent ! {self(), Port},
-	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 1000),
-	ok = ssl:ssl_accept(ClientSocket, 1000),
+	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+	ok = ssl:ssl_accept(ClientSocket, 5000),
 	do_origin_loop(Parent, ClientSocket, ssl).
 
 do_origin_init_tls_h2(Parent) ->
@@ -127,8 +131,8 @@ do_origin_init_tls_h2(Parent) ->
 		{alpn_preferred_protocols, [<<"h2">>]}|Opts]),
 	{ok, {_, Port}} = ssl:sockname(ListenSocket),
 	Parent ! {self(), Port},
-	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 1000),
-	ok = ssl:ssl_accept(ClientSocket, 1000),
+	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+	ok = ssl:ssl_accept(ClientSocket, 5000),
 	{ok, <<"h2">>} = ssl:negotiated_protocol(ClientSocket),
 	do_origin_loop(Parent, ClientSocket, ssl).
 
@@ -142,10 +146,13 @@ do_origin_loop(Parent, ClientSocket, ClientTransport) ->
 	end.
 
 do_receive(Pid) ->
+	do_receive(Pid, 1000).
+
+do_receive(Pid, Timeout) ->
 	receive
 		{Pid, Msg} ->
 			Msg
-	after 1000 ->
+	after Timeout ->
 		error(timeout)
 	end.
 
@@ -282,6 +289,38 @@ connect_through_multiple_proxies(_) ->
 			type := connect,
 			host := "localhost",
 			port := Proxy2Port,
+			transport := tcp,
+			protocol := http
+	}]} = gun:info(ConnPid),
+	gun:close(ConnPid).
+
+connect_delay(_) ->
+	doc("The CONNECT response may not be immediate."),
+	{ok, OriginPid, OriginPort} = do_origin_start(tcp),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(201, [], 2000),
+	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort,
+		#{http_opts => #{keepalive => 1000}}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort
+	}),
+	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = do_receive(ProxyPid, 3000),
+	{response, fin, 201, _} = gun:await(ConnPid, StreamRef),
+	_ = gun:get(ConnPid, "/proxied"),
+	Len = byte_size(Authority),
+	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
+		= do_receive(OriginPid),
+	#{
+		transport := tcp,
+		protocol := http,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := ProxyPort,
 			transport := tcp,
 			protocol := http
 	}]} = gun:info(ConnPid),

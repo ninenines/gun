@@ -319,6 +319,9 @@ close_streams([#stream{ref=StreamRef, reply_to=ReplyTo}|Tail]) ->
 		"The connection was lost."}},
 	close_streams(Tail).
 
+%% We don't send a keep-alive when a CONNECT request was initiated.
+keepalive(State=#http_state{streams=[#stream{ref={connect, _, _}}]}) ->
+	State;
 %% We can only keep-alive by sending an empty line in-between streams.
 keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}) ->
 	Transport:send(Socket, <<"\r\n">>),
