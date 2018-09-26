@@ -83,9 +83,6 @@
 -export([ws_upgrade/4]).
 -export([ws_send/2]).
 
-%% Debug.
--export([dbg_send_raw/2]).
-
 %% Internals.
 -export([start_link/4]).
 -export([proc_lib_hack/5]).
@@ -640,13 +637,6 @@ ws_send(ServerPid, Frames) ->
 	_ = ServerPid ! {ws_send, self(), Frames},
 	ok.
 
-%% Debug.
-
--spec dbg_send_raw(pid(), iodata()) -> ok.
-dbg_send_raw(ServerPid, Data) ->
-	_ = ServerPid ! {dbg_send_raw, self(), Data},
-	ok.
-
 %% Internals.
 
 start_link(Owner, Host, Port, Opts) ->
@@ -854,9 +844,6 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{loop, State});
-		{dbg_send_raw, Owner, Data} ->
-			Transport:send(Socket, Data),
-			loop(State);
 		{ws_upgrade, _, StreamRef, _, _} ->
 			Owner ! {gun_error, self(), StreamRef, {badstate,
 				"Websocket is only supported over HTTP/1.1."}},
