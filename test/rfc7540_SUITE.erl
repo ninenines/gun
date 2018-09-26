@@ -95,6 +95,7 @@ headers_priority_flag(_) ->
 	end),
 	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
 	{ok, http2} = gun:await_up(ConnPid),
+	timer:sleep(100), %% Give enough time for the handshake to fully complete.
 	StreamRef = gun:get(ConnPid, "/"),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
