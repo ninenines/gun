@@ -128,6 +128,8 @@ parse(Data0, State0=#http2_state{buffer=Buffer}) ->
 	end.
 
 %% DATA frame.
+frame({headers,StreamID,IsFin,head_fin,_,_,_,HeaderBlock}, State)->
+	frame({headers, StreamID, IsFin, head_fin, HeaderBlock}, State);
 frame({data, StreamID, IsFin, Data}, State0=#http2_state{remote_window=ConnWindow}) ->
 	case get_stream_by_id(StreamID, State0) of
 		Stream0 = #stream{remote=nofin, remote_window=StreamWindow, handler_state=Handlers0} ->
