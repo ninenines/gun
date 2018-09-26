@@ -188,11 +188,11 @@ frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
 %% @todo HEADERS frame starting a headers block. Enter continuation mode.
 %frame(State, {headers, StreamID, IsFin, head_nofin, HeaderBlockFragment}) ->
 %	State#http2_state{parse_state={continuation, StreamID, IsFin, HeaderBlockFragment}};
-%% @todo Single HEADERS frame headers block with priority.
-%frame(State, {headers, StreamID, IsFin, head_fin,
-%		_IsExclusive, _DepStreamID, _Weight, HeaderBlock}) ->
-%	%% @todo Handle priority.
-%	stream_init(State, StreamID, IsFin, HeaderBlock);
+%% Single HEADERS frame headers block with priority.
+frame({headers, StreamID, IsFin, head_fin,
+		_IsExclusive, _DepStreamID, _Weight, HeaderBlock}, State) ->
+	%% @todo Handle priority.
+	frame({headers, StreamID, IsFin, head_fin, HeaderBlock}, State);
 %% @todo HEADERS frame starting a headers block. Enter continuation mode.
 %frame(State, {headers, StreamID, IsFin, head_nofin,
 %		_IsExclusive, _DepStreamID, _Weight, HeaderBlockFragment}) ->
