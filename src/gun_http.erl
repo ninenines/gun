@@ -229,13 +229,13 @@ handle_head(Data, State=#http_state{socket=Socket, version=ClientVersion,
 						{ok, TLSSocket} ->
 							case ssl:negotiated_protocol(TLSSocket) of
 								{ok, <<"h2">>} ->
-									[{switch_transport, gun_tls, TLSSocket},
-										{switch_protocol, gun_http2, State2},
-										{origin, <<"https">>, NewHost, NewPort}];
+									[{origin, <<"https">>, NewHost, NewPort, connect},
+										{switch_transport, gun_tls, TLSSocket},
+										{switch_protocol, gun_http2, State2}];
 								_ ->
 									[{state, State2#http_state{socket=TLSSocket, transport=gun_tls}},
-										{switch_transport, gun_tls, TLSSocket},
-										{origin, <<"https">>, NewHost, NewPort}]
+										{origin, <<"https">>, NewHost, NewPort, connect},
+										{switch_transport, gun_tls, TLSSocket}]
 							end;
 						Error ->
 							Error
@@ -244,10 +244,10 @@ handle_head(Data, State=#http_state{socket=Socket, version=ClientVersion,
 					case maps:get(protocols, Destination, [http]) of
 						[http] ->
 							[{state, State2},
-								{origin, <<"http">>, NewHost, NewPort}];
+								{origin, <<"http">>, NewHost, NewPort, connect}];
 						[http2] ->
-							[{switch_protocol, gun_http2, State2},
-								{origin, <<"http">>, NewHost, NewPort}]
+							[{origin, <<"http">>, NewHost, NewPort, connect},
+								{switch_protocol, gun_http2, State2}]
 					end
 			end;
 		{_, _} when Status >= 100, Status =< 199 ->

@@ -128,6 +128,14 @@
 }.
 -export_type([connect_destination/0]).
 
+-type intermediary() :: #{
+	type := connect,
+	host := inet:hostname() | inet:ip_address(),
+	port := inet:port_number(),
+	transport := tcp | tls,
+	protocol := http | http2
+}.
+
 %% @todo When/if HTTP/2 CONNECT gets implemented, we will want an option here
 %% to indicate that the request must be sent on an existing CONNECT stream.
 %% This is of course not required for HTTP/1.1 since the CONNECT takes over
@@ -163,6 +171,7 @@
 	port :: inet:port_number(),
 	origin_host :: inet:hostname() | inet:ip_address(),
 	origin_port :: inet:port_number(),
+	intermediaries = [] :: [intermediary()],
 	opts :: opts(),
 	keepalive_ref :: undefined | reference(),
 	socket :: undefined | inet:socket() | ssl:sslsocket(),
@@ -275,9 +284,25 @@ consider_tracing(_, _) ->
 
 -spec info(pid()) -> map().
 info(ServerPid) ->
-	{_, #state{socket=Socket, transport=Transport}} = sys:get_state(ServerPid),
+	{_, #state{
+		socket=Socket,
+		transport=Transport,
+		protocol=Protocol,
+		origin_host=OriginHost,
+		origin_port=OriginPort,
+		intermediaries=Intermediaries
+	}} = sys:get_state(ServerPid),
 	{ok, {SockIP, SockPort}} = Transport:sockname(Socket),
-	#{sock_ip => SockIP, sock_port => SockPort}.
+	#{
+		transport => Transport:name(),
+		protocol => Protocol:name(),
+		sock_ip => SockIP,
+		sock_port => SockPort,
+		origin_host => OriginHost,
+		origin_port => OriginPort,
+		%% Intermediaries are listed in the order data goes through them.
+		intermediaries => lists:reverse(Intermediaries)
+	}.
 
 -spec close(pid()) -> ok.
 close(ServerPid) ->
@@ -866,8 +891,23 @@ commands([Error={error, _}|_], State=#state{socket=Socket, transport=Transport})
 commands([{state, ProtoState}|Tail], State) ->
 	commands(Tail, State#state{protocol_state=ProtoState});
 %% @todo The scheme should probably not be ignored.
-commands([{origin, _Scheme, Host, Port}|Tail], State) ->
-	commands(Tail, State#state{origin_host=Host, origin_port=Port});
+%%
+%% Order is important: the origin must be changed before
+%% the transport and/or protocol in order to keep track
+%% of the intermediaries properly.
+commands([{origin, _Scheme, Host, Port, Type}|Tail],
+		State=#state{transport=Transport, protocol=Protocol,
+			origin_host=IntermediateHost, origin_port=IntermediatePort,
+			intermediaries=Intermediaries}) ->
+	Info = #{
+		type => Type,
+		host => IntermediateHost,
+		port => IntermediatePort,
+		transport => Transport:name(),
+		protocol => Protocol:name()
+	},
+	commands(Tail, State#state{origin_host=Host, origin_port=Port,
+		intermediaries=[Info|Intermediaries]});
 commands([{switch_transport, Transport, Socket}|Tail], State) ->
 	commands(Tail, State#state{socket=Socket, transport=Transport});
 %% @todo The two loops should be reunified and this clause generalized.

@@ -14,12 +14,15 @@
 
 -module(gun_tcp).
 
+-export([name/0]).
 -export([messages/0]).
 -export([connect/4]).
 -export([send/2]).
 -export([setopts/2]).
 -export([sockname/1]).
 -export([close/1]).
+
+name() -> tcp.
 
 messages() -> {tcp, tcp_closed, tcp_error}.
 

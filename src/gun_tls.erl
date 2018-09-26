@@ -14,6 +14,7 @@
 
 -module(gun_tls).
 
+-export([name/0]).
 -export([messages/0]).
 -export([connect/3]).
 -export([connect/4]).
@@ -21,6 +22,8 @@
 -export([setopts/2]).
 -export([sockname/1]).
 -export([close/1]).
+
+name() -> tls.
 
 messages() -> {ssl, ssl_closed, ssl_error}.
 

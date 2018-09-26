@@ -178,6 +178,18 @@ do_connect_http(Transport) ->
 	Len = byte_size(Authority),
 	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
 		= do_receive(OriginPid),
+	#{
+		transport := Transport,
+		protocol := http,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := ProxyPort,
+			transport := tcp,
+			protocol := http
+	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
 connect_h2c(_) ->
@@ -214,6 +226,18 @@ do_connect_h2(Transport) ->
 		<<_:Len/binary, _:24, 1:8, _/bits>> ->
 			ok
 	end,
+	#{
+		transport := Transport,
+		protocol := http2,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := ProxyPort,
+			transport := tcp,
+			protocol := http
+	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
 connect_through_multiple_proxies(_) ->
@@ -243,6 +267,24 @@ connect_through_multiple_proxies(_) ->
 	Len = byte_size(Authority2),
 	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority2:Len/binary, "\r\n", _/bits>>
 		= do_receive(OriginPid),
+	#{
+		transport := tcp,
+		protocol := http,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := Proxy1Port,
+			transport := tcp,
+			protocol := http
+		}, #{
+			type := connect,
+			host := "localhost",
+			port := Proxy2Port,
+			transport := tcp,
+			protocol := http
+	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
 connect_response_201(_) ->
@@ -263,6 +305,18 @@ connect_response_201(_) ->
 	Len = byte_size(Authority),
 	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
 		= do_receive(OriginPid),
+	#{
+		transport := tcp,
+		protocol := http,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := ProxyPort,
+			transport := tcp,
+			protocol := http
+	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
 connect_response_302(_) ->
@@ -295,6 +349,13 @@ do_connect_failure(Status) ->
 	{response, fin, Status, Headers} = gun:await(ConnPid, StreamRef),
 	FailedStreamRef = gun:get(ConnPid, "/proxied"),
 	{response, fin, 501, _} = gun:await(ConnPid, FailedStreamRef),
+	#{
+		transport := tcp,
+		protocol := http,
+		origin_host := "localhost",
+		origin_port := ProxyPort,
+		intermediaries := []
+	} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
 connect_authority_form(_) ->
