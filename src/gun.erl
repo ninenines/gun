@@ -294,6 +294,7 @@ info(ServerPid) ->
 	}} = sys:get_state(ServerPid),
 	{ok, {SockIP, SockPort}} = Transport:sockname(Socket),
 	#{
+		socket => Socket,
 		transport => Transport:name(),
 		protocol => Protocol:name(),
 		sock_ip => SockIP,
