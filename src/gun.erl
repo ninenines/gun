@@ -156,7 +156,8 @@
 
 %% @todo keepalive
 -type ws_opts() :: #{
-	compress => boolean()
+	compress => boolean(),
+	protocols => [{binary(), module()}]
 }.
 -export_type([ws_opts/0]).
 
