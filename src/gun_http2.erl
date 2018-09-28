@@ -119,6 +119,8 @@ parse(Data0, State0=#http2_state{buffer=Buffer}) ->
 				close -> close;
 				State1 -> parse(Rest, State1)
 			end;
+		{ignore, Rest} ->
+			parse(Rest, State0);
 		{stream_error, StreamID, Reason, Human, Rest} ->
 			parse(Rest, stream_reset(State0, StreamID, {stream_error, Reason, Human}));
 		Error = {connection_error, _, _} ->
