@@ -38,3 +38,21 @@ include erlang.mk
 # Generate rebar.config on build.
 
 app:: rebar.config
+
+# h2specd setup.
+
+GOPATH := $(ERLANG_MK_TMP)/gopath
+export GOPATH
+
+H2SPECD := $(GOPATH)/src/github.com/summerwind/h2spec/h2specd
+export H2SPECD
+
+# @todo It would be better to allow these dependencies to be specified
+# on a per-target basis instead of for all targets.
+test-build:: $(H2SPECD)
+
+$(H2SPECD):
+	$(gen_verbose) mkdir -p $(GOPATH)/src/github.com/summerwind
+	$(verbose) git clone --depth 1 https://github.com/summerwind/h2spec $(dir $(H2SPECD))
+	$(verbose) $(MAKE) -C $(dir $(H2SPECD)) build MAKEFLAGS=
+	$(verbose) go build -o $(H2SPECD) $(dir $(H2SPECD))/cmd/h2spec/h2specd.go
