@@ -26,19 +26,35 @@ gun:ws_upgrade(ConnPid, "/websocket").
 
 Gun will set all the necessary headers for performing the
 Websocket upgrade, but you can specify additional headers
-if needed. For example you can request a custom sub-protocol.
+if needed. For example you can authenticate.
 
-.Upgrade to Websocket and request a protocol
+.Upgrade to Websocket using HTTP authentication
 [source,erlang]
 ----
 gun:ws_upgrade(ConnPid, "/websocket", [
-    {<<"sec-websocket-protocol">>, "mychat"}
+    {<<"authorization">>, "Basic dXNlcm5hbWU6cGFzc3dvcmQ="}
 ]).
 ----
 
 You can pass the Websocket options as part of the `gun:open/2,3`
 call when opening the connection, or using the `gun:ws_upgrade/4`.
 The fourth argument is those same options.
+
+Gun can negotiate the protocol to be used for the Websocket
+connection. The `protocols` option can be given with a list
+of protocols accepted and the corresponding handler module.
+Note that the interface for handler modules is currently
+undocumented and must be set to `gun_ws_h`.
+
+.Upgrade to Websocket with protocol negotiation
+[source,erlang]
+----
+gun:ws_upgrade(ConnPid, "/websocket", []
+    #{protocols => [{<<"xmpp">>, gun_ws_h}]}).
+----
+
+The upgrade will fail if the server cannot satisfy the
+protocol negotiation.
 
 When the upgrade succeeds, a `gun_upgrade` message is sent.
 If the server does not understand Websocket or refused the

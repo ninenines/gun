@@ -287,7 +287,8 @@ The pid of the process that will receive the response messages.
 [source,erlang]
 ----
 ws_opts() :: #{
-    compress => boolean()
+    compress  => boolean(),
+    protocols => [{binary(), module()}]
 }
 ----
 
@@ -295,13 +296,20 @@ Configuration for the Websocket protocol.
 
 The default value is given next to the option name:
 
-compress => boolean()::
+compress (false)::
 
 Whether to enable permessage-deflate compression. This does
 not guarantee that compression will be used as it is the
 server that ultimately decides. Defaults to false.
 
-// @todo Document default_protocol, protocols and user_opts.
+protocols ([])::
+
+A non-empty list enables Websocket protocol negotiation. The
+list of protocols will be sent in the sec-websocket-protocol
+request header. The handler module interface is currently
+undocumented and must be set to `gun_ws_h`.
+
+// @todo Document default_protocol and user_opts.
 
 == Changelog
 
