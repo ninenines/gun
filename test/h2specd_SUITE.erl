@@ -27,11 +27,18 @@ all() ->
 init_per_suite(Config) ->
 	case os:getenv("H2SPECD") of
 		false -> skip;
-		_ -> Config
+		_ ->
+			%% We ensure that SASL is started for this test suite
+			%% to have the crash reports in the CT logs.
+			{ok, Apps} = application:ensure_all_started(sasl),
+			[{sasl_started, Apps =/= []}|Config]
 	end.
 
-end_per_suite(_Config) ->
-	ok.
+end_per_suite(Config) ->
+	case config(sasl_started, Config) of
+		true -> application:stop(sasl);
+		false -> ok
+	end.
 
 %% Tests.
 
@@ -55,15 +62,16 @@ start_port(Config, Pid) ->
 		{spawn, H2specd ++ " -S -p 45678"},
 		[{line, 10000}, {cd, config(priv_dir, Config)}, binary, exit_status]),
 	Pid ! ready,
-	receive_infinity(Port).
+	receive_infinity(Port, []).
 
-receive_infinity(Port) ->
+receive_infinity(Port, Acc) ->
 	receive
 		{Port, {data, {eol, Line}}} ->
-			io:format(user, "~s~n", [Line]),
 			ct:log("~ts", [Line]),
-			receive_infinity(Port);
+			io:format(user, "~s~n", [Line]),
+			receive_infinity(Port, [Line|Acc]);
 		{Port, Reason={exit_status, _}} ->
+			ct:log("~ts", [[[L, $\n] || L <- lists:reverse(Acc)]]),
 			exit({shutdown, Reason})
 	end.
 
