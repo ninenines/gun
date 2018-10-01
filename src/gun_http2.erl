@@ -243,11 +243,18 @@ frame({ping_ack, _Opaque}, State) ->
 frame(Frame={goaway, StreamID, _, _}, State) ->
 	terminate(State, StreamID, {stop, Frame, 'Client is going away.'});
 %% Connection-wide WINDOW_UPDATE frame.
+frame({window_update, Increment}, State=#http2_state{local_window=ConnWindow})
+		when ConnWindow + Increment > 16#7fffffff ->
+	terminate(State, {connection_error, flow_control_error,
+		'The flow control window must not be greater than 2^31-1. (RFC7540 6.9.1)'});
 frame({window_update, Increment}, State=#http2_state{local_window=ConnWindow}) ->
 	send_data(State#http2_state{local_window=ConnWindow + Increment});
 %% Stream-specific WINDOW_UPDATE frame.
 frame({window_update, StreamID, Increment}, State0=#http2_state{streams=Streams0}) ->
 	case lists:keyfind(StreamID, #stream.id, Streams0) of
+		#stream{local_window=StreamWindow} when StreamWindow + Increment > 16#7fffffff ->
+			stream_reset(State0, StreamID, {stream_error, flow_control_error,
+				'The flow control window must not be greater than 2^31-1. (RFC7540 6.9.1)'});
 		Stream0 = #stream{local_window=StreamWindow} ->
 			{State, Stream} = send_data(State0,
 				Stream0#stream{local_window=StreamWindow + Increment}),
@@ -509,26 +516,31 @@ down(#http2_state{streams=Streams}) ->
 	KilledStreams = [Ref || #stream{ref=Ref} <- Streams],
 	{KilledStreams, []}.
 
-terminate(#http2_state{streams=Streams}, Reason) ->
+terminate(#http2_state{socket=Socket, transport=Transport, streams=Streams}, Reason) ->
 	%% Because a particular stream is unknown,
 	%% we're sending the error message to all streams.
 	%% @todo We should not send duplicate messages to processes.
 	%% @todo We should probably also inform the owner process.
 	_ = [ReplyTo ! {gun_error, self(), Reason} || #stream{reply_to=ReplyTo} <- Streams],
-	%% @todo Send GOAWAY frame.
 	%% @todo LastGoodStreamID
+	Transport:send(Socket, cow_http2:goaway(0, terminate_reason(Reason), <<>>)),
 	close.
 
-terminate(State, StreamID, Reason) ->
+terminate(State=#http2_state{socket=Socket, transport=Transport}, StreamID, Reason) ->
 	case get_stream_by_id(StreamID, State) of
 		#stream{reply_to=ReplyTo} ->
 			ReplyTo ! {gun_error, self(), Reason},
-			%% @todo Send GOAWAY frame.
 			%% @todo LastGoodStreamID
+			Transport:send(Socket, cow_http2:goaway(0, terminate_reason(Reason), <<>>)),
 			close;
 		_ ->
 			terminate(State, Reason)
 	end.
+
+terminate_reason({connection_error, Reason, _}) -> Reason;
+terminate_reason({stop, _, _}) -> no_error;
+terminate_reason({socket_error, _, _}) -> internal_error;
+terminate_reason({internal_error, _, _}) -> internal_error.
 
 %% Stream functions.
 
