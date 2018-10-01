@@ -313,6 +313,8 @@ undocumented and must be set to `gun_ws_h`.
 
 == Changelog
 
+* *1.3*: Add the CONNECT destination's `protocols` option and
+         deprecate the previously introduced `protocol` option.
 * *1.2*: Introduce the type `connect_destination()`.
 
 == See also

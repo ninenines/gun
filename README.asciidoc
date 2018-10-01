@@ -24,8 +24,8 @@ http://www.leofs.org[LeoFS Cloud Storage].
 
 == Online documentation
 
-* https://ninenines.eu/docs/en/gun/1.2/guide[User guide]
-* https://ninenines.eu/docs/en/gun/1.2/manual[Function reference]
+* https://ninenines.eu/docs/en/gun/1.3/guide[User guide]
+* https://ninenines.eu/docs/en/gun/1.3/manual[Function reference]
 
 == Offline documentation
 
