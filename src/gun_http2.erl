@@ -538,9 +538,7 @@ terminate(State=#http2_state{socket=Socket, transport=Transport}, StreamID, Reas
 	end.
 
 terminate_reason({connection_error, Reason, _}) -> Reason;
-terminate_reason({stop, _, _}) -> no_error;
-terminate_reason({socket_error, _, _}) -> internal_error;
-terminate_reason({internal_error, _, _}) -> internal_error.
+terminate_reason({stop, _, _}) -> no_error.
 
 %% Stream functions.
 
