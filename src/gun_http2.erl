@@ -70,6 +70,14 @@
 	streams = [] :: [#stream{}],
 	stream_id = 1 :: non_neg_integer(),
 
+	%% The client starts by sending a sequence of bytes as a preface,
+	%% followed by a potentially empty SETTINGS frame. Then the connection
+	%% is established and continues normally. An exception is when a HEADERS
+	%% frame is sent followed by CONTINUATION frames: no other frame can be
+	%% sent in between.
+	parse_state = undefined :: normal
+		| {continuation, cowboy_stream:streamid(), cowboy_stream:fin(), binary()},
+
 	%% HPACK decoding and encoding state.
 	decode_state = cow_hpack:init() :: cow_hpack:state(),
 	encode_state = cow_hpack:init() :: cow_hpack:state()
@@ -98,7 +106,8 @@ name() -> http2.
 init(Owner, Socket, Transport, Opts) ->
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	State = #http2_state{owner=Owner, socket=Socket,
-		transport=Transport, opts=Opts, content_handlers=Handlers},
+		transport=Transport, opts=Opts, content_handlers=Handlers,
+		parse_state=normal}, %% @todo Have a special parse state for preface.
 	#http2_state{local_settings=Settings} = State,
 	%% Send the HTTP/2 preface.
 	Transport:send(Socket, [
@@ -110,15 +119,23 @@ init(Owner, Socket, Transport, Opts) ->
 handle(Data, State=#http2_state{buffer=Buffer}) ->
 	parse(<< Buffer/binary, Data/binary >>, State#http2_state{buffer= <<>>}).
 
-parse(Data0, State0=#http2_state{buffer=Buffer}) ->
+parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=PS}) ->
 	%% @todo Parse states: Preface. Continuation.
 	Data = << Buffer/binary, Data0/binary >>,
 	case cow_http2:parse(Data) of
-		{ok, Frame, Rest} ->
+		{ok, Frame, Rest} when PS =:= normal ->
 			case frame(Frame, State0) of
 				close -> close;
 				State1 -> parse(Rest, State1)
 			end;
+		{ok, Frame, Rest} when element(1, PS) =:= continuation ->
+			case continuation_frame(Frame, State0) of
+				close -> close;
+				State1 -> parse(Rest, State1)
+			end;
+		{ignore, _} when element(1, PS) =:= continuation ->
+			terminate(State0, {connection_error, protocol_error,
+				'An invalid frame was received in the middle of a header block. (RFC7540 6.2)'});
 		{ignore, Rest} ->
 			parse(Rest, State0);
 		{stream_error, StreamID, Reason, Human, Rest} ->
@@ -145,56 +162,15 @@ frame({data, StreamID, IsFin, Data}, State0=#http2_state{remote_window=ConnWindo
 				'DATA frame received for a closed or non-existent stream. (RFC7540 6.1)'})
 	end;
 %% Single HEADERS frame headers block.
-frame({headers, StreamID, IsFin, head_fin, HeaderBlock},
-		State=#http2_state{decode_state=DecodeState0, content_handlers=Handlers0}) ->
-	case get_stream_by_id(StreamID, State) of
-		Stream = #stream{ref=StreamRef, reply_to=ReplyTo, remote=nofin} ->
-			try cow_hpack:decode(HeaderBlock, DecodeState0) of
-				{Headers0, DecodeState} ->
-					case lists:keytake(<<":status">>, 1, Headers0) of
-						{value, {_, Status}, Headers} ->
-							IntStatus = parse_status(Status),
-							if
-								IntStatus >= 100, IntStatus =< 199 ->
-									ReplyTo ! {gun_inform, self(), StreamRef, IntStatus, Headers},
-									State#http2_state{decode_state=DecodeState};
-								true ->
-									ReplyTo ! {gun_response, self(), StreamRef, IsFin, parse_status(Status), Headers},
-									Handlers = case IsFin of
-										fin -> undefined;
-										nofin ->
-											gun_content_handler:init(ReplyTo, StreamRef,
-												IntStatus, Headers, Handlers0)
-									end,
-									remote_fin(Stream#stream{handler_state=Handlers},
-										State#http2_state{decode_state=DecodeState}, IsFin)
-							end;
-						%% @todo For now we assume that it's a trailer if there's no :status.
-						%% A better state machine is needed to distinguish between that and errors.
-						false ->
-							%% @todo We probably want to pass this to gun_content_handler?
-							ReplyTo ! {gun_trailers, self(), StreamRef, Headers0},
-							remote_fin(Stream, State#http2_state{decode_state=DecodeState}, fin)
-%%						false ->
-%%							stream_reset(State, StreamID, {stream_error, protocol_error,
-%%								'Malformed response; missing :status in HEADERS frame. (RFC7540 8.1.2.4)'})
-					end
-			catch _:_ ->
-				terminate(State, StreamID, {connection_error, compression_error,
-					'Error while trying to decode HPACK-encoded header block. (RFC7540 4.3)'})
-			end;
-		_ ->
-			stream_reset(State, StreamID, {stream_error, stream_closed,
-				'DATA frame received for a closed or non-existent stream. (RFC7540 6.1)'})
-	end;
-%% @todo HEADERS frame starting a headers block. Enter continuation mode.
-%frame(State, {headers, StreamID, IsFin, head_nofin, HeaderBlockFragment}) ->
-%	State#http2_state{parse_state={continuation, StreamID, IsFin, HeaderBlockFragment}};
+frame({headers, StreamID, IsFin, head_fin, HeaderBlock}, State) ->
+	stream_decode_init(State, StreamID, IsFin, HeaderBlock);
+%% HEADERS frame starting a headers block. Enter continuation mode.
+frame({headers, StreamID, IsFin, head_nofin, HeaderBlockFragment}, State) ->
+	State#http2_state{parse_state={continuation, StreamID, IsFin, HeaderBlockFragment}};
 %% Single HEADERS frame headers block with priority.
 frame({headers, StreamID, IsFin, head_fin,
 		_IsExclusive, _DepStreamID, _Weight, HeaderBlock}, State) ->
-	%% @todo Handle priority.
-	frame({headers, StreamID, IsFin, head_fin, HeaderBlock}, State);
+	stream_decode_init(State, StreamID, IsFin, HeaderBlock);
 %% @todo HEADERS frame starting a headers block. Enter continuation mode.
 %frame(State, {headers, StreamID, IsFin, head_nofin,
 %		_IsExclusive, _DepStreamID, _Weight, HeaderBlockFragment}) ->
@@ -288,6 +264,19 @@ frame({continuation, StreamID, _, _}, State) ->
 	terminate(State, StreamID, {connection_error, protocol_error,
 		'CONTINUATION frames MUST be preceded by a HEADERS frame. (RFC7540 6.10)'}).
 
+continuation_frame({continuation, StreamID, head_fin, HeaderBlockFragment1},
+		State=#http2_state{parse_state={continuation, StreamID, IsFin, HeaderBlockFragment0}}) ->
+	HeaderBlock = << HeaderBlockFragment0/binary, HeaderBlockFragment1/binary >>,
+	stream_decode_init(State#http2_state{parse_state=normal}, StreamID, IsFin, HeaderBlock);
+continuation_frame({continuation, StreamID, head_nofin, HeaderBlockFragment1},
+		State=#http2_state{parse_state=
+			{continuation, StreamID, IsFin, HeaderBlockFragment0}}) ->
+	State#http2_state{parse_state={continuation, StreamID, IsFin,
+		<< HeaderBlockFragment0/binary, HeaderBlockFragment1/binary >>}};
+continuation_frame(_, State) ->
+	terminate(State, {connection_error, protocol_error,
+		'An invalid frame was received in the middle of a header block. (RFC7540 6.2)'}).
+
 send_window_update(Stream=#stream{id=StreamID, remote_window=StreamWindow0},
 		State=#http2_state{socket=Socket, transport=Transport, remote_window=ConnWindow0}) ->
 	%% @todo We should make the windows configurable.
@@ -309,10 +298,6 @@ send_window_update(Stream=#stream{id=StreamID, remote_window=StreamWindow0},
 	end,
 	{Stream#stream{remote_window=StreamWindow},
 		State#http2_state{remote_window=ConnWindow}}.
-
-parse_status(Status) ->
-	<< Code:3/binary, _/bits >> = Status,
-	list_to_integer(binary_to_list(Code)).
 
 close(#http2_state{streams=Streams}) ->
 	close_streams(Streams).
@@ -543,6 +528,77 @@ terminate(State, StreamID, Reason) ->
 			close;
 		_ ->
 			terminate(State, Reason)
+	end.
+
+%% Stream functions.
+
+stream_decode_init(State=#http2_state{decode_state=DecodeState0}, StreamID, IsFin, HeaderBlock) ->
+	try cow_hpack:decode(HeaderBlock, DecodeState0) of
+		{Headers, DecodeState} ->
+			stream_pseudo_headers_init(State#http2_state{decode_state=DecodeState},
+				StreamID, IsFin, Headers)
+	catch _:_ ->
+		terminate(State, {connection_error, compression_error,
+			'Error while trying to decode HPACK-encoded header block. (RFC7540 4.3)'})
+	end.
+
+stream_pseudo_headers_init(State, StreamID, IsFin, Headers0) ->
+	case pseudo_headers(Headers0, #{}) of
+		{ok, PseudoHeaders, Headers} ->
+			stream_resp_init(State, StreamID, IsFin, Headers, PseudoHeaders);
+%% @todo When we handle trailers properly:
+%		{ok, _, _} ->
+%			stream_malformed(State, StreamID,
+%				'A required pseudo-header was not found. (RFC7540 8.1.2.3)');
+%% Or:
+%		{ok, _, _} ->
+%			stream_reset(State, StreamID, {stream_error, protocol_error,
+%				'Malformed response; missing :status in HEADERS frame. (RFC7540 8.1.2.4)'})
+		{error, HumanReadable} ->
+			stream_reset(State, StreamID, {stream_error, protocol_error, HumanReadable})
+	end.
+
+pseudo_headers([{<<":status">>, _}|_], #{status := _}) ->
+	{error, 'Multiple :status pseudo-headers were found. (RFC7540 8.1.2.3)'};
+pseudo_headers([{<<":status">>, Status}|Tail], PseudoHeaders) ->
+	try cow_http:status_to_integer(Status) of
+		IntStatus ->
+			pseudo_headers(Tail, PseudoHeaders#{status => IntStatus})
+	catch _:_ ->
+		{error, 'The :status pseudo-header value is invalid. (RFC7540 8.1.2.4)'}
+	end;
+pseudo_headers([{<<":", _/bits>>, _}|_], _) ->
+	{error, 'An unknown or invalid pseudo-header was found. (RFC7540 8.1.2.1)'};
+pseudo_headers(Headers, PseudoHeaders) ->
+	{ok, PseudoHeaders, Headers}.
+
+stream_resp_init(State=#http2_state{content_handlers=Handlers0},
+		StreamID, IsFin, Headers, PseudoHeaders) ->
+	case get_stream_by_id(StreamID, State) of
+		Stream = #stream{ref=StreamRef, reply_to=ReplyTo, remote=nofin} ->
+			case PseudoHeaders of
+				#{status := Status} when Status >= 100, Status =< 199 ->
+					ReplyTo ! {gun_inform, self(), StreamRef, Status, Headers},
+					State;
+				#{status := Status} ->
+					ReplyTo ! {gun_response, self(), StreamRef, IsFin, Status, Headers},
+					Handlers = case IsFin of
+						fin -> undefined;
+						nofin ->
+							gun_content_handler:init(ReplyTo, StreamRef,
+								Status, Headers, Handlers0)
+					end,
+					remote_fin(Stream#stream{handler_state=Handlers}, State, IsFin);
+				%% @todo For now we assume that it's a trailer if there's no :status.
+				%% A better state machine is needed to distinguish between that and errors.
+				_ ->
+					%% @todo We probably want to pass this to gun_content_handler?
+					ReplyTo ! {gun_trailers, self(), StreamRef, Headers},
+					remote_fin(Stream, State, fin)
+			end;
+		_ ->
+			stream_reset(State, StreamID, {stream_error, stream_closed,
+				'HEADERS frame received for a closed or non-existent stream. (RFC7540 6.1)'})
 	end.
 
 stream_reset(State=#http2_state{socket=Socket, transport=Transport,
