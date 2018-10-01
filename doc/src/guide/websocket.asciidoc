@@ -40,6 +40,21 @@ You can pass the Websocket options as part of the `gun:open/2,3`
 call when opening the connection, or using the `gun:ws_upgrade/4`.
 The fourth argument is those same options.
 
+When the `sec-websocket-protocol` was specified in the `gun:ws_upgrade/3,4`
+and the server replies with the `sec-websocket-protocol` header,
+gun will try to find the `handler` module for `protocol` in the Websocket options.
+The upgrade fails if the `handler` is not found on `protocols` list.
+
+.Upgrade to Websocket, request a protocol and define handler for the protocol
+[source,erlang]
+----
+gun:ws_upgrade(ConnPid, "/websocket",
+               [{<<"sec-websocket-protocol">>, <<"xmpp">>}],
+               #{protocols => [{<<"xmpp">>, gun_ws_h}]}).
+----
+
+Currently, the only possible handler module is the default `gun_ws_h`.
+
 When the upgrade succeeds, a `gun_upgrade` message is sent.
 If the server does not understand Websocket or refused the
 upgrade, a `gun_response` message is sent. If Gun couldn't
