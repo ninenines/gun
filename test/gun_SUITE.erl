@@ -17,9 +17,12 @@
 -compile(nowarn_export_all).
 
 -import(ct_helper, [doc/1]).
+-import(ct_helper, [name/0]).
 
 all() ->
 	ct_helper:all(?MODULE).
+
+%% Tests.
 
 connect_timeout(_) ->
 	doc("Ensure an integer value for connect_timeout is accepted."),
@@ -44,12 +47,15 @@ connect_timeout_infinity(_) ->
 	end.
 
 detect_owner_gone(_) ->
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Self = self(),
 	spawn(fun() ->
-		{ok, ConnPid} = gun:open("google.com", 80),
+		{ok, ConnPid} = gun:open("localhost", Port),
 		Self ! {conn, ConnPid},
 		gun:await_up(ConnPid)
 	end),
+	{ok, _} = gen_tcp:accept(ListenSocket, 5000),
 	Pid = receive
 		{conn, C} ->
 			C
@@ -66,9 +72,14 @@ detect_owner_gone(_) ->
 	end.
 
 detect_owner_gone_ws(_) ->
+	Name = name(),
+	{ok, _} = cowboy:start_clear(Name, [], #{env => #{
+		dispatch => cowboy_router:compile([{'_', [{"/", ws_echo, []}]}])
+	}}),
+	Port = ranch:get_port(Name),
 	Self = self(),
 	spawn(fun() ->
-		{ok, ConnPid} = gun:open("echo.websocket.org", 80),
+		{ok, ConnPid} = gun:open("localhost", Port),
 		Self ! {conn, ConnPid},
 		gun:await_up(ConnPid),
 		gun:ws_upgrade(ConnPid, "/", []),
@@ -92,7 +103,8 @@ detect_owner_gone_ws(_) ->
 	after 1000 ->
 		true = erlang:is_process_alive(Pid),
 		error(timeout)
-	end.
+	end,
+	cowboy:stop_listener(Name).
 
 shutdown_reason(_) ->
 	doc("The last connection failure must be propagated."),
@@ -107,7 +119,10 @@ shutdown_reason(_) ->
 
 info(_) ->
 	doc("Get info from the Gun connection."),
-	{ok, Pid} = gun:open("google.com", 443),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, Pid} = gun:open("localhost", Port),
+	{ok, _} = gen_tcp:accept(ListenSocket, 5000),
 	#{sock_ip := _, sock_port := _} = gun:info(Pid),
 	ok.
 
@@ -131,8 +146,20 @@ reply_to(_) ->
 	do_reply_to(http2).
 
 do_reply_to(Protocol) ->
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Self = self(),
-	{ok, Pid} = gun:open("google.com", 443, #{protocols => [Protocol]}),
+	{ok, Pid} = gun:open("localhost", Port, #{protocols => [Protocol]}),
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	ok = case Protocol of
+		http -> ok;
+		http2 ->
+			{ok, _} = gen_tcp:recv(ClientSocket, 0, 5000),
+			gen_tcp:send(ClientSocket, [
+				<<0:24, 4:8, 0:40>>, %% Empty SETTINGS frame.
+				<<0:24, 4:8, 1:8, 0:32>> %% SETTINGS ack.
+			])
+	end,
 	{ok, Protocol} = gun:await_up(Pid),
 	ReplyTo = spawn(fun() ->
 		receive Ref ->
@@ -142,7 +169,34 @@ do_reply_to(Protocol) ->
 			error(timeout)
 		end
 	end),
-	Ref = gun:get(Pid, "/", [{<<"host">>, <<"google.com">>}], #{reply_to => ReplyTo}),
+	Ref = gun:get(Pid, "/", [], #{reply_to => ReplyTo}),
+	{ok, _} = gen_tcp:recv(ClientSocket, 0, 5000),
+	ResponseData = case Protocol of
+		http ->
+			"HTTP/1.1 200 OK\r\n"
+			"Content-length: 12\r\n"
+			"\r\n"
+			"Hello world!";
+		http2 ->
+			%% Send a HEADERS frame with PRIORITY back.
+			{HeadersBlock, _} = cow_hpack:encode([
+				{<<":status">>, <<"200">>}
+			]),
+			Len = iolist_size(HeadersBlock),
+			[
+				<<Len:24, 1:8,
+					0:2, %% Undefined.
+					0:1, %% PRIORITY.
+					0:1, %% Undefined.
+					0:1, %% PADDED.
+					1:1, %% END_HEADERS.
+					0:1, %% Undefined.
+					1:1, %% END_STREAM.
+					0:1, 1:31>>,
+				HeadersBlock
+			]
+	end,
+	ok = gen_tcp:send(ClientSocket, ResponseData),
 	ReplyTo ! Ref,
 	receive
 		{response, _, _, _} ->
@@ -191,16 +245,24 @@ retry_timeout(_) ->
 	end.
 
 transform_header_name(_) ->
-	doc("The reply_to option allows using a separate process for requests."),
-	{ok, Pid} = gun:open("google.com", 443, #{
+	doc("The transform_header_name option allows changing the case of header names."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, Pid} = gun:open("localhost", Port, #{
 		protocols => [http],
 		http_opts => #{
 			transform_header_name => fun(<<"host">>) -> <<"HOST">>; (N) -> N end
 		}
 	}),
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
 	{ok, http} = gun:await_up(Pid),
-	Ref = gun:get(Pid, "/", [{<<"host">>, <<"google.com">>}]),
-	{response, _, _, _} = gun:await(Pid, Ref),
+	_ = gun:get(Pid, "/"),
+	{ok, Data} = gen_tcp:recv(ClientSocket, 0, 5000),
+	%% We do some very crude parsing of the response headers
+	%% to check that the header name was properly transformed.
+	Lines = binary:split(Data, <<"\r\n">>),
+	HostLines = [L || <<"HOST: ", _/bits>> = L <- Lines],
+	1 = length(HostLines),
 	ok.
 
 unix_socket_connect(_) ->
