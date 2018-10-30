@@ -79,7 +79,8 @@ run_tests() ->
 	timer:sleep(1000),
 	Tests = scrape_tests(),
 	ct:pal("Test ports: ~p~n", [Tests]),
-	run_tests(Tests).
+	run_tests(Tests),
+	timer:sleep(1000).
 
 run_tests([]) ->
 	ok;
@@ -99,8 +100,7 @@ run_tests([Port|Tail]) ->
 				ok
 		after 100 ->
 			ok
-		end,
-		ok = gun:close(Conn)
+		end
 	after
 		run_tests(Tail)
 	end.

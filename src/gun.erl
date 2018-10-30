@@ -845,6 +845,9 @@ loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
 		{system, From, Request} ->
 			sys:handle_system_msg(Request, From, Parent, ?MODULE, [],
 				{loop, State});
+		%% @todo HTTP/2 requires more timeouts than just the keepalive timeout.
+		%% We should have a timeout function in protocols that deal with
+		%% received timeouts. Currently the timeout messages are ignored.
 		{ws_upgrade, _, StreamRef, _, _} ->
 			Owner ! {gun_error, self(), StreamRef, {badstate,
 				"Websocket is only supported over HTTP/1.1."}},
