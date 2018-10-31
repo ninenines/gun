@@ -199,7 +199,8 @@ trailers_frame(State, StreamID, Trailers) ->
 rst_stream_frame(State=#http2_state{streams=Streams0}, StreamID, Reason) ->
 	case lists:keytake(StreamID, #stream.id, Streams0) of
 		{value, #stream{ref=StreamRef, reply_to=ReplyTo}, Streams} ->
-			ReplyTo ! {gun_error, self(), StreamRef, Reason},
+			ReplyTo ! {gun_error, self(), StreamRef,
+				{stream_error, Reason, 'Stream reset by server.'}},
 			State#http2_state{streams=Streams};
 		false ->
 			State
