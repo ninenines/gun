@@ -247,7 +247,8 @@ request(State=#http2_state{socket=Socket, transport=Transport,
 		true -> nofin;
 		false -> fin
 	end,
-	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(Method, HTTP2Machine0),
+	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(
+		iolist_to_binary(Method), HTTP2Machine0),
 	{ok, PseudoHeaders, Headers} = prepare_headers(State, Method, Host, Port, Path, Headers0),
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
 		StreamID, HTTP2Machine1, IsFin0, PseudoHeaders, Headers),
@@ -260,7 +261,8 @@ request(State=#http2_state{socket=Socket, transport=Transport,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers0, Body) ->
 	Headers1 = lists:keystore(<<"content-length">>, 1, Headers0,
 		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
-	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(Method, HTTP2Machine0),
+	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(
+		iolist_to_binary(Method), HTTP2Machine0),
 	{ok, PseudoHeaders, Headers} = prepare_headers(State, Method, Host, Port, Path, Headers1),
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
 		StreamID, HTTP2Machine1, nofin, PseudoHeaders, Headers),
