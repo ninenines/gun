@@ -21,10 +21,13 @@
 %% ct.
 
 all() ->
-	[{group, autobahn}].
+	[{group, autobahn}, {group, reject_upgrade}].
 
 groups() ->
-	[{autobahn, [], [autobahn_fuzzingserver]}].
+	[
+		{autobahn, [], [autobahn_fuzzingserver]},
+		{reject_upgrade, [], [reject_upgrade]}
+	].
 
 init_per_group(autobahn, Config) ->
 	%% Some systems have it named pip2.
@@ -38,7 +41,9 @@ init_per_group(autobahn, Config) ->
 			{skip, "Autobahn Test Suite not installed."};
 		_ ->
 			Config
-	end.
+	end;
+init_per_group(_, _) ->
+	ok.
 
 end_per_group(_, _) ->
 	ok.
@@ -166,3 +171,46 @@ terminate() ->
 	Res = os:cmd("killall wstest"),
 	io:format(user, "~s", [Res]),
 	ok.
+
+
+reject_upgrade(_Config) ->
+	Name = ct_helper:name(),
+	{ok, _} = cowboy:start_clear(Name, [], #{env => #{
+		dispatch => cowboy_router:compile([{'_', [{"/", ws_reject, []}]}])
+	}}),
+	Port = ranch:get_port(Name),
+	Self = self(),
+	spawn(fun() ->
+		{ok, ConnPid} = gun:open("localhost", Port),
+		Self ! {conn, ConnPid},
+		{ok, _} = gun:await_up(ConnPid),
+		StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+		receive
+			{gun_upgrade, _, _, _, _} ->
+				error("Should not upgrade the connection");
+			{gun_response, ConnPid, StreamRef, fin, Status, _Headers} ->
+				error("Should receive body");
+			{gun_response, ConnPid, StreamRef, nofin, Status, _Headers} ->
+				{ok, Body} = gun:await_body(ConnPid, StreamRef, 1000),
+				400 = Status,
+				<<"Upgrade rejected">> = Body;
+			Other ->
+				ct:log("Unexpected message: ~p", [Other]),
+				error("Unexpected message")
+		after 1000 ->
+			error(timeout)
+		end
+	      end),
+	Pid = receive
+		      {conn, C} -> C
+	      after 1000 ->
+			error(timeout)
+	      end,
+	MRef = monitor(process, Pid),
+	receive
+		{'DOWN', MRef, process, Pid, normal} ->
+			ok
+	after 1000 ->
+		error(timeout)
+	end,
+	cowboy:stop_listener(Name).
