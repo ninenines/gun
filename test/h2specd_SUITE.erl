@@ -68,7 +68,12 @@ receive_infinity(Port, Acc) ->
 	receive
 		{Port, {data, {eol, Line}}} ->
 			ct:log("~ts", [Line]),
-			io:format(user, "~s~n", [Line]),
+			%% Somehow we may receive the same line multiple times.
+			%% We therefore only print if it's a line we didn't print before.
+			case lists:member(Line, Acc) of
+				false -> io:format(user, "~s~n", [Line]);
+				true -> ok
+			end,
 			receive_infinity(Port, [Line|Acc]);
 		{Port, Reason={exit_status, _}} ->
 			ct:log("~ts", [[[L, $\n] || L <- lists:reverse(Acc)]]),
