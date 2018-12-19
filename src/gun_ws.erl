@@ -74,10 +74,10 @@ init(Owner, Socket, Transport, StreamRef, Headers, Extensions, Handler, Opts) ->
 
 %% Do not handle anything if we received a close frame.
 handle(_, State=#ws_state{in=close}) ->
-	State;
+	{state, State};
 %% Shortcut for common case when Data is empty after processing a frame.
 handle(<<>>, State=#ws_state{in=head}) ->
-	State;
+	{state, State};
 handle(Data, State=#ws_state{buffer=Buffer, in=head, frag_state=FragState, extensions=Extensions}) ->
 	Data2 = << Buffer/binary, Data/binary >>,
 	case cow_ws:parse_header(Data2, Extensions, FragState) of
@@ -85,7 +85,7 @@ handle(Data, State=#ws_state{buffer=Buffer, in=head, frag_state=FragState, exten
 			handle(Rest, State#ws_state{buffer= <<>>,
 				in=#payload{type=Type, rsv=Rsv, len=Len, mask_key=MaskKey}, frag_state=FragState2});
 		more ->
-			State#ws_state{buffer=Data2};
+			{state, State#ws_state{buffer=Data2}};
 		error ->
 			close({error, badframe}, State)
 	end;
@@ -97,11 +97,11 @@ handle(Data, State=#ws_state{in=In=#payload{type=Type, rsv=Rsv, len=Len, mask_ke
 		{ok, Payload, Utf8State2, Rest} ->
 			dispatch(Rest, State#ws_state{in=head, utf8_state=Utf8State2}, Type, << Unmasked/binary, Payload/binary >>, CloseCode);
 		{more, CloseCode2, Payload, Utf8State2} ->
-			State#ws_state{in=In#payload{close_code=CloseCode2, unmasked= << Unmasked/binary, Payload/binary >>,
-				len=Len - byte_size(Data), unmasked_len=2 + byte_size(Data)}, utf8_state=Utf8State2};
+			{state, State#ws_state{in=In#payload{close_code=CloseCode2, unmasked= << Unmasked/binary, Payload/binary >>,
+				len=Len - byte_size(Data), unmasked_len=2 + byte_size(Data)}, utf8_state=Utf8State2}};
 		{more, Payload, Utf8State2} ->
-			State#ws_state{in=In#payload{unmasked= << Unmasked/binary, Payload/binary >>,
-				len=Len - byte_size(Data), unmasked_len=UnmaskedLen + byte_size(Data)}, utf8_state=Utf8State2};
+			{state, State#ws_state{in=In#payload{unmasked= << Unmasked/binary, Payload/binary >>,
+				len=Len - byte_size(Data), unmasked_len=UnmaskedLen + byte_size(Data)}, utf8_state=Utf8State2}};
 		Error = {error, _Reason} ->
 			close(Error, State)
 	end.
@@ -111,10 +111,10 @@ dispatch(Rest, State0=#ws_state{frag_state=FragState,
 		Type0, Payload0, CloseCode0) ->
 	case cow_ws:make_frame(Type0, Payload0, CloseCode0, FragState) of
 		ping ->
-			State = send(pong, State0),
+			{state, State} = send(pong, State0),
 			handle(Rest, State);
 		{ping, Payload} ->
-			State = send({pong, Payload}, State0),
+			{state, State} = send({pong, Payload}, State0),
 			handle(Rest, State);
 		pong ->
 			handle(Rest, State0);
@@ -133,9 +133,8 @@ dispatch(Rest, State0=#ws_state{frag_state=FragState,
 
 close(Reason, State) ->
 	case Reason of
-%% @todo We need to send a close frame from gun:ws_loop on close.
-%		Normal when Normal =:= stop; Normal =:= timeout ->
-%			send({close, 1000, <<>>}, State);
+		normal ->
+			send({close, 1000, <<>>}, State);
 		owner_gone ->
 			send({close, 1001, <<>>}, State);
 		{error, badframe} ->
@@ -149,7 +148,7 @@ send(Frame, State=#ws_state{socket=Socket, transport=Transport, extensions=Exten
 	case Frame of
 		close -> close;
 		{close, _, _} -> close;
-		_ -> State
+		_ -> {state, State}
 	end.
 
 %% Websocket has no concept of streams.
