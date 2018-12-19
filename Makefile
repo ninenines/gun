@@ -6,7 +6,7 @@ PROJECT_VERSION = 1.3.0
 
 # Options.
 
-CT_OPTS += -pa test -ct_hooks gun_ct_hook [] # -boot start_sasl
+CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 
 # Dependencies.
 
