@@ -154,13 +154,14 @@ The default value is given next to the option name:
 
 // @todo Document content_handlers and gun_sse_h.
 
-keepalive (5000)::
+keepalive (infinity)::
 
 Time between pings in milliseconds. Since the HTTP protocol has
 no standardized way to ping the server, Gun will simply send an
 empty line when the connection is idle. Gun only makes a best
 effort here as servers usually have configurable limits to drop
-idle connections. Use `infinity` to disable.
+idle connections. Disabled by default due to potential
+incompatibilities.
 
 transform_header_name - see below::
 
@@ -315,6 +316,8 @@ undocumented and must be set to `gun_ws_h`.
 == Changelog
 
 * *2.0*: Function `gun:headers/4,5` introduced.
+* *2.0*: The `keepalive` option is now set to `infinity` by
+         default for the HTTP/1.1 protocol, disabling it.
 * *1.3*: Add the CONNECT destination's `protocols` option and
          deprecate the previously introduced `protocol` option.
 * *1.2*: Introduce the type `connect_destination()`.

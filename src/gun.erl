@@ -930,13 +930,12 @@ active(State=#state{socket=Socket, transport=Transport}) ->
 	State.
 
 keepalive_timeout(State=#state{opts=Opts, protocol=Protocol}) ->
-	%% @todo Might not be worth checking every time?
-	ProtoOptsKey = case Protocol of
-		gun_http -> http_opts;
-		gun_http2 -> http2_opts
+	{ProtoOptsKey, Default} = case Protocol of
+		gun_http -> {http_opts, infinity};
+		gun_http2 -> {http2_opts, 5000}
 	end,
 	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
-	Keepalive = maps:get(keepalive, ProtoOpts, 5000),
+	Keepalive = maps:get(keepalive, ProtoOpts, Default),
 	KeepaliveRef = case Keepalive of
 		infinity -> undefined;
 		%% @todo Maybe change that to a start_timer.
