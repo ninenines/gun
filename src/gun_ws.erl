@@ -140,7 +140,12 @@ close(Reason, State) ->
 		{error, badframe} ->
 			send({close, 1002, <<>>}, State);
 		{error, badencoding} ->
-			send({close, 1007, <<>>}, State)
+			send({close, 1007, <<>>}, State);
+		%% Socket errors; do nothing.
+		closed ->
+			ok;
+		{error, _} ->
+			ok
 	end.
 
 send(Frame, State=#ws_state{socket=Socket, transport=Transport, extensions=Extensions}) ->
