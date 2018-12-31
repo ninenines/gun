@@ -182,9 +182,9 @@ do_connect_http(Transport) ->
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = do_receive(ProxyPid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	_ = gun:get(ConnPid, "/proxied"),
-	Len = byte_size(Authority),
-	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
-		= do_receive(OriginPid),
+	Data = do_receive(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	#{
 		transport := Transport,
 		protocol := http,
@@ -271,9 +271,9 @@ connect_through_multiple_proxies(_) ->
 	{request, <<"CONNECT">>, Authority2, 'HTTP/1.1', _} = do_receive(Proxy2Pid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
 	_ = gun:get(ConnPid, "/proxied"),
-	Len = byte_size(Authority2),
-	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority2:Len/binary, "\r\n", _/bits>>
-		= do_receive(OriginPid),
+	Data = do_receive(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority2/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	#{
 		transport := tcp,
 		protocol := http,
@@ -309,9 +309,9 @@ connect_delay(_) ->
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = do_receive(ProxyPid, 3000),
 	{response, fin, 201, _} = gun:await(ConnPid, StreamRef),
 	_ = gun:get(ConnPid, "/proxied"),
-	Len = byte_size(Authority),
-	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
-		= do_receive(OriginPid),
+	Data = do_receive(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	#{
 		transport := tcp,
 		protocol := http,
@@ -341,9 +341,9 @@ connect_response_201(_) ->
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = do_receive(ProxyPid),
 	{response, fin, 201, _} = gun:await(ConnPid, StreamRef),
 	_ = gun:get(ConnPid, "/proxied"),
-	Len = byte_size(Authority),
-	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
-		= do_receive(OriginPid),
+	Data = do_receive(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	#{
 		transport := tcp,
 		protocol := http,
@@ -479,9 +479,9 @@ connect_response_ignore_transfer_encoding(_) ->
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = do_receive(ProxyPid),
 	{response, fin, 200, Headers} = gun:await(ConnPid, StreamRef),
 	_ = gun:get(ConnPid, "/proxied"),
-	Len = byte_size(Authority),
-	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
-		= do_receive(OriginPid),
+	Data = do_receive(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	gun:close(ConnPid).
 
 connect_response_ignore_content_length(_) ->
@@ -500,7 +500,7 @@ connect_response_ignore_content_length(_) ->
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = do_receive(ProxyPid),
 	{response, fin, 200, Headers} = gun:await(ConnPid, StreamRef),
 	_ = gun:get(ConnPid, "/proxied"),
-	Len = byte_size(Authority),
-	<<"GET /proxied HTTP/1.1\r\nhost: ", Authority:Len/binary, "\r\n", _/bits>>
-		= do_receive(OriginPid),
+	Data = do_receive(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	gun:close(ConnPid).

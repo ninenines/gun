@@ -20,7 +20,7 @@
 -export([handle/2]).
 -export([close/2]).
 -export([keepalive/1]).
--export([request/8]).
+-export([headers/8]).
 -export([request/9]).
 -export([data/5]).
 -export([connect/5]).
@@ -330,7 +330,7 @@ keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}) ->
 keepalive(State) ->
 	State.
 
-request(State=#http_state{socket=Socket, transport=Transport, version=Version,
+headers(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers) ->
 	Host2 = case Host of
 		{local, _SocketPath} -> <<>>;
@@ -509,10 +509,7 @@ request_io_from_headers(Headers) ->
 		{_, Length} ->
 			{body, cow_http_hd:parse_content_length(Length)};
 		_ ->
-			case lists:keymember(<<"content-type">>, 1, Headers) of
-				true -> body_chunked;
-				false -> head
-			end
+			body_chunked
 	end.
 
 response_io_from_headers(<<"HEAD">>, _, _, _) ->

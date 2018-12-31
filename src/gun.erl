@@ -49,7 +49,10 @@
 -export([put/3]).
 -export([put/4]).
 -export([put/5]).
--export([request/4]).
+
+%% Generic requests interface.
+-export([headers/4]).
+-export([headers/5]).
 -export([request/5]).
 -export([request/6]).
 
@@ -316,11 +319,11 @@ shutdown(ServerPid) ->
 
 -spec delete(pid(), iodata()) -> reference().
 delete(ServerPid, Path) ->
-	request(ServerPid, <<"DELETE">>, Path, []).
+	request(ServerPid, <<"DELETE">>, Path, [], <<>>).
 
 -spec delete(pid(), iodata(), headers()) -> reference().
 delete(ServerPid, Path, Headers) ->
-	request(ServerPid, <<"DELETE">>, Path, Headers).
+	request(ServerPid, <<"DELETE">>, Path, Headers, <<>>).
 
 -spec delete(pid(), iodata(), headers(), req_opts()) -> reference().
 delete(ServerPid, Path, Headers, ReqOpts) ->
@@ -328,11 +331,11 @@ delete(ServerPid, Path, Headers, ReqOpts) ->
 
 -spec get(pid(), iodata()) -> reference().
 get(ServerPid, Path) ->
-	request(ServerPid, <<"GET">>, Path, []).
+	request(ServerPid, <<"GET">>, Path, [], <<>>).
 
 -spec get(pid(), iodata(), headers()) -> reference().
 get(ServerPid, Path, Headers) ->
-	request(ServerPid, <<"GET">>, Path, Headers).
+	request(ServerPid, <<"GET">>, Path, Headers, <<>>).
 
 -spec get(pid(), iodata(), headers(), req_opts()) -> reference().
 get(ServerPid, Path, Headers, ReqOpts) ->
@@ -340,11 +343,11 @@ get(ServerPid, Path, Headers, ReqOpts) ->
 
 -spec head(pid(), iodata()) -> reference().
 head(ServerPid, Path) ->
-	request(ServerPid, <<"HEAD">>, Path, []).
+	request(ServerPid, <<"HEAD">>, Path, [], <<>>).
 
 -spec head(pid(), iodata(), headers()) -> reference().
 head(ServerPid, Path, Headers) ->
-	request(ServerPid, <<"HEAD">>, Path, Headers).
+	request(ServerPid, <<"HEAD">>, Path, Headers, <<>>).
 
 -spec head(pid(), iodata(), headers(), req_opts()) -> reference().
 head(ServerPid, Path, Headers, ReqOpts) ->
@@ -352,11 +355,11 @@ head(ServerPid, Path, Headers, ReqOpts) ->
 
 -spec options(pid(), iodata()) -> reference().
 options(ServerPid, Path) ->
-	request(ServerPid, <<"OPTIONS">>, Path, []).
+	request(ServerPid, <<"OPTIONS">>, Path, [], <<>>).
 
 -spec options(pid(), iodata(), headers()) -> reference().
 options(ServerPid, Path, Headers) ->
-	request(ServerPid, <<"OPTIONS">>, Path, Headers).
+	request(ServerPid, <<"OPTIONS">>, Path, Headers, <<>>).
 
 -spec options(pid(), iodata(), headers(), req_opts()) -> reference().
 options(ServerPid, Path, Headers, ReqOpts) ->
@@ -364,9 +367,11 @@ options(ServerPid, Path, Headers, ReqOpts) ->
 
 -spec patch(pid(), iodata(), headers()) -> reference().
 patch(ServerPid, Path, Headers) ->
-	request(ServerPid, <<"PATCH">>, Path, Headers).
+	headers(ServerPid, <<"PATCH">>, Path, Headers).
 
--spec patch(pid(), iodata(), headers(), iodata()) -> reference().
+-spec patch(pid(), iodata(), headers(), iodata() | req_opts()) -> reference().
+patch(ServerPid, Path, Headers, ReqOpts) when is_map(ReqOpts) ->
+	headers(ServerPid, <<"PATCH">>, Path, Headers, ReqOpts);
 patch(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PATCH">>, Path, Headers, Body).
 
@@ -376,9 +381,11 @@ patch(ServerPid, Path, Headers, Body, ReqOpts) ->
 
 -spec post(pid(), iodata(), headers()) -> reference().
 post(ServerPid, Path, Headers) ->
-	request(ServerPid, <<"POST">>, Path, Headers).
+	headers(ServerPid, <<"POST">>, Path, Headers).
 
--spec post(pid(), iodata(), headers(), iodata()) -> reference().
+-spec post(pid(), iodata(), headers(), iodata() | req_opts()) -> reference().
+post(ServerPid, Path, Headers, ReqOpts) when is_map(ReqOpts) ->
+	headers(ServerPid, <<"POST">>, Path, Headers, ReqOpts);
 post(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"POST">>, Path, Headers, Body).
 
@@ -388,9 +395,11 @@ post(ServerPid, Path, Headers, Body, ReqOpts) ->
 
 -spec put(pid(), iodata(), headers()) -> reference().
 put(ServerPid, Path, Headers) ->
-	request(ServerPid, <<"PUT">>, Path, Headers).
+	headers(ServerPid, <<"PUT">>, Path, Headers).
 
--spec put(pid(), iodata(), headers(), iodata()) -> reference().
+-spec put(pid(), iodata(), headers(), iodata() | req_opts()) -> reference().
+put(ServerPid, Path, Headers, ReqOpts) when is_map(ReqOpts) ->
+	headers(ServerPid, <<"PUT">>, Path, Headers, ReqOpts);
 put(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PUT">>, Path, Headers, Body).
 
@@ -398,9 +407,19 @@ put(ServerPid, Path, Headers, Body) ->
 put(ServerPid, Path, Headers, Body, ReqOpts) ->
 	request(ServerPid, <<"PUT">>, Path, Headers, Body, ReqOpts).
 
--spec request(pid(), iodata(), iodata(), headers()) -> reference().
-request(ServerPid, Method, Path, Headers) ->
-	request(ServerPid, Method, Path, Headers, <<>>, #{}).
+%% Generic requests interface.
+
+-spec headers(pid(), iodata(), iodata(), headers()) -> reference().
+headers(ServerPid, Method, Path, Headers) ->
+	headers(ServerPid, Method, Path, Headers, #{}).
+
+%% @todo Accept header names as maps.
+-spec headers(pid(), iodata(), iodata(), headers(), req_opts()) -> reference().
+headers(ServerPid, Method, Path, Headers, ReqOpts) ->
+	StreamRef = make_ref(),
+	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	gen_statem:cast(ServerPid, {headers, ReplyTo, StreamRef, Method, Path, Headers}),
+	StreamRef.
 
 -spec request(pid(), iodata(), iodata(), headers(), iodata()) -> reference().
 request(ServerPid, Method, Path, Headers, Body) ->
@@ -729,15 +748,17 @@ connected(info, keepalive, State=#state{protocol=Protocol, protocol_state=ProtoS
 	ProtoState2 = Protocol:keepalive(ProtoState),
 	{keep_state, keepalive_timeout(State#state{protocol_state=ProtoState2})};
 %% Public HTTP interface.
+connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers},
+		State=#state{origin_host=Host, origin_port=Port,
+			protocol=Protocol, protocol_state=ProtoState}) ->
+	ProtoState2 = Protocol:headers(ProtoState,
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers),
+	{keep_state, State#state{protocol_state=ProtoState2}};
 connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState}) ->
-	ProtoState2 = case Body of
-		<<>> -> Protocol:request(ProtoState,
-			StreamRef, ReplyTo, Method, Host, Port, Path, Headers);
-		_ -> Protocol:request(ProtoState,
-			StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body)
-	end,
+	ProtoState2 = Protocol:request(ProtoState,
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body),
 	{keep_state, State#state{protocol_state=ProtoState2}};
 %% @todo Do we want to reject ReplyTo if it's not the process
 %% who initiated the connection? For both data and cancel.

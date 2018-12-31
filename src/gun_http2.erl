@@ -20,7 +20,7 @@
 -export([handle/2]).
 -export([close/2]).
 -export([keepalive/1]).
--export([request/8]).
+-export([headers/8]).
 -export([request/9]).
 -export([data/5]).
 -export([cancel/3]).
@@ -240,19 +240,14 @@ keepalive(State=#http2_state{socket=Socket, transport=Transport}) ->
 	Transport:send(Socket, cow_http2:ping(0)),
 	State.
 
-request(State=#http2_state{socket=Socket, transport=Transport,
+headers(State=#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine0, streams=Streams},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers0) ->
-	IsFin0 = case (false =/= lists:keyfind(<<"content-type">>, 1, Headers0))
-			orelse (false =/= lists:keyfind(<<"content-length">>, 1, Headers0)) of
-		true -> nofin;
-		false -> fin
-	end,
 	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(
 		iolist_to_binary(Method), HTTP2Machine0),
 	{ok, PseudoHeaders, Headers} = prepare_headers(State, Method, Host, Port, Path, Headers0),
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
-		StreamID, HTTP2Machine1, IsFin0, PseudoHeaders, Headers),
+		StreamID, HTTP2Machine1, nofin, PseudoHeaders, Headers),
 	Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)),
 	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},
 	State#http2_state{http2_machine=HTTP2Machine, streams=[Stream|Streams]}.

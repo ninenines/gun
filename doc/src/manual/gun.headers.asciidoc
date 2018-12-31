@@ -1,38 +1,35 @@
-= gun:request(3)
+= gun:headers(3)
 
 == Name
 
-gun:request - Perform the given request
+gun:headers - Initiate the given request
 
 == Description
 
 [source,erlang]
 ----
-request(ConnPid, Method, Path, Headers, Body)
-    -> request(ConnPid, Method, Path, Headers, Body, #{})
+headers(ConnPid, Method, Path, Headers)
+    -> headers(ConnPid, Method, Path, Headers, #{})
 
-request(ConnPid, Method, Path, Headers, Body, ReqOpts)
+headers(ConnPid, Method, Path, Headers, ReqOpts)
     -> StreamRef
 
 ConnPid   :: pid()
 Method    :: binary()
 Path      :: iodata()
 Headers   :: [{binary(), iodata()}]
-Body      :: iodata()
 ReqOpts   :: gun:req_opts()
 StreamRef :: reference()
 ----
 
-Perform the given request.
+Initiate the given request.
 
 This is a general purpose function that should only be
 used when other method-specific functions do not apply.
 
-The function `request/5,6` sends the entire request, including
-the request body, immediately. It is therefore not possible
-to use link:man:gun:data(3)[gun:data(3)] after that. You
-should provide a content-type header. Gun will set the
-content-length header automatically.
+The function `headers/4,5` initiates a request but does
+not send the request body. It must be sent separately
+using link:man:gun:data(3)[gun:data(3)].
 
 == Arguments
 
@@ -52,10 +49,6 @@ Headers::
 
 Additional request headers.
 
-Body::
-
-Request body.
-
 ReqOpts::
 
 Request options.
@@ -69,26 +62,22 @@ to this new stream.
 
 == Changelog
 
-* *2.0*: Implicit body detection has been removed. The body
-         must now be provided either directly (even if empty)
-         or using link:man:gun:headers(3)[gun:headers(3)].
-* *1.0*: Function introduced.
+* *2.0*: Function introduced.
 
 == Examples
 
-.Perform a request
+.Initiate a request
 [source,erlang]
 ----
-StreamRef = gun:request(ConnPid, <<"PUT">>,
+StreamRef = gun:headers(ConnPid, <<"PUT">>,
     "/lang/fr_FR/hello",
-    [{<<"content-type">>, <<"text/plain">>}],
-    <<"Bonjour !">>).
+    [{<<"content-type">>, <<"text/plain">>}]).
 ----
 
 == See also
 
 link:man:gun(3)[gun(3)],
-link:man:gun:headers(3)[gun:headers(3)],
+link:man:gun:request(3)[gun:request(3)],
 link:man:gun:await(3)[gun:await(3)],
 link:man:gun:await_body(3)[gun:await_body(3)],
 link:man:gun_push(3)[gun_push(3)],

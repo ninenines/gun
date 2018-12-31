@@ -9,6 +9,9 @@ gun:put - Create or replace a resource
 [source,erlang]
 ----
 put(ConnPid, Path, Headers)
+    -> put(ConnPid, Path, Headers, #{})
+
+put(ConnPid, Path, Headers, ReqOpts)
     -> StreamRef
 
 put(ConnPid, Path, Headers, Body)
@@ -30,10 +33,8 @@ Create or replace a resource.
 The behavior of this function varies depending on whether
 a body is provided.
 
-The function `put/3` expects either a content-length
-or content-type header to indicate that a body will be
-sent afterwards. The body can then be sent using
-link:man:gun:data(3)[gun:data(3)].
+The function `put/3,4` does not send a body. It must be
+sent separately using link:man:gun:data(3)[gun:data(3)].
 
 The function `put/4,5` sends the entire request, including
 the request body, immediately. It is therefore not possible
@@ -72,6 +73,9 @@ to this new stream.
 
 == Changelog
 
+* *2.0*: Implicit body detection has been removed. The body
+         must now be provided either directly (even if empty)
+         or using separate calls.
 * *1.0*: Function introduced.
 
 == Examples

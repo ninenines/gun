@@ -29,6 +29,7 @@ Requests:
 * link:man:gun:post(3)[gun:post(3)] - Process the enclosed representation according to a resource's own semantics
 * link:man:gun:put(3)[gun:put(3)] - Create or replace a resource
 * link:man:gun:delete(3)[gun:delete(3)] - Delete a resource
+* link:man:gun:headers(3)[gun:headers(3)] - Initiate the given request
 * link:man:gun:request(3)[gun:request(3)] - Perform the given request
 * link:man:gun:data(3)[gun:data(3)] - Stream the body of a request
 
@@ -313,6 +314,7 @@ undocumented and must be set to `gun_ws_h`.
 
 == Changelog
 
+* *2.0*: Function `gun:headers/4,5` introduced.
 * *1.3*: Add the CONNECT destination's `protocols` option and
          deprecate the previously introduced `protocol` option.
 * *1.2*: Introduce the type `connect_destination()`.

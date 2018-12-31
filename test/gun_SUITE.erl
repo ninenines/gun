@@ -260,7 +260,7 @@ transform_header_name(_) ->
 	{ok, Data} = gen_tcp:recv(ClientSocket, 0, 5000),
 	%% We do some very crude parsing of the response headers
 	%% to check that the header name was properly transformed.
-	Lines = binary:split(Data, <<"\r\n">>),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	HostLines = [L || <<"HOST: ", _/bits>> = L <- Lines],
 	1 = length(HostLines),
 	ok.
