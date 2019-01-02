@@ -16,6 +16,10 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
+-ifdef(OTP_RELEASE).
+-compile({nowarn_deprecated_function, [{ssl, ssl_accept, 2}]}).
+-endif.
+
 -import(ct_helper, [doc/1]).
 
 all() ->
@@ -23,9 +27,16 @@ all() ->
 
 %% Server helpers.
 
-do_origin_start(Fun) ->
+do_origin_start(Transport, Fun) ->
 	Self = self(),
-	Pid = spawn_link(fun() -> do_origin_init_tcp(Self, Fun) end),
+	Pid = spawn_link(fun() ->
+		case Transport of
+			tcp ->
+				do_origin_init_tcp(Self, Fun);
+			tls ->
+				do_origin_init_tls_h2(Self, Fun)
+		end
+	end),
 	Port = do_receive(Pid),
 	{ok, Pid, Port}.
 
@@ -36,6 +47,18 @@ do_origin_init_tcp(Parent, Fun) ->
 	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
 	do_handshake(ClientSocket, gen_tcp),
 	Fun(Parent, ClientSocket, gen_tcp).
+
+do_origin_init_tls_h2(Parent, Fun) ->
+	Opts = ct_helper:get_certs_from_ets(),
+	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false},
+		{alpn_preferred_protocols, [<<"h2">>]}|Opts]),
+	{ok, {_, Port}} = ssl:sockname(ListenSocket),
+	Parent ! {self(), Port},
+	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+	ok = ssl:ssl_accept(ClientSocket, 5000),
+	{ok, <<"h2">>} = ssl:negotiated_protocol(ClientSocket),
+	do_handshake(ClientSocket, ssl),
+	Fun(Parent, ClientSocket, ssl).
 
 do_handshake(Socket, Transport) ->
 	%% Send a valid preface.
@@ -65,10 +88,55 @@ do_receive(Pid, Timeout) ->
 
 %% Tests.
 
+authority_default_port_http(_) ->
+	doc("The default port for http should not be sent in "
+		"the :authority pseudo-header. (RFC7540 3, RFC7230 2.7.1)"),
+	do_authority_port(tcp, 80, <<>>).
+
+authority_default_port_https(_) ->
+	doc("The default port for https should not be sent in "
+		"the :authority pseudo-header. (RFC7540 3, RFC7230 2.7.2)"),
+	do_authority_port(tls, 443, <<>>).
+
+authority_other_port_http(_) ->
+	doc("Non-default ports for http must be sent in "
+		"the :authority pseudo-header. (RFC7540 3, RFC7230 2.7.1)"),
+	do_authority_port(tcp, 443, <<":443">>).
+
+authority_other_port_https(_) ->
+	doc("Non-default ports for https must be sent in "
+		"the :authority pseudo-header. (RFC7540 3, RFC7230 2.7.2)"),
+	do_authority_port(tls, 80, <<":80">>).
+
+do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
+	{ok, OriginPid, OriginPort} = do_origin_start(Transport0, fun(Parent, Socket, Transport) ->
+		%% Receive the HEADERS frame and send the headers decoded.
+		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
+		{ReqHeaders, _} = cow_hpack:decode(ReqHeadersBlock),
+		Parent ! {self(), ReqHeaders}
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		transport => Transport0,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	%% Change the origin's port in the state to trigger the default port behavior.
+	_ = sys:replace_state(ConnPid, fun({StateName, StateData}) ->
+		{StateName, setelement(7, StateData, DefaultPort)}
+	end, 5000),
+	%% Confirm the default port is not sent in the request.
+	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	_ = gun:get(ConnPid, "/"),
+	ReqHeaders = do_receive(OriginPid),
+	{_, <<"localhost", Rest/bits>>} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
+	AuthorityHeaderPort = Rest,
+	gun:close(ConnPid).
+
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "
 		"that stream dependency information is attached. (RFC7540 6.2)"),
-	{ok, _, Port} = do_origin_start(fun(_, Socket, Transport) ->
+	{ok, _, Port} = do_origin_start(tcp, fun(_, Socket, Transport) ->
 		%% Receive a HEADERS frame.
 		{ok, <<_:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Send a HEADERS frame with PRIORITY back.

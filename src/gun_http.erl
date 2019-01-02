@@ -28,6 +28,9 @@
 -export([down/1]).
 -export([ws_upgrade/7]).
 
+%% Functions shared with gun_http2.
+-export([host_header/3]).
+
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked | body_trailer.
 
 %% @todo Make that a record.

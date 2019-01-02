@@ -268,14 +268,9 @@ request(State=#http2_state{socket=Socket, transport=Transport,
 		streams=[Stream|Streams]}, StreamID, fin, Body).
 
 prepare_headers(#http2_state{transport=Transport}, Method, Host0, Port, Path, Headers0) ->
-	Host1 = case Host0 of
-		{local, _SocketPath} -> <<>>;
-		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
-		_ -> Host0
-	end,
 	Authority = case lists:keyfind(<<"host">>, 1, Headers0) of
 		{_, Host} -> Host;
-		_ -> [Host1, $:, integer_to_binary(Port)]
+		_ -> gun_http:host_header(Transport, Host0, Port)
 	end,
 	%% @todo We also must remove any header found in the connection header.
 	Headers =

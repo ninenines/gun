@@ -114,7 +114,7 @@ do_host_port(Transport, DefaultPort, HostHeaderPort) ->
 	{ok, OriginPid, OriginPort} = do_origin_start(Transport, http),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{transport => Transport}),
 	{ok, http} = gun:await_up(ConnPid),
-	%% Change the port in the state to trigger the default port behavior.
+	%% Change the origin's port in the state to trigger the default port behavior.
 	_ = sys:replace_state(ConnPid, fun({StateName, StateData}) ->
 		{StateName, setelement(7, StateData, DefaultPort)}
 	end, 5000),
