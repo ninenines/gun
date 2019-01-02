@@ -332,14 +332,9 @@ keepalive(State) ->
 
 headers(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers) ->
-	Host2 = case Host of
-		{local, _SocketPath} -> <<>>;
-		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
-		_ -> Host
-	end,
 	Headers2 = lists:keydelete(<<"transfer-encoding">>, 1, Headers),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, [Host2, $:, integer_to_binary(Port)]}|Headers2];
+		false -> [{<<"host">>, host_header(Transport, Host, Port)}|Headers2];
 		true -> Headers2
 	end,
 	%% We use Headers2 because this is the smallest list.
@@ -356,15 +351,10 @@ headers(State=#http_state{socket=Socket, transport=Transport, version=Version,
 
 request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body) ->
-	Host2 = case Host of
-		{local, _SocketPath} -> <<>>;
-		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
-		_ -> Host
-	end,
 	Headers2 = lists:keydelete(<<"content-length">>, 1,
 		lists:keydelete(<<"transfer-encoding">>, 1, Headers)),
 	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, [Host2, $:, integer_to_binary(Port)]}|Headers2];
+		false -> [{<<"host">>, host_header(Transport, Host, Port)}|Headers2];
 		true -> Headers2
 	end,
 	Headers4 = transform_header_names(State, Headers3),
@@ -376,6 +366,18 @@ request(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		|Headers4]),
 		Body]),
 	new_stream(State#http_state{connection=Conn}, StreamRef, ReplyTo, Method).
+
+host_header(Transport, Host0, Port) ->
+	Host = case Host0 of
+		{local, _SocketPath} -> <<>>;
+		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
+		_ -> Host0
+	end,
+	case {Transport:name(), Port} of
+		{tcp, 80} -> Host;
+		{tls, 443} -> Host;
+		_ -> [Host, $:, integer_to_binary(Port)]
+	end.
 
 transform_header_names(#http_state{transform_header_name = Fun}, Headers) ->
 	lists:keymap(Fun, 1, Headers).
