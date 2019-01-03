@@ -14,7 +14,7 @@ protocols is required in order to read this guide.
 
 Gun is tested and supported on Linux, FreeBSD, Windows and OSX.
 
-Gun is developed for Erlang/OTP 19.0 and newer.
+Gun is developed for Erlang/OTP 20.0 and newer.
 
 === License
 
