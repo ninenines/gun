@@ -888,7 +888,8 @@ commands([{origin, _Scheme, Host, Port, Type}|Tail],
 	commands(Tail, State#state{origin_host=Host, origin_port=Port,
 		intermediaries=[Info|Intermediaries]});
 commands([{switch_transport, Transport, Socket}|Tail], State) ->
-	commands(Tail, State#state{socket=Socket, transport=Transport});
+	commands(Tail, active(State#state{socket=Socket, transport=Transport,
+		messages=Transport:messages()}));
 %% @todo The two loops should be reunified and this clause generalized.
 commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State) ->
 	{keep_state, keepalive_cancel(State#state{protocol=Protocol, protocol_state=ProtoState})};

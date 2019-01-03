@@ -16,9 +16,93 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
+-ifdef(OTP_RELEASE).
+-compile({nowarn_deprecated_function, [{ssl, ssl_accept, 2}]}).
+-endif.
+
 %% Cowboy listeners.
 
 init_cowboy_tls(Ref, ProtoOpts, Config) ->
 	Opts = ct_helper:get_certs_from_ets(),
 	{ok, _} = cowboy:start_tls(Ref, Opts ++ [{port, 0}], ProtoOpts),
 	[{ref, Ref}, {port, ranch:get_port(Ref)}|Config].
+
+%% Origin server helpers.
+
+init_origin(Transport) ->
+	init_origin(Transport, http).
+
+init_origin(Transport, Protocol) ->
+	init_origin(Transport, Protocol, fun loop_origin/3).
+
+init_origin(Transport, Protocol, Fun) ->
+	Pid = spawn_link(?MODULE, init_origin, [self(), Transport, Protocol, Fun]),
+	Port = receive_from(Pid),
+	{ok, Pid, Port}.
+
+init_origin(Parent, tcp, Protocol, Fun) ->
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	Parent ! {self(), Port},
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	case Protocol of
+		http2 -> http2_handshake(ClientSocket, gen_tcp);
+		_ -> ok
+	end,
+	Fun(Parent, ClientSocket, gen_tcp);
+init_origin(Parent, tls, Protocol, Fun) ->
+	Opts0 = ct_helper:get_certs_from_ets(),
+	Opts = case Protocol of
+		http2 -> [{alpn_preferred_protocols, [<<"h2">>]}|Opts0];
+		_ -> Opts0
+	end,
+	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false}|Opts]),
+	{ok, {_, Port}} = ssl:sockname(ListenSocket),
+	Parent ! {self(), Port},
+	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+	ok = ssl:ssl_accept(ClientSocket, 5000),
+	case Protocol of
+		http2 ->
+			{ok, <<"h2">>} = ssl:negotiated_protocol(ClientSocket),
+			http2_handshake(ClientSocket, ssl);
+		_ ->
+			ok
+	end,
+	Fun(Parent, ClientSocket, ssl).
+
+http2_handshake(Socket, Transport) ->
+	%% Send a valid preface.
+	ok = Transport:send(Socket, cow_http2:settings(#{})),
+	%% Receive the fixed sequence from the preface.
+	Preface = <<"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n">>,
+	{ok, Preface} = Transport:recv(Socket, byte_size(Preface), 5000),
+	%% Receive the SETTINGS from the preface.
+	{ok, <<Len:24>>} = Transport:recv(Socket, 3, 5000),
+	{ok, <<4:8, 0:40, _:Len/binary>>} = Transport:recv(Socket, 6 + Len, 5000),
+	%% Send the SETTINGS ack.
+	ok = Transport:send(Socket, cow_http2:settings_ack()),
+	%% Receive the SETTINGS ack.
+	{ok, <<0:24, 4:8, 1:8, 0:32>>} = Transport:recv(Socket, 9, 5000),
+	ok.
+
+loop_origin(Parent, ClientSocket, ClientTransport) ->
+	case ClientTransport:recv(ClientSocket, 0, 5000) of
+		{ok, Data} ->
+			Parent ! {self(), Data},
+			loop_origin(Parent, ClientSocket, ClientTransport);
+		{error, closed} ->
+			ok
+	end.
+
+%% Common helpers.
+
+receive_from(Pid) ->
+	receive_from(Pid, 5000).
+
+receive_from(Pid, Timeout) ->
+	receive
+		{Pid, Msg} ->
+			Msg
+	after Timeout ->
+		error(timeout)
+	end.

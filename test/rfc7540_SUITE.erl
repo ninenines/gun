@@ -16,75 +16,12 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{ssl, ssl_accept, 2}]}).
--endif.
-
 -import(ct_helper, [doc/1]).
+-import(gun_test, [init_origin/3]).
+-import(gun_test, [receive_from/1]).
 
 all() ->
 	ct_helper:all(?MODULE).
-
-%% Server helpers.
-
-do_origin_start(Transport, Fun) ->
-	Self = self(),
-	Pid = spawn_link(fun() ->
-		case Transport of
-			tcp ->
-				do_origin_init_tcp(Self, Fun);
-			tls ->
-				do_origin_init_tls_h2(Self, Fun)
-		end
-	end),
-	Port = do_receive(Pid),
-	{ok, Pid, Port}.
-
-do_origin_init_tcp(Parent, Fun) ->
-	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
-	{ok, {_, Port}} = inet:sockname(ListenSocket),
-	Parent ! {self(), Port},
-	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
-	do_handshake(ClientSocket, gen_tcp),
-	Fun(Parent, ClientSocket, gen_tcp).
-
-do_origin_init_tls_h2(Parent, Fun) ->
-	Opts = ct_helper:get_certs_from_ets(),
-	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false},
-		{alpn_preferred_protocols, [<<"h2">>]}|Opts]),
-	{ok, {_, Port}} = ssl:sockname(ListenSocket),
-	Parent ! {self(), Port},
-	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
-	ok = ssl:ssl_accept(ClientSocket, 5000),
-	{ok, <<"h2">>} = ssl:negotiated_protocol(ClientSocket),
-	do_handshake(ClientSocket, ssl),
-	Fun(Parent, ClientSocket, ssl).
-
-do_handshake(Socket, Transport) ->
-	%% Send a valid preface.
-	ok = Transport:send(Socket, cow_http2:settings(#{})),
-	%% Receive the fixed sequence from the preface.
-	Preface = <<"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n">>,
-	{ok, Preface} = Transport:recv(Socket, byte_size(Preface), 5000),
-	%% Receive the SETTINGS from the preface.
-	{ok, <<Len:24>>} = Transport:recv(Socket, 3, 1000),
-	{ok, <<4:8, 0:40, _:Len/binary>>} = Transport:recv(Socket, 6 + Len, 1000),
-	%% Send the SETTINGS ack.
-	ok = Transport:send(Socket, cow_http2:settings_ack()),
-	%% Receive the SETTINGS ack.
-	{ok, <<0:24, 4:8, 1:8, 0:32>>} = Transport:recv(Socket, 9, 1000),
-	ok.
-
-do_receive(Pid) ->
-	do_receive(Pid, 1000).
-
-do_receive(Pid, Timeout) ->
-	receive
-		{Pid, Msg} ->
-			Msg
-	after Timeout ->
-		error(timeout)
-	end.
 
 %% Tests.
 
@@ -109,7 +46,7 @@ authority_other_port_https(_) ->
 	do_authority_port(tls, 80, <<":80">>).
 
 do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
-	{ok, OriginPid, OriginPort} = do_origin_start(Transport0, fun(Parent, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(Transport0, http2, fun(Parent, Socket, Transport) ->
 		%% Receive the HEADERS frame and send the headers decoded.
 		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
@@ -128,7 +65,7 @@ do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
 	%% Confirm the default port is not sent in the request.
 	timer:sleep(100), %% Give enough time for the handshake to fully complete.
 	_ = gun:get(ConnPid, "/"),
-	ReqHeaders = do_receive(OriginPid),
+	ReqHeaders = receive_from(OriginPid),
 	{_, <<"localhost", Rest/bits>>} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
 	AuthorityHeaderPort = Rest,
 	gun:close(ConnPid).
@@ -136,7 +73,7 @@ do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "
 		"that stream dependency information is attached. (RFC7540 6.2)"),
-	{ok, _, Port} = do_origin_start(tcp, fun(_, Socket, Transport) ->
+	{ok, _, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
 		%% Receive a HEADERS frame.
 		{ok, <<_:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Send a HEADERS frame with PRIORITY back.
