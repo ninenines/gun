@@ -18,7 +18,9 @@
 
 -import(ct_helper, [doc/1]).
 -import(ct_helper, [name/0]).
+-import(gun_test, [init_origin/2]).
 -import(gun_test, [init_origin/3]).
+-import(gun_test, [receive_all_from/2]).
 
 all() ->
 	ct_helper:all(?MODULE).
@@ -107,16 +109,41 @@ detect_owner_gone_ws(_) ->
 	end,
 	cowboy:stop_listener(Name).
 
-shutdown_reason(_) ->
-	doc("The last connection failure must be propagated."),
-	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
-	Ref = monitor(process, Pid),
-	receive
-		{'DOWN', Ref, process, Pid, {shutdown, econnrefused}} ->
-			ok
-	after 200 ->
-		error(timeout)
-	end.
+ignore_empty_data_http(_) ->
+	doc("When gun:data/4 is called with nofin and empty data, it must be ignored."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	Ref = gun:put(Pid, "/", []),
+	gun:data(Pid, Ref, nofin, "hello "),
+	gun:data(Pid, Ref, nofin, ["", <<>>]),
+	gun:data(Pid, Ref, fin, "world!"),
+	Data = receive_all_from(OriginPid, 500),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	Zero = [Z || <<"0">> = Z <- Lines],
+	1 = length(Zero),
+	gun:close(Pid).
+
+ignore_empty_data_http2(_) ->
+	doc("When gun:data/4 is called with nofin and empty data, it must be ignored."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(Pid),
+	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	Ref = gun:put(Pid, "/", []),
+	gun:data(Pid, Ref, nofin, "hello "),
+	gun:data(Pid, Ref, nofin, ["", <<>>]),
+	gun:data(Pid, Ref, fin, "world!"),
+	Data = receive_all_from(OriginPid, 500),
+	<<
+		%% HEADERS frame.
+		Len1:24, 1, _:40, _:Len1/unit:8,
+		%% First DATA frame.
+		6:24, 0, _:7, 0:1, _:32, "hello ",
+		%% Second and final DATA frame.
+		6:24, 0, _:7, 1:1, _:32, "world!"
+	>> = Data,
+	gun:close(Pid).
 
 info(_) ->
 	doc("Get info from the Gun connection."),
@@ -259,6 +286,17 @@ retry_timeout(_) ->
 			ok
 	after 400 ->
 		error(shutdown_too_late)
+	end.
+
+shutdown_reason(_) ->
+	doc("The last connection failure must be propagated."),
+	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
+	Ref = monitor(process, Pid),
+	receive
+		{'DOWN', Ref, process, Pid, {shutdown, econnrefused}} ->
+			ok
+	after 200 ->
+		error(timeout)
 	end.
 
 transform_header_name(_) ->

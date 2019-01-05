@@ -106,3 +106,14 @@ receive_from(Pid, Timeout) ->
 	after Timeout ->
 		error(timeout)
 	end.
+
+receive_all_from(Pid, Timeout) ->
+	receive_all_from(Pid, Timeout, <<>>).
+
+receive_all_from(Pid, Timeout, Acc) ->
+	try
+		More = receive_from(Pid, Timeout),
+		receive_all_from(Pid, Timeout, <<Acc/binary, More/binary>>)
+	catch error:timeout ->
+		Acc
+	end.

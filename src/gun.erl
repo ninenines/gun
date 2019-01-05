@@ -436,7 +436,12 @@ request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
 
 -spec data(pid(), reference(), fin | nofin, iodata()) -> ok.
 data(ServerPid, StreamRef, IsFin, Data) ->
-	gen_statem:cast(ServerPid, {data, self(), StreamRef, IsFin, Data}).
+	case iolist_size(Data) of
+		0 when IsFin =:= nofin ->
+			ok;
+		_ ->
+			gen_statem:cast(ServerPid, {data, self(), StreamRef, IsFin, Data})
+	end.
 
 %% Tunneling.
 
