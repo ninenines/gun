@@ -374,6 +374,7 @@ host_header(Transport, Host0, Port) ->
 	Host = case Host0 of
 		{local, _SocketPath} -> <<>>;
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
+		Atom when is_atom(Atom) -> atom_to_list(Atom);
 		_ -> Host0
 	end,
 	case {Transport:name(), Port} of

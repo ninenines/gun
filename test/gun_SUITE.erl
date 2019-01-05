@@ -20,12 +20,24 @@
 -import(ct_helper, [name/0]).
 -import(gun_test, [init_origin/2]).
 -import(gun_test, [init_origin/3]).
+-import(gun_test, [receive_from/1]).
 -import(gun_test, [receive_all_from/2]).
 
 all() ->
 	ct_helper:all(?MODULE).
 
 %% Tests.
+
+atom_hostname(_) ->
+	doc("Hostnames may be given as atom."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open('localhost', OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:get(Pid, "/"),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: localhost:", _/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	gun:close(Pid).
 
 connect_timeout(_) ->
 	doc("Ensure an integer value for connect_timeout is accepted."),
