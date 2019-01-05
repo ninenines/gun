@@ -18,6 +18,7 @@
 
 -import(ct_helper, [doc/1]).
 -import(ct_helper, [name/0]).
+-import(gun_test, [init_origin/3]).
 
 all() ->
 	ct_helper:all(?MODULE).
@@ -224,6 +225,22 @@ retry_1(_) ->
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
 	after 700 ->
+		error(timeout)
+	end.
+
+retry_immediately(_) ->
+	doc("Ensure Gun retries immediately."),
+	%% We have to make a first successful connection in order to test this.
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, ClientSocket, ClientTransport) ->
+			ClientTransport:close(ClientSocket)
+		end),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{retry => 1, retry_timeout => 500}),
+	Ref = monitor(process, Pid),
+	receive
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
+			ok
+	after 200 ->
 		error(timeout)
 	end.
 

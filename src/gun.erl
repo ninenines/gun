@@ -179,8 +179,7 @@
 	transport :: module(),
 	messages :: {atom(), atom(), atom()},
 	protocol :: module(),
-	protocol_state :: any(),
-	last_error :: any()
+	protocol_state :: any()
 }).
 
 %% Connection.
@@ -703,9 +702,9 @@ not_connected(_, {retries, Retries},
 				{next_event, internal, {connected, Socket, Protocol}}};
 		{error, Reason} when Retries =:= 0 ->
 			{stop, {shutdown, Reason}};
-		{error, Reason} ->
+		{error, _Reason} ->
 			Timeout = maps:get(retry_timeout, Opts, 5000),
-			{keep_state, State#state{last_error=Reason},
+			{keep_state, State,
 				{state_timeout, Timeout, {retries, Retries - 1}}}
 	end;
 not_connected(Type, Event, State) ->
@@ -912,10 +911,15 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 	{KilledStreams, UnprocessedStreams} = Protocol:down(ProtoState),
 	Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams, UnprocessedStreams},
 	Retry = maps:get(retry, Opts, 5),
-	{next_state, not_connected,
-		keepalive_cancel(State#state{socket=undefined,
-			protocol=undefined, protocol_state=undefined, last_error=Reason}),
-		{next_event, internal, {retries, Retry}}}.
+	case Retry of
+		0 ->
+			{stop, {shutdown, Reason}};
+		_ ->
+			{next_state, not_connected,
+				keepalive_cancel(State#state{socket=undefined,
+					protocol=undefined, protocol_state=undefined}),
+				{next_event, internal, {retries, Retry - 1}}}
+	end.
 
 disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
 	receive
