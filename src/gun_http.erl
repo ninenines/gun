@@ -522,22 +522,20 @@ response_io_from_headers(<<"HEAD">>, _, _, _) ->
 response_io_from_headers(_, _, Status, _) when (Status =:= 204) or (Status =:= 304) ->
 	head;
 response_io_from_headers(_, Version, _Status, Headers) ->
-	case lists:keyfind(<<"content-length">>, 1, Headers) of
-		{_, <<"0">>} ->
-			head;
-		{_, Length} ->
-			{body, cow_http_hd:parse_content_length(Length)};
-		_ when Version =:= 'HTTP/1.0' ->
-			body_close;
+	case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
+		{_, TE} when Version =:= 'HTTP/1.1' ->
+			case cow_http_hd:parse_transfer_encoding(TE) of
+				[<<"chunked">>] -> body_chunked;
+				[<<"identity">>] -> body_close
+			end;
 		_ ->
-			case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
-				false ->
-					body_close;
-				{_, TE} ->
-					case cow_http_hd:parse_transfer_encoding(TE) of
-						[<<"chunked">>] -> body_chunked;
-						[<<"identity">>] -> body_close
-					end
+			case lists:keyfind(<<"content-length">>, 1, Headers) of
+				{_, <<"0">>} ->
+					head;
+				{_, Length} ->
+					{body, cow_http_hd:parse_content_length(Length)};
+				_ ->
+					body_close
 			end
 	end.
 

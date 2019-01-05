@@ -18,6 +18,7 @@
 
 -import(ct_helper, [doc/1]).
 -import(gun_test, [init_origin/2]).
+-import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
 all() ->
@@ -55,4 +56,29 @@ do_host_port(Transport, DefaultPort, HostHeaderPort) ->
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: localhost", Rest/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	HostHeaderPort = Rest,
+	gun:close(ConnPid).
+
+transfer_encoding_overrides_content_length(_) ->
+	doc("When both transfer-encoding and content-length are provided, "
+		"content-length must be ignored. (RFC7230 3.3.3)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: 12\r\n"
+				"transfer-encoding: chunked\r\n"
+				"\r\n"
+				"6\r\n"
+				"hello \r\n"
+				"6\r\n"
+				"world!\r\n"
+				"0\r\n\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"hello world!">>} = gun:await_body(ConnPid, StreamRef),
 	gun:close(ConnPid).
