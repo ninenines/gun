@@ -8,10 +8,12 @@ gun:open_unix - Open a connection to the given Unix domain socket
 
 [source,erlang]
 ----
-open_unix(SocketPath, Opts) -> {ok, pid()} | {error, any()}
+open_unix(SocketPath, Opts) -> {ok, pid()} | {error, Reason}
 
 SocketPath :: string()
 Opts       :: gun:opts()
+Reason     :: {options, OptName} | {options, {http | http2, OptName}} | any()
+OptName    :: atom()
 ----
 
 Open a connection to the given Unix domain socket.

@@ -63,7 +63,7 @@ do_check_options([]) ->
 do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
 	case gun_content_handler:check_option(Handlers) of
 		ok -> do_check_options(Opts);
-		error -> {error, {options, {http, Opt}}}
+		error -> {error, {options, {http2, Opt}}}
 	end;
 do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);

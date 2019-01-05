@@ -9,11 +9,13 @@ gun:open - Open a connection to the given host and port
 [source,erlang]
 ----
 open(Host, Port)       -> open(Host, Port, #{})
-open(Host, Port, Opts) -> {ok, pid()} | {error, any()}
+open(Host, Port, Opts) -> {ok, pid()} | {error, Reason}
 
-Host :: inet:hostname() | inet:ip_address()
-Port :: inet:port_number()
-Opts :: gun:opts()
+Host    :: inet:hostname() | inet:ip_address()
+Port    :: inet:port_number()
+Opts    :: gun:opts()
+Reason  :: {options, OptName} | {options, {http | http2, OptName}} | any()
+OptName :: atom()
 ----
 
 Open a connection to the given host and port.
