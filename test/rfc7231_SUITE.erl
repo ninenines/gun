@@ -158,7 +158,7 @@ do_connect_h2(Transport) ->
 	}),
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	timer:sleep(1000), %% Give enough time for the ssl/h2 handshakes to fully complete.
 	_ = gun:get(ConnPid, "/proxied"),
 	<<_:24, 1:8, _/bits>> = receive_from(OriginPid),
 	#{
