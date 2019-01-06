@@ -68,7 +68,8 @@ detect_owner_gone(_) ->
 	spawn(fun() ->
 		{ok, ConnPid} = gun:open("localhost", Port),
 		Self ! {conn, ConnPid},
-		gun:await_up(ConnPid)
+		gun:await_up(ConnPid),
+		timer:sleep(100)
 	end),
 	{ok, _} = gen_tcp:accept(ListenSocket, 5000),
 	Pid = receive
