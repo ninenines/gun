@@ -19,7 +19,7 @@ connect(ConnPid, Destination, Headers, ReqOpts)
 
 ConnPid     :: pid()
 Destination :: gun:connect_destination()
-Headers     :: [{binary(), iodata()}]
+Headers     :: gun:req_headers()
 ReqOpts     :: gun:req_opts()
 StreamRef   :: reference()
 ----

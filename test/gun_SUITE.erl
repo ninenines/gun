@@ -28,6 +28,19 @@ all() ->
 
 %% Tests.
 
+atom_header_name(_) ->
+	doc("Header names may be given as atom."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:get(Pid, "/", [
+		{'User-Agent', "Gun/atom-headers"}
+	]),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"user-agent: Gun/atom-headers">>] = [L || <<"user-agent: ", _/bits>> = L <- Lines],
+	gun:close(Pid).
+
 atom_hostname(_) ->
 	doc("Hostnames may be given as atom."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
@@ -206,6 +219,32 @@ killed_streams_http(_) ->
 	after 1000 ->
 		error(timeout)
 	end.
+
+list_header_name(_) ->
+	doc("Header names may be given as list."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:get(Pid, "/", [
+		{"User-Agent", "Gun/list-headers"}
+	]),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"user-agent: Gun/list-headers">>] = [L || <<"user-agent: ", _/bits>> = L <- Lines],
+	gun:close(Pid).
+
+map_headers(_) ->
+	doc("Header names may be given as a map."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:get(Pid, "/", #{
+		<<"USER-agent">> => "Gun/map-headers"
+	}),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"user-agent: Gun/map-headers">>] = [L || <<"user-agent: ", _/bits>> = L <- Lines],
+	gun:close(Pid).
 
 reply_to(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
@@ -396,3 +435,16 @@ do_unix_socket_connect() ->
 	after 250 ->
 		error(timeout)
 	end.
+
+uppercase_header_name(_) ->
+	doc("Header names may be given with uppercase characters."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:get(Pid, "/", [
+		{<<"USER-agent">>, "Gun/uppercase-headers"}
+	]),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"user-agent: Gun/uppercase-headers">>] = [L || <<"user-agent: ", _/bits>> = L <- Lines],
+	gun:close(Pid).

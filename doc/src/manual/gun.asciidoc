@@ -267,6 +267,16 @@ ws_opts (#{})::
 
 Options specific to the Websocket protocol.
 
+=== req_headers()
+
+[source,erlang]
+----
+req_headers() :: [{binary() | string() | atom(),   iodata()}]
+               | #{binary() | string() | atom() => iodata()}
+----
+
+Request headers.
+
 === req_opts()
 
 [source,erlang]
@@ -315,6 +325,10 @@ undocumented and must be set to `gun_ws_h`.
 
 == Changelog
 
+* *2.0*: Introduce the type `req_headers()` and extend the
+         types accepted for header names for greater
+         interoperability. Header names are automatically
+         lowercased as well.
 * *2.0*: Function `gun:headers/4,5` introduced.
 * *2.0*: The `keepalive` option is now set to `infinity` by
          default for the HTTP/1.1 protocol, disabling it.

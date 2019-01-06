@@ -94,7 +94,9 @@
 -export([not_connected/3]).
 -export([connected/3]).
 
--type headers() :: [{binary(), iodata()}].
+-type req_headers() :: [{binary() | string() | atom(), iodata()}]
+	| #{binary() | string() | atom() => iodata()}.
+-export_type([req_headers/0]).
 
 -type ws_close_code() :: 1000..4999.
 -type ws_frame() :: close | ping | pong
@@ -320,11 +322,11 @@ shutdown(ServerPid) ->
 delete(ServerPid, Path) ->
 	request(ServerPid, <<"DELETE">>, Path, [], <<>>).
 
--spec delete(pid(), iodata(), headers()) -> reference().
+-spec delete(pid(), iodata(), req_headers()) -> reference().
 delete(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"DELETE">>, Path, Headers, <<>>).
 
--spec delete(pid(), iodata(), headers(), req_opts()) -> reference().
+-spec delete(pid(), iodata(), req_headers(), req_opts()) -> reference().
 delete(ServerPid, Path, Headers, ReqOpts) ->
 	request(ServerPid, <<"DELETE">>, Path, Headers, <<>>, ReqOpts).
 
@@ -332,11 +334,11 @@ delete(ServerPid, Path, Headers, ReqOpts) ->
 get(ServerPid, Path) ->
 	request(ServerPid, <<"GET">>, Path, [], <<>>).
 
--spec get(pid(), iodata(), headers()) -> reference().
+-spec get(pid(), iodata(), req_headers()) -> reference().
 get(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"GET">>, Path, Headers, <<>>).
 
--spec get(pid(), iodata(), headers(), req_opts()) -> reference().
+-spec get(pid(), iodata(), req_headers(), req_opts()) -> reference().
 get(ServerPid, Path, Headers, ReqOpts) ->
 	request(ServerPid, <<"GET">>, Path, Headers, <<>>, ReqOpts).
 
@@ -344,11 +346,11 @@ get(ServerPid, Path, Headers, ReqOpts) ->
 head(ServerPid, Path) ->
 	request(ServerPid, <<"HEAD">>, Path, [], <<>>).
 
--spec head(pid(), iodata(), headers()) -> reference().
+-spec head(pid(), iodata(), req_headers()) -> reference().
 head(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"HEAD">>, Path, Headers, <<>>).
 
--spec head(pid(), iodata(), headers(), req_opts()) -> reference().
+-spec head(pid(), iodata(), req_headers(), req_opts()) -> reference().
 head(ServerPid, Path, Headers, ReqOpts) ->
 	request(ServerPid, <<"HEAD">>, Path, Headers, <<>>, ReqOpts).
 
@@ -356,81 +358,92 @@ head(ServerPid, Path, Headers, ReqOpts) ->
 options(ServerPid, Path) ->
 	request(ServerPid, <<"OPTIONS">>, Path, [], <<>>).
 
--spec options(pid(), iodata(), headers()) -> reference().
+-spec options(pid(), iodata(), req_headers()) -> reference().
 options(ServerPid, Path, Headers) ->
 	request(ServerPid, <<"OPTIONS">>, Path, Headers, <<>>).
 
--spec options(pid(), iodata(), headers(), req_opts()) -> reference().
+-spec options(pid(), iodata(), req_headers(), req_opts()) -> reference().
 options(ServerPid, Path, Headers, ReqOpts) ->
 	request(ServerPid, <<"OPTIONS">>, Path, Headers, <<>>, ReqOpts).
 
--spec patch(pid(), iodata(), headers()) -> reference().
+-spec patch(pid(), iodata(), req_headers()) -> reference().
 patch(ServerPid, Path, Headers) ->
 	headers(ServerPid, <<"PATCH">>, Path, Headers).
 
--spec patch(pid(), iodata(), headers(), iodata() | req_opts()) -> reference().
+-spec patch(pid(), iodata(), req_headers(), iodata() | req_opts()) -> reference().
 patch(ServerPid, Path, Headers, ReqOpts) when is_map(ReqOpts) ->
 	headers(ServerPid, <<"PATCH">>, Path, Headers, ReqOpts);
 patch(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PATCH">>, Path, Headers, Body).
 
--spec patch(pid(), iodata(), headers(), iodata(), req_opts()) -> reference().
+-spec patch(pid(), iodata(), req_headers(), iodata(), req_opts()) -> reference().
 patch(ServerPid, Path, Headers, Body, ReqOpts) ->
 	request(ServerPid, <<"PATCH">>, Path, Headers, Body, ReqOpts).
 
--spec post(pid(), iodata(), headers()) -> reference().
+-spec post(pid(), iodata(), req_headers()) -> reference().
 post(ServerPid, Path, Headers) ->
 	headers(ServerPid, <<"POST">>, Path, Headers).
 
--spec post(pid(), iodata(), headers(), iodata() | req_opts()) -> reference().
+-spec post(pid(), iodata(), req_headers(), iodata() | req_opts()) -> reference().
 post(ServerPid, Path, Headers, ReqOpts) when is_map(ReqOpts) ->
 	headers(ServerPid, <<"POST">>, Path, Headers, ReqOpts);
 post(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"POST">>, Path, Headers, Body).
 
--spec post(pid(), iodata(), headers(), iodata(), req_opts()) -> reference().
+-spec post(pid(), iodata(), req_headers(), iodata(), req_opts()) -> reference().
 post(ServerPid, Path, Headers, Body, ReqOpts) ->
 	request(ServerPid, <<"POST">>, Path, Headers, Body, ReqOpts).
 
--spec put(pid(), iodata(), headers()) -> reference().
+-spec put(pid(), iodata(), req_headers()) -> reference().
 put(ServerPid, Path, Headers) ->
 	headers(ServerPid, <<"PUT">>, Path, Headers).
 
--spec put(pid(), iodata(), headers(), iodata() | req_opts()) -> reference().
+-spec put(pid(), iodata(), req_headers(), iodata() | req_opts()) -> reference().
 put(ServerPid, Path, Headers, ReqOpts) when is_map(ReqOpts) ->
 	headers(ServerPid, <<"PUT">>, Path, Headers, ReqOpts);
 put(ServerPid, Path, Headers, Body) ->
 	request(ServerPid, <<"PUT">>, Path, Headers, Body).
 
--spec put(pid(), iodata(), headers(), iodata(), req_opts()) -> reference().
+-spec put(pid(), iodata(), req_headers(), iodata(), req_opts()) -> reference().
 put(ServerPid, Path, Headers, Body, ReqOpts) ->
 	request(ServerPid, <<"PUT">>, Path, Headers, Body, ReqOpts).
 
 %% Generic requests interface.
 
--spec headers(pid(), iodata(), iodata(), headers()) -> reference().
+-spec headers(pid(), iodata(), iodata(), req_headers()) -> reference().
 headers(ServerPid, Method, Path, Headers) ->
 	headers(ServerPid, Method, Path, Headers, #{}).
 
-%% @todo Accept header names as maps.
--spec headers(pid(), iodata(), iodata(), headers(), req_opts()) -> reference().
+-spec headers(pid(), iodata(), iodata(), req_headers(), req_opts()) -> reference().
 headers(ServerPid, Method, Path, Headers, ReqOpts) ->
 	StreamRef = make_ref(),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
-	gen_statem:cast(ServerPid, {headers, ReplyTo, StreamRef, Method, Path, Headers}),
+	gen_statem:cast(ServerPid, {headers, ReplyTo, StreamRef,
+		Method, Path, normalize_headers(Headers)}),
 	StreamRef.
 
--spec request(pid(), iodata(), iodata(), headers(), iodata()) -> reference().
+-spec request(pid(), iodata(), iodata(), req_headers(), iodata()) -> reference().
 request(ServerPid, Method, Path, Headers, Body) ->
 	request(ServerPid, Method, Path, Headers, Body, #{}).
 
-%% @todo Accept header names as maps.
--spec request(pid(), iodata(), iodata(), headers(), iodata(), req_opts()) -> reference().
+-spec request(pid(), iodata(), iodata(), req_headers(), iodata(), req_opts()) -> reference().
 request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
 	StreamRef = make_ref(),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
-	gen_statem:cast(ServerPid, {request, ReplyTo, StreamRef, Method, Path, Headers, Body}),
+	gen_statem:cast(ServerPid, {request, ReplyTo, StreamRef,
+		Method, Path, normalize_headers(Headers), Body}),
 	StreamRef.
+
+normalize_headers([]) ->
+	[];
+normalize_headers([{Name, Value}|Tail]) when is_binary(Name) ->
+	[{string:lowercase(Name), Value}|normalize_headers(Tail)];
+normalize_headers([{Name, Value}|Tail]) when is_list(Name) ->
+	[{string:lowercase(unicode:characters_to_binary(Name)), Value}|normalize_headers(Tail)];
+normalize_headers([{Name, Value}|Tail]) when is_atom(Name) ->
+	[{string:lowercase(atom_to_binary(Name, latin1)), Value}|normalize_headers(Tail)];
+normalize_headers(Headers) when is_map(Headers) ->
+	normalize_headers(maps:to_list(Headers)).
 
 %% Streaming data.
 
@@ -449,11 +462,11 @@ data(ServerPid, StreamRef, IsFin, Data) ->
 connect(ServerPid, Destination) ->
 	connect(ServerPid, Destination, [], #{}).
 
--spec connect(pid(), connect_destination(), headers()) -> reference().
+-spec connect(pid(), connect_destination(), req_headers()) -> reference().
 connect(ServerPid, Destination, Headers) ->
 	connect(ServerPid, Destination, Headers, #{}).
 
--spec connect(pid(), connect_destination(), headers(), req_opts()) -> reference().
+-spec connect(pid(), connect_destination(), req_headers(), req_opts()) -> reference().
 connect(ServerPid, Destination, Headers, ReqOpts) ->
 	StreamRef = make_ref(),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
@@ -639,13 +652,13 @@ cancel(ServerPid, StreamRef) ->
 ws_upgrade(ServerPid, Path) ->
 	ws_upgrade(ServerPid, Path, []).
 
--spec ws_upgrade(pid(), iodata(), headers()) -> reference().
+-spec ws_upgrade(pid(), iodata(), req_headers()) -> reference().
 ws_upgrade(ServerPid, Path, Headers) ->
 	StreamRef = make_ref(),
 	gen_statem:cast(ServerPid, {ws_upgrade, self(), StreamRef, Path, Headers}),
 	StreamRef.
 
--spec ws_upgrade(pid(), iodata(), headers(), ws_opts()) -> reference().
+-spec ws_upgrade(pid(), iodata(), req_headers(), ws_opts()) -> reference().
 ws_upgrade(ServerPid, Path, Headers, Opts) ->
 	ok = gun_ws:check_options(Opts),
 	StreamRef = make_ref(),

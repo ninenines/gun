@@ -46,7 +46,4 @@ In the HTTP protocol, the method name is case sensitive. All standard
 method names are uppercase.
 
 Header names are case insensitive. Gun converts all the header names
-to lowercase, and expects your application to provide lowercase header
-names.
-
-The same applies to any other case insensitive value.
+to lowercase, including request headers provided by your application.

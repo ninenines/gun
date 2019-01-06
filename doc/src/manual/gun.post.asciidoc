@@ -22,7 +22,7 @@ post(ConnPid, Path, Headers, Body, ReqOpts)
 
 ConnPid   :: pid()
 Path      :: iodata()
-Headers   :: [{binary(), iodata()}]
+Headers   :: gun:req_headers()
 Body      :: iodata()
 ReqOpts   :: gun:req_opts()
 StreamRef :: reference()

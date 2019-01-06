@@ -19,7 +19,7 @@ ws_upgrade(ConnPid, Path, Headers, WsOpts)
 
 ConnPid   :: pid()
 Path      :: iodata()
-Headers   :: [{binary(), iodata()}]
+Headers   :: gun:req_headers()
 WsOpts    :: gun:ws_opts
 StreamRef :: reference()
 ----

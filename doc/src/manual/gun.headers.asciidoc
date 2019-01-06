@@ -17,7 +17,7 @@ headers(ConnPid, Method, Path, Headers, ReqOpts)
 ConnPid   :: pid()
 Method    :: binary()
 Path      :: iodata()
-Headers   :: [{binary(), iodata()}]
+Headers   :: gun:req_headers()
 ReqOpts   :: gun:req_opts()
 StreamRef :: reference()
 ----
