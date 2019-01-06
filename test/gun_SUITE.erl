@@ -180,6 +180,32 @@ keepalive_infinity(_) ->
 		error(timeout)
 	end.
 
+killed_streams_http(_) ->
+	doc("Ensure completed responses with a connection: close are not considered killed streams."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun (_, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"connection: close\r\n"
+				"content-length: 12\r\n"
+				"\r\n"
+				"hello world!"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"hello world!">>} = gun:await_body(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http, normal, KilledStreams, _} ->
+			[] = KilledStreams,
+			gun:close(ConnPid)
+	after 1000 ->
+		error(timeout)
+	end.
+
 reply_to(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
 	do_reply_to(http),

@@ -142,7 +142,7 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 				{no_trailers, keepalive} ->
 					handle(Rest, end_stream(State1#http_state{buffer= <<>>}));
 				{no_trailers, close} ->
-					close
+					[{state, end_stream(State1)}, close]
 			end;
 		{done, Data2, HasTrailers, Rest} ->
 			IsFin = case HasTrailers of
@@ -156,7 +156,7 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 				{no_trailers, keepalive} ->
 					handle(Rest, end_stream(State1#http_state{buffer= <<>>}));
 				{no_trailers, close} ->
-					close
+					[{state, end_stream(State1)}, close]
 			end
 	end;
 handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
@@ -172,7 +172,7 @@ handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
 				keepalive ->
 					handle(Rest, end_stream(State#http_state{buffer= <<>>}));
 				close ->
-					close
+					[{state, end_stream(State)}, close]
 			end
 	end;
 %% We know the length of the rest of the body.
@@ -189,7 +189,7 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 			State1 = send_data_if_alive(Data, State, fin),
 			case Conn of
 				keepalive -> {state, end_stream(State1)};
-				close -> close
+				close -> [{state, end_stream(State1)}, close]
 			end;
 		%% Stream finished, rest.
 		true ->
@@ -197,7 +197,7 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 			State1 = send_data_if_alive(Body, State, fin),
 			case Conn of
 				keepalive -> handle(Rest, end_stream(State1));
-				close -> close
+				close -> [{state, end_stream(State1)}, close]
 			end
 	end.
 
