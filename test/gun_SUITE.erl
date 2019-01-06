@@ -165,7 +165,7 @@ info(_) ->
 	{ok, Pid} = gun:open("localhost", Port),
 	{ok, _} = gen_tcp:accept(ListenSocket, 5000),
 	#{sock_ip := _, sock_port := _} = gun:info(Pid),
-	ok.
+	gun:close(Pid).
 
 keepalive_infinity(_) ->
 	doc("Ensure infinity for keepalive is accepted by all protocols."),
@@ -267,7 +267,7 @@ do_reply_to(Protocol) ->
 	ReplyTo ! Ref,
 	receive
 		{response, _, _, _} ->
-			ok
+			gun:close(Pid)
 	after 1000 ->
 		error(timeout)
 	end.
@@ -357,7 +357,7 @@ transform_header_name(_) ->
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	HostLines = [L || <<"HOST: ", _/bits>> = L <- Lines],
 	1 = length(HostLines),
-	ok.
+	gun:close(Pid).
 
 unix_socket_connect(_) ->
 	case os:type() of
@@ -392,7 +392,7 @@ do_unix_socket_connect() ->
 	_ = gun:get(Pid, "/", [{<<"host">>, <<"localhost">>}]),
 	receive
 		{recv, _} ->
-			ok
+			gun:close(Pid)
 	after 250 ->
 		error(timeout)
 	end.
