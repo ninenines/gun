@@ -1,0 +1,63 @@
+= gun:stream_info(3)
+
+== Name
+
+gun:stream_info - Obtain information about a stream
+
+== Description
+
+[source,erlang]
+----
+stream_info(ConnPid, StreamRef) -> {ok, undefined | Info} | {error, not_connected}
+
+ConnPid :: pid()
+StreamRef :: reference()
+Info :: #{
+    ref => reference(),
+    reply_to => pid(),
+    state => running | stopping
+}
+----
+
+Obtain information about a stream.
+
+== Arguments
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+StreamRef::
+
+Identifier of the stream for the original request.
+
+== Return value
+
+A map is returned containing various informations about
+the stream.
+
+== Changelog
+
+* *2.0*: Function introduced.
+
+== Examples
+
+.Obtain information about a stream
+[source,erlang]
+----
+Info = gun:stream_info(ConnPid, StreamRef).
+----
+
+== See also
+
+link:man:gun(3)[gun(3)],
+link:man:gun:get(3)[gun:get(3)],
+link:man:gun:head(3)[gun:head(3)],
+link:man:gun:options(3)[gun:options(3)],
+link:man:gun:patch(3)[gun:patch(3)],
+link:man:gun:post(3)[gun:post(3)],
+link:man:gun:put(3)[gun:put(3)],
+link:man:gun:delete(3)[gun:delete(3)],
+link:man:gun:headers(3)[gun:headers(3)],
+link:man:gun:request(3)[gun:request(3)],
+link:man:gun:cancel(3)[gun:cancel(3)]

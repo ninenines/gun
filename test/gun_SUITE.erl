@@ -52,6 +52,66 @@ atom_hostname(_) ->
 	[<<"host: localhost:", _/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	gun:close(Pid).
 
+stream_info_http(_) ->
+	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/1.1."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, ClientSocket, ClientTransport) ->
+			%% Give some time to detect the cancel.
+			timer:sleep(100),
+			%% Then terminate the stream.
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: 0\r\n"
+				"\r\n"
+			),
+			timer:sleep(200)
+		end),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	{ok, undefined} = gun:stream_info(Pid, make_ref()),
+	StreamRef = gun:get(Pid, "/"),
+	Self = self(),
+	{ok, #{
+		ref := StreamRef,
+		reply_to := Self,
+		state := running
+	}} = gun:stream_info(Pid, StreamRef),
+	gun:cancel(Pid, StreamRef),
+	{ok, #{
+		ref := StreamRef,
+		reply_to := Self,
+		state := stopping
+	}} = gun:stream_info(Pid, StreamRef),
+	%% Wait a little for the stream to terminate.
+	timer:sleep(200),
+	{ok, undefined} = gun:stream_info(Pid, StreamRef),
+	%% Wait a little more for the connection to terminate.
+	timer:sleep(200),
+	{error, not_connected} = gun:stream_info(Pid, StreamRef),
+	gun:close(Pid).
+
+stream_info_http2(_) ->
+	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/2."),
+	{ok, _, OriginPort} = init_origin(tcp, http2,
+		fun(_, _, _) -> timer:sleep(100) end),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(Pid),
+	{ok, undefined} = gun:stream_info(Pid, make_ref()),
+	StreamRef = gun:get(Pid, "/"),
+	Self = self(),
+	{ok, #{
+		ref := StreamRef,
+		reply_to := Self,
+		state := running
+	}} = gun:stream_info(Pid, StreamRef),
+	gun:cancel(Pid, StreamRef),
+	%% Wait a little for the connection to terminate.
+	timer:sleep(200),
+	{error, not_connected} = gun:stream_info(Pid, StreamRef),
+	gun:close(Pid).
+
 connect_timeout(_) ->
 	doc("Ensure an integer value for connect_timeout is accepted."),
 	{ok, Pid} = gun:open("localhost", 12345, #{connect_timeout => 1000, retry => 0}),

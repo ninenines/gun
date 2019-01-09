@@ -25,6 +25,7 @@
 -export([data/5]).
 -export([connect/5]).
 -export([cancel/3]).
+-export([stream_info/2]).
 -export([down/1]).
 -export([ws_upgrade/7]).
 
@@ -471,6 +472,21 @@ cancel(State, StreamRef, ReplyTo) ->
 			cancel_stream(State, StreamRef);
 		false ->
 			error_stream_not_found(State, StreamRef, ReplyTo)
+	end.
+
+stream_info(#http_state{streams=Streams}, StreamRef) ->
+	case lists:keyfind(StreamRef, #stream.ref, Streams) of
+		#stream{reply_to=ReplyTo, is_alive=IsAlive} ->
+			{ok, #{
+				ref => StreamRef,
+				reply_to => ReplyTo,
+				state => case IsAlive of
+					true -> running;
+					false -> stopping
+				end
+			}};
+		false ->
+			{ok, undefined}
 	end.
 
 %% HTTP does not provide any way to figure out what streams are unprocessed.

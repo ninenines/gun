@@ -47,6 +47,7 @@ Messages:
 Streams:
 
 * link:man:gun:cancel(3)[gun:cancel(3)] - Cancel the given stream
+* link:man:gun:stream_info(3)[gun:stream_info(3)] - Obtain information about a stream
 
 Websocket:
 

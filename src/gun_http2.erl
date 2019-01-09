@@ -24,6 +24,7 @@
 -export([request/9]).
 -export([data/5]).
 -export([cancel/3]).
+-export([stream_info/2]).
 -export([down/1]).
 
 -record(stream, {
@@ -369,6 +370,18 @@ cancel(State=#http2_state{socket=Socket, transport=Transport,
 			delete_stream(State#http2_state{http2_machine=HTTP2Machine}, StreamID);
 		false ->
 			error_stream_not_found(State, StreamRef, ReplyTo)
+	end.
+
+stream_info(State, StreamRef) ->
+	case get_stream_by_ref(State, StreamRef) of
+		#stream{reply_to=ReplyTo} ->
+			{ok, #{
+				ref => StreamRef,
+				reply_to => ReplyTo,
+				state => running
+			}};
+		false ->
+			{ok, undefined}
 	end.
 
 %% @todo Add unprocessed streams when GOAWAY handling is done.

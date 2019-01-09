@@ -78,8 +78,9 @@
 %% Flushing gun messages.
 -export([flush/1]).
 
-%% Cancelling a stream.
+%% Streams.
 -export([cancel/2]).
+-export([stream_info/2]).
 
 %% Websocket.
 -export([ws_upgrade/2]).
@@ -643,6 +644,10 @@ flush_ref(StreamRef) ->
 cancel(ServerPid, StreamRef) ->
 	gen_statem:cast(ServerPid, {cancel, self(), StreamRef}).
 
+-spec stream_info(pid(), reference()) -> {ok, map() | undefined} | {error, not_connected}.
+stream_info(ServerPid, StreamRef) ->
+	gen_statem:call(ServerPid, {stream_info, StreamRef}).
+
 %% @todo Allow upgrading an HTTP/1.1 connection to HTTP/2.
 %% http2_upgrade
 
@@ -725,6 +730,8 @@ not_connected(_, {retries, Retries},
 			{keep_state, State,
 				{state_timeout, Timeout, {retries, Retries - 1}}}
 	end;
+not_connected({call, From}, {stream_info, _}, _) ->
+	{keep_state_and_data, {reply, From, {error, not_connected}}};
 not_connected(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
@@ -843,6 +850,9 @@ connected(cast, {ws_send, ReplyTo, _}, _) ->
 		"Connection needs to be upgraded to Websocket "
 		"before the gun:ws_send/1 function can be used."}},
 	keep_state_and_data;
+connected({call, From}, {stream_info, StreamRef},
+		#state{protocol=Protocol, protocol_state=ProtoState}) ->
+	{keep_state_and_data, {reply, From, Protocol:stream_info(ProtoState, StreamRef)}};
 connected(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
