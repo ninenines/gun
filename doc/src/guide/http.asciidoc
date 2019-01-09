@@ -218,16 +218,17 @@ StreamRef = gun:options(ConnPid, "*").
 
 ==== Requests with an arbitrary method
 
-The `gun:request/4,5,6` function can be used to send requests
-with a configurable method name. It is mostly useful when you
-need a method that Gun does not understand natively.
+The functions `gun:headers/4,5` or `gun:request/5,6` can be
+used to send requests with a configurable method name. It is
+mostly useful when you need a method that Gun does not
+understand natively.
 
 .Example of a TRACE request
 [source,erlang]
 ----
 gun:request(ConnPid, "TRACE", "/", [
     {<<"max-forwards">>, "30"}
-]).
+], <<>>).
 ----
 
 === Processing responses

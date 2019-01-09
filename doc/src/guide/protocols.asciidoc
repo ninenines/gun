@@ -11,9 +11,9 @@ sends a request, the server sends back a response.
 
 Gun provides convenience functions for performing GET, HEAD,
 OPTIONS, POST, PATCH, PUT, and DELETE requests. All these
-functions are aliases of `gun:request/4,5,6` for the respective
-methods. Gun also provides a `gun:data/4` function for streaming
-the request body.
+functions are aliases of `gun:headers/4,5` or `gun:request/5,6`
+for the respective methods. Gun also provides a `gun:data/4`
+function for streaming the request body.
 
 Gun will send a `gun_inform` message for every intermediate
 informational responses received. They will always be sent

@@ -62,6 +62,7 @@ link:man:gun:post(3)[gun:post(3)],
 link:man:gun:put(3)[gun:put(3)],
 link:man:gun:delete(3)[gun:delete(3)],
 link:man:gun:options(3)[gun:options(3)],
+link:man:gun:headers(3)[gun:headers(3)],
 link:man:gun:request(3)[gun:request(3)],
 link:man:gun_response(3)[gun_response(3)],
 link:man:gun_data(3)[gun_data(3)]

@@ -110,5 +110,6 @@ link:man:gun:patch(3)[gun:patch(3)],
 link:man:gun:post(3)[gun:post(3)],
 link:man:gun:put(3)[gun:put(3)],
 link:man:gun:delete(3)[gun:delete(3)],
+link:man:gun:headers(3)[gun:headers(3)],
 link:man:gun:request(3)[gun:request(3)],
 link:man:gun:await_body(3)[gun:await_body(3)]
