@@ -27,11 +27,15 @@ all() ->
 init_per_suite(Config) ->
 	case os:getenv("H2SPECD") of
 		false -> skip;
-		_ ->
-			%% We ensure that SASL is started for this test suite
-			%% to have the crash reports in the CT logs.
-			{ok, Apps} = application:ensure_all_started(sasl),
-			[{sasl_started, Apps =/= []}|Config]
+		H2specd ->
+			case filelib:is_file(H2specd) of
+				false -> skip;
+				true ->
+					%% We ensure that SASL is started for this test suite
+					%% to have the crash reports in the CT logs.
+					{ok, Apps} = application:ensure_all_started(sasl),
+					[{sasl_started, Apps =/= []}|Config]
+			end
 	end.
 
 end_per_suite(Config) ->
