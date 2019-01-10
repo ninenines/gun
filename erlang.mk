@@ -17,7 +17,7 @@
 ERLANG_MK_FILENAME := $(realpath $(lastword $(MAKEFILE_LIST)))
 export ERLANG_MK_FILENAME
 
-ERLANG_MK_VERSION = df50b55
+ERLANG_MK_VERSION = 6ebc73e
 ERLANG_MK_WITHOUT = 
 
 # Make 3.81 and 3.82 are deprecated.
@@ -3023,6 +3023,14 @@ pkg_percept2_fetch = git
 pkg_percept2_repo = https://github.com/huiqing/percept2
 pkg_percept2_commit = master
 
+PACKAGES += pgo
+pkg_pgo_name = pgo
+pkg_pgo_description = Erlang Postgres client and connection pool
+pkg_pgo_homepage = https://github.com/erleans/pgo.git
+pkg_pgo_fetch = git
+pkg_pgo_repo = https://github.com/erleans/pgo.git
+pkg_pgo_commit = master
+
 PACKAGES += pgsql
 pkg_pgsql_name = pgsql
 pkg_pgsql_description = Erlang PostgreSQL driver
@@ -4585,13 +4593,22 @@ define dep_autopatch_rebar.erl
 				false
 		end
 	end,
+	SemVsn = fun
+		("~> " ++ S) ->
+			case length([ok || $$. <- S]) of
+				0 -> S ++ ".0.0";
+				1 -> S ++ ".0";
+				_ -> S
+			end;
+		(S) -> S
+	end,
 	fun() ->
 		File = case lists:keyfind(deps, 1, Conf) of
 			false -> [];
 			{_, Deps} ->
 				[begin case case Dep of
 							N when is_atom(N) -> GetHexVsn(N);
-							{N, S} when is_atom(N), is_list(S) -> {N, {hex, S}};
+							{N, S} when is_atom(N), is_list(S) -> {N, {hex, SemVsn(S)}};
 							{_, S, {pkg, N}} -> {N, {hex, S}};
 							{N, S} when is_tuple(S) -> {N, S};
 							{N, _, S} -> {N, S};
@@ -5261,6 +5278,7 @@ $(PROJECT).d:: $(ERL_FILES) $(call core_find,include/,*.hrl) $(MAKEFILE_LIST)
 	$(makedep_verbose) $(call erlang,$(call makedep.erl,$@))
 endif
 
+ifeq ($(IS_APP)$(IS_DEP),)
 ifneq ($(words $(ERL_FILES) $(CORE_FILES) $(ASN1_FILES) $(MIB_FILES) $(XRL_FILES) $(YRL_FILES)),0)
 # Rebuild everything when the Makefile changes.
 $(ERLANG_MK_TMP)/last-makefile-change: $(MAKEFILE_LIST) | $(ERLANG_MK_TMP)
@@ -5272,6 +5290,7 @@ $(ERLANG_MK_TMP)/last-makefile-change: $(MAKEFILE_LIST) | $(ERLANG_MK_TMP)
 
 $(ERL_FILES) $(CORE_FILES) $(ASN1_FILES) $(MIB_FILES) $(XRL_FILES) $(YRL_FILES):: $(ERLANG_MK_TMP)/last-makefile-change
 ebin/$(PROJECT).app:: $(ERLANG_MK_TMP)/last-makefile-change
+endif
 endif
 
 $(PROJECT).d::
