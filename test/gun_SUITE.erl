@@ -407,7 +407,7 @@ stream_info_http(_) ->
 stream_info_http2(_) ->
 	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/2."),
 	{ok, _, OriginPort} = init_origin(tcp, http2,
-		fun(_, _, _) -> timer:sleep(100) end),
+		fun(_, _, _) -> timer:sleep(200) end),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{
 		protocols => [http2]
 	}),
