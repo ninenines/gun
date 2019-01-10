@@ -26,10 +26,10 @@ all() ->
 
 init_per_suite(Config) ->
 	case os:getenv("H2SPECD") of
-		false -> skip;
+		false -> {skip, "$H2SPECD isn't set."};
 		H2specd ->
 			case filelib:is_file(H2specd) of
-				false -> skip;
+				false -> {skip, "$H2SPECD file not found."};
 				true ->
 					%% We ensure that SASL is started for this test suite
 					%% to have the crash reports in the CT logs.
