@@ -371,14 +371,14 @@ stream_info_http(_) ->
 	{ok, _, OriginPort} = init_origin(tcp, http,
 		fun(_, ClientSocket, ClientTransport) ->
 			%% Give some time to detect the cancel.
-			timer:sleep(100),
+			timer:sleep(200),
 			%% Then terminate the stream.
 			ClientTransport:send(ClientSocket,
 				"HTTP/1.1 200 OK\r\n"
 				"content-length: 0\r\n"
 				"\r\n"
 			),
-			timer:sleep(200)
+			timer:sleep(400)
 		end),
 	{ok, Pid} = gun:open("localhost", OriginPort),
 	{ok, http} = gun:await_up(Pid),
@@ -397,10 +397,10 @@ stream_info_http(_) ->
 		state := stopping
 	}} = gun:stream_info(Pid, StreamRef),
 	%% Wait a little for the stream to terminate.
-	timer:sleep(200),
+	timer:sleep(400),
 	{ok, undefined} = gun:stream_info(Pid, StreamRef),
 	%% Wait a little more for the connection to terminate.
-	timer:sleep(200),
+	timer:sleep(400),
 	{error, not_connected} = gun:stream_info(Pid, StreamRef),
 	gun:close(Pid).
 
@@ -423,7 +423,7 @@ stream_info_http2(_) ->
 	}} = gun:stream_info(Pid, StreamRef),
 	gun:cancel(Pid, StreamRef),
 	%% Wait a little for the connection to terminate.
-	timer:sleep(200),
+	timer:sleep(300),
 	{error, not_connected} = gun:stream_info(Pid, StreamRef),
 	gun:close(Pid).
 
