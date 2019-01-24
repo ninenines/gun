@@ -102,7 +102,7 @@ handle(_, #http_state{streams=[]}) ->
 %% Wait for the full response headers before trying to parse them.
 handle(Data, State=#http_state{in=head, buffer=Buffer}) ->
 	Data2 = << Buffer/binary, Data/binary >>,
-	case binary:match(Data2, <<"\r\n\r\n">>) of
+	case binary:match(Data2, [ <<"\n\n">>,<<"\r\n\r\n">>]) of
 		nomatch -> {state, State#http_state{buffer=Data2}};
 		{_, _} -> handle_head(Data2, State#http_state{buffer= <<>>})
 	end;
