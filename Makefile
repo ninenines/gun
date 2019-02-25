@@ -6,6 +6,7 @@ PROJECT_VERSION = 1.3.0
 
 # Options.
 
+# ERLC_OPTS = -DDEBUG_PROXY=1
 CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 
 # Dependencies.
@@ -34,6 +35,10 @@ AUTO_CI_WINDOWS ?= OTP-20+
 # Standard targets.
 
 include erlang.mk
+
+# Enable eunit.
+
+TEST_ERLC_OPTS += +'{parse_transform, eunit_autoexport}'
 
 # Generate rebar.config on build.
 
