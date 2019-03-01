@@ -277,7 +277,6 @@ check_options([Opt|_]) ->
 	{error, {options, Opt}}.
 
 consider_tracing(ServerPid, #{trace := true}) ->
-	dbg:start(),
 	dbg:tracer(),
 	dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
