@@ -617,12 +617,9 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, owner=Owner, ou
 		{<<"sec-websocket-key">>, Key}
 		|Headers2
 	],
-	IsSecure = Transport =:= gun_tls,
 	Headers = case lists:keymember(<<"host">>, 1, Headers0) of
 		true -> Headers3;
-		false when Port =:= 80, not IsSecure -> [{<<"host">>, Host}|Headers3];
-		false when Port =:= 443, IsSecure -> [{<<"host">>, Host}|Headers3];
-		false -> [{<<"host">>, [Host, $:, integer_to_binary(Port)]}|Headers3]
+		false -> [{<<"host">>, host_header(Transport, Host, Port)}|Headers3]
 	end,
 	Transport:send(Socket, cow_http:request(<<"GET">>, Path, 'HTTP/1.1', Headers)),
 	new_stream(State#http_state{connection=keepalive, out=head},
