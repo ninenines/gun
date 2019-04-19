@@ -202,8 +202,8 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn}) ->
 			end
 	end.
 
-handle_head(Data, State=#http_state{socket=Socket, version=ClientVersion,
-		content_handlers=Handlers0, connection=Conn,
+handle_head(Data, State=#http_state{socket=Socket, transport=Transport,
+		version=ClientVersion, content_handlers=Handlers0, connection=Conn,
 		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
 			method=Method, is_alive=IsAlive}|Tail]}) ->
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
@@ -226,6 +226,17 @@ handle_head(Data, State=#http_state{socket=Socket, version=ClientVersion,
 			NewHost = maps:get(host, Destination),
 			NewPort = maps:get(port, Destination),
 			case Destination of
+				#{transport := tls} when Transport =:= gun_tls ->
+					TLSOpts = maps:get(tls_opts, Destination, []),
+					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
+					{ok, ProxyPid} = gun_tls_proxy:start_link(NewHost, NewPort,
+						TLSOpts, TLSTimeout, Socket, gun_tls),
+					[{state, State2#http_state{socket=ProxyPid, transport=gun_tls_proxy}},
+						{origin, <<"https">>, NewHost, NewPort, connect},
+						{switch_transport, gun_tls_proxy, ProxyPid}];
+						%% @todo Might also need to switch protocol, but gotta wait
+						%% @todo for the TLS connection to be established first.
+						%% @todo Should have a gun_tls_proxy event indicating connection success.
 				#{transport := tls} ->
 					TLSOpts = maps:get(tls_opts, Destination, []),
 					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),

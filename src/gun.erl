@@ -173,12 +173,13 @@
 	owner_ref :: reference(),
 	host :: inet:hostname() | inet:ip_address(),
 	port :: inet:port_number(),
+	origin_scheme :: binary(),
 	origin_host :: inet:hostname() | inet:ip_address(),
 	origin_port :: inet:port_number(),
 	intermediaries = [] :: [intermediary()],
 	opts :: opts(),
 	keepalive_ref :: undefined | reference(),
-	socket :: undefined | inet:socket() | ssl:sslsocket(),
+	socket :: undefined | inet:socket() | ssl:sslsocket() | pid(),
 	transport :: module(),
 	messages :: {atom(), atom(), atom()},
 	protocol :: module(),
@@ -292,6 +293,7 @@ info(ServerPid) ->
 		socket=Socket,
 		transport=Transport,
 		protocol=Protocol,
+		origin_scheme=OriginScheme,
 		origin_host=OriginHost,
 		origin_port=OriginPort,
 		intermediaries=Intermediaries
@@ -299,10 +301,15 @@ info(ServerPid) ->
 	{ok, {SockIP, SockPort}} = Transport:sockname(Socket),
 	#{
 		socket => Socket,
-		transport => Transport:name(),
+		transport => case OriginScheme of
+			<<"http">> -> tcp;
+			<<"https">> -> tls
+		end,
 		protocol => Protocol:name(),
 		sock_ip => SockIP,
 		sock_port => SockPort,
+		%% @todo Add origin_scheme to documentation/tests.
+		origin_scheme => OriginScheme,
 		origin_host => OriginHost,
 		origin_port => OriginPort,
 		%% Intermediaries are listed in the order data goes through them.
@@ -685,14 +692,16 @@ start_link(Owner, Host, Port, Opts) ->
 
 init({Owner, Host, Port, Opts}) ->
 	Retry = maps:get(retry, Opts, 5),
-	Transport = case maps:get(transport, Opts, default_transport(Port)) of
-		tcp -> gun_tcp;
-		tls -> gun_tls
+	OriginTransport = maps:get(transport, Opts, default_transport(Port)),
+	{OriginScheme, Transport} = case OriginTransport of
+		tcp -> {<<"http">>, gun_tcp};
+		tls -> {<<"https">>, gun_tls}
 	end,
 	OwnerRef = monitor(process, Owner),
 	State = #state{owner=Owner, owner_ref=OwnerRef,
-		host=Host, port=Port, origin_host=Host, origin_port=Port,
-		opts=Opts, transport=Transport, messages=Transport:messages()},
+		host=Host, port=Port, origin_scheme=OriginScheme,
+		origin_host=Host, origin_port=Port, opts=Opts,
+		transport=Transport, messages=Transport:messages()},
 	{ok, not_connected, State,
 		{next_event, internal, {retries, Retry}}}.
 
@@ -901,7 +910,7 @@ commands([{state, ProtoState}|Tail], State) ->
 %% Order is important: the origin must be changed before
 %% the transport and/or protocol in order to keep track
 %% of the intermediaries properly.
-commands([{origin, _Scheme, Host, Port, Type}|Tail],
+commands([{origin, Scheme, Host, Port, Type}|Tail],
 		State=#state{transport=Transport, protocol=Protocol,
 			origin_host=IntermediateHost, origin_port=IntermediatePort,
 			intermediaries=Intermediaries}) ->
@@ -912,8 +921,8 @@ commands([{origin, _Scheme, Host, Port, Type}|Tail],
 		transport => Transport:name(),
 		protocol => Protocol:name()
 	},
-	commands(Tail, State#state{origin_host=Host, origin_port=Port,
-		intermediaries=[Info|Intermediaries]});
+	commands(Tail, State#state{origin_scheme=Scheme,
+		origin_host=Host, origin_port=Port, intermediaries=[Info|Intermediaries]});
 commands([{switch_transport, Transport, Socket}|Tail], State) ->
 	commands(Tail, active(State#state{socket=Socket, transport=Transport,
 		messages=Transport:messages()}));

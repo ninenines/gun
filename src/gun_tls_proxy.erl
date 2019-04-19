@@ -102,9 +102,19 @@
 start_link(Host, Port, Opts, Timeout, OutSocket, OutTransport) ->
 	?DEBUG_LOG("host ~0p port ~0p opts ~0p timeout ~0p out_socket ~0p out_transport ~0p",
 		[Host, Port, Opts, Timeout, OutSocket, OutTransport]),
-	gen_server:start_link(?MODULE,
-		{self(), Host, Port, Opts, Timeout, OutSocket, OutTransport},
-		[]).
+
+	case gen_server:start_link(?MODULE,
+			{self(), Host, Port, Opts, Timeout, OutSocket, OutTransport},
+			[]) of
+		{ok, Pid} when is_port(OutSocket) ->
+			gen_tcp:controlling_process(OutSocket, Pid),
+			{ok, Pid};
+		{ok, Pid} when not is_pid(OutSocket) ->
+			ssl:controlling_process(OutSocket, Pid),
+			{ok, Pid};
+		Other ->
+			Other
+	end.
 
 %% gun_tls_proxy_cb interface.
 
@@ -114,11 +124,21 @@ cb_controlling_process(Pid, ControllingPid) ->
 
 cb_send(Pid, Data) ->
 	?DEBUG_LOG("pid ~0p data ~0p", [Pid, Data]),
-	gen_server:call(Pid, {?FUNCTION_NAME, Data}).
+	try
+		gen_server:call(Pid, {?FUNCTION_NAME, Data})
+	catch
+		exit:{noproc, _} ->
+			{error, closed}
+	end.
 
 cb_setopts(Pid, Opts) ->
 	?DEBUG_LOG("pid ~0p opts ~0p", [Pid, Opts]),
-	gen_server:call(Pid, {?FUNCTION_NAME, Opts}).
+	try
+		gen_server:call(Pid, {?FUNCTION_NAME, Opts})
+	catch
+		exit:{noproc, _} ->
+			{error, einval}
+	end.
 
 %% Transport.
 
@@ -156,6 +176,7 @@ close(Pid) ->
 	gen_server:call(Pid, ?FUNCTION_NAME).
 
 %% gen_server.
+%% @todo Probably need to gen_statem it to avoid trying to send stuff before being connected.
 
 init({OwnerPid, Host, Port, Opts, Timeout, OutSocket, OutTransport}) ->
 	if
@@ -244,6 +265,8 @@ handle_cast(Msg={connect_proc, Error}, State) ->
 	{stop, Error, State};
 handle_cast(Msg={cb_controlling_process, ProxyPid}, State) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	%% We link so that the ssl process terminates when we do.
+	link(ProxyPid),
 	{noreply, State#state{proxy_pid=ProxyPid}};
 handle_cast(Msg={setopts, Opts}, State) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
@@ -342,7 +365,6 @@ tcp_test() ->
 	ssl:start(),
 	{ok, Socket} = gen_tcp:connect("google.com", 443, [binary, {active, false}]),
 	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, gen_tcp),
-	gen_tcp:controlling_process(Socket, ProxyPid1),
 	timer:sleep(500),
 	send(ProxyPid1, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
 	timer:sleep(1000),
@@ -355,7 +377,6 @@ ssl_test() ->
 	{ok, Socket} = ssl:connect("localhost", Port, [binary, {active, false}]),
 	timer:sleep(500),
 	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, ssl),
-	ssl:controlling_process(Socket, ProxyPid1),
 	timer:sleep(500),
 	send(ProxyPid1, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
 	timer:sleep(1000),
@@ -369,7 +390,6 @@ ssl2_test() ->
 	{ok, Socket} = ssl:connect("localhost", Port2, [binary, {active, false}]),
 	timer:sleep(500),
 	{ok, ProxyPid1} = start_link("localhost", Port1, [], 5000, Socket, ssl),
-	ssl:controlling_process(Socket, ProxyPid1),
 	timer:sleep(500),
 	{ok, ProxyPid2} = start_link("google.com", 443, [], 5000, ProxyPid1, ?MODULE),
 	timer:sleep(500),

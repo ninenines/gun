@@ -27,33 +27,54 @@ all() ->
 
 %% Proxy helpers.
 
-do_proxy_start() ->
-	do_proxy_start(200, []).
+do_proxy_start(Transport) ->
+	do_proxy_start(Transport, 200, []).
 
-do_proxy_start(Status) ->
-	do_proxy_start(Status, []).
+do_proxy_start(Transport, Status) ->
+	do_proxy_start(Transport, Status, []).
 
-do_proxy_start(Status, ConnectRespHeaders) ->
-	do_proxy_start(Status, ConnectRespHeaders, 0).
+do_proxy_start(Transport, Status, ConnectRespHeaders) ->
+	do_proxy_start(Transport, Status, ConnectRespHeaders, 0).
 
-do_proxy_start(Status, ConnectRespHeaders, Delay) ->
+do_proxy_start(Transport0, Status, ConnectRespHeaders, Delay) ->
+	Transport = case Transport0 of
+		tcp -> gun_tcp;
+		tls -> gun_tls
+	end,
 	Self = self(),
-	Pid = spawn_link(fun() -> do_proxy_init(Self, Status, ConnectRespHeaders, Delay) end),
+	Pid = spawn_link(fun() -> do_proxy_init(Self, Transport, Status, ConnectRespHeaders, Delay) end),
 	Port = receive_from(Pid),
 	{ok, Pid, Port}.
 
-do_proxy_init(Parent, Status, ConnectRespHeaders, Delay) ->
-	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
-	{ok, {_, Port}} = inet:sockname(ListenSocket),
+do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
+	{ok, ListenSocket} = case Transport of
+		gun_tcp ->
+			gen_tcp:listen(0, [binary, {active, false}]);
+		gun_tls ->
+			Opts = ct_helper:get_certs_from_ets(),
+			ssl:listen(0, [binary, {active, false}|Opts])
+	end,
+	{ok, {_, Port}} = Transport:sockname(ListenSocket),
 	Parent ! {self(), Port},
-	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 1000),
-	{ok, Data} = gen_tcp:recv(ClientSocket, 0, 1000),
+	{ok, ClientSocket} = case Transport of
+		gun_tcp ->
+			gen_tcp:accept(ListenSocket, 1000);
+		gun_tls ->
+			{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 1000),
+			ssl:handshake(ClientSocket0, 1000)
+	end,
+	{ok, Data} = case Transport of
+		gun_tcp ->
+			gen_tcp:recv(ClientSocket, 0, 1000);
+		gun_tls ->
+			ssl:recv(ClientSocket, 0, 1000)
+	end,
 	{Method= <<"CONNECT">>, Authority, Version, Rest} = cow_http:parse_request_line(Data),
 	{Headers, <<>>} = cow_http:parse_headers(Rest),
 	timer:sleep(Delay),
 	Parent ! {self(), {request, Method, Authority, Version, Headers}},
 	{OriginHost, OriginPort} = cow_http_hd:parse_host(Authority),
-	ok = gen_tcp:send(ClientSocket, [
+	ok = Transport:send(ClientSocket, [
 		<<"HTTP/1.1 ">>,
 		integer_to_binary(Status),
 		<<" Reason phrase\r\n">>,
@@ -65,27 +86,35 @@ do_proxy_init(Parent, Status, ConnectRespHeaders, Delay) ->
 			{ok, OriginSocket} = gen_tcp:connect(
 				binary_to_list(OriginHost), OriginPort,
 				[binary, {active, false}]),
-			inet:setopts(ClientSocket, [{active, true}]),
+			Transport:setopts(ClientSocket, [{active, true}]),
 			inet:setopts(OriginSocket, [{active, true}]),
-			do_proxy_loop(ClientSocket, OriginSocket);
+			do_proxy_loop(Transport, ClientSocket, OriginSocket);
 		true ->
 			%% We send a 501 to the subsequent request.
-			{ok, _} = gen_tcp:recv(ClientSocket, 0, 1000),
-			ok = gen_tcp:send(ClientSocket, <<
+			{ok, _} = case Transport of
+				gun_tcp ->
+					gen_tcp:recv(ClientSocket, 0, 1000);
+				gun_tls ->
+					ssl:recv(ClientSocket, 0, 1000)
+			end,
+			ok = Transport:send(ClientSocket, <<
 				"HTTP/1.1 501 Not Implemented\r\n"
 				"content-length: 0\r\n\r\n">>),
 			timer:sleep(2000)
 	end.
 
-do_proxy_loop(ClientSocket, OriginSocket) ->
+do_proxy_loop(Transport, ClientSocket, OriginSocket) ->
+	{OK, _, _} = Transport:messages(),
 	receive
-		{tcp, ClientSocket, Data} ->
+		{OK, ClientSocket, Data} ->
 			ok = gen_tcp:send(OriginSocket, Data),
-			do_proxy_loop(ClientSocket, OriginSocket);
+			do_proxy_loop(Transport, ClientSocket, OriginSocket);
 		{tcp, OriginSocket, Data} ->
-			ok = gen_tcp:send(ClientSocket, Data),
-			do_proxy_loop(ClientSocket, OriginSocket);
+			ok = Transport:send(ClientSocket, Data),
+			do_proxy_loop(Transport, ClientSocket, OriginSocket);
 		{tcp_closed, _} ->
+			ok;
+		{ssl_closed, _} ->
 			ok;
 		Msg ->
 			error(Msg)
@@ -105,7 +134,7 @@ connect_https(_) ->
 
 do_connect_http(Transport) ->
 	{ok, OriginPid, OriginPort} = init_origin(Transport, http),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -134,6 +163,48 @@ do_connect_http(Transport) ->
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
+connect_http_over_https_proxy(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via an HTTPS proxy. (RFC7231 4.3.6)"),
+	do_connect_http_over_https_proxy(tcp).
+
+connect_https_over_https_proxy(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via an HTTPS proxy. (RFC7231 4.3.6)"),
+	do_connect_http_over_https_proxy(tls).
+
+do_connect_http_over_https_proxy(Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(Transport, http),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tls),
+	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{transport => tls}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => Transport
+	}),
+	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+%	timer:sleep(2000),
+	_ = gun:get(ConnPid, "/proxied"),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	#{
+		transport := Transport,
+		protocol := http,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := ProxyPort,
+			transport := tls,
+			protocol := http
+	}]} = gun:info(ConnPid),
+	gun:close(ConnPid).
+
 connect_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/2 server via an HTTP proxy. (RFC7231 4.3.6)"),
@@ -146,7 +217,7 @@ connect_h2(_) ->
 
 do_connect_h2(Transport) ->
 	{ok, OriginPid, OriginPort} = init_origin(Transport, http2),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -180,8 +251,8 @@ connect_through_multiple_proxies(_) ->
 		"to an HTTP/1.1 server via a tunnel going through "
 		"two separate HTTP proxies. (RFC7231 4.3.6)"),
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
-	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(),
-	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(),
+	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(tcp),
+	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(tcp),
 	{ok, ConnPid} = gun:open("localhost", Proxy1Port),
 	{ok, http} = gun:await_up(ConnPid),
 	Authority1 = iolist_to_binary(["localhost:", integer_to_binary(Proxy2Port)]),
@@ -225,7 +296,7 @@ connect_through_multiple_proxies(_) ->
 connect_delay(_) ->
 	doc("The CONNECT response may not be immediate."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(201, [], 2000),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, 201, [], 2000),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort,
 		#{http_opts => #{keepalive => 1000}}),
@@ -258,7 +329,7 @@ connect_response_201(_) ->
 	doc("2xx responses to CONNECT requests indicate "
 		"the tunnel was set up successfully. (RFC7231 4.3.6)"),
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(201),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, 201),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -304,7 +375,7 @@ connect_response_500(_) ->
 do_connect_failure(Status) ->
 	OriginPort = 33333, %% Doesn't matter because we won't try to connect.
 	Headers = [{<<"content-length">>, <<"0">>}],
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(Status, Headers),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, Status, Headers),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -328,7 +399,7 @@ do_connect_failure(Status) ->
 connect_authority_form(_) ->
 	doc("CONNECT requests must use the authority-form. (RFC7231 4.3.6)"),
 	{ok, _OriginPid, OriginPort} = init_origin(tcp),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -343,7 +414,7 @@ connect_authority_form(_) ->
 connect_proxy_authorization(_) ->
 	doc("CONNECT requests may include a proxy-authorization header. (RFC7231 4.3.6)"),
 	{ok, _OriginPid, OriginPort} = init_origin(tcp),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -363,7 +434,7 @@ connect_request_no_transfer_encoding(_) ->
 	doc("The payload for CONNECT requests has no defined semantics. "
 		"The transfer-encoding header should not be sent. (RFC7231 4.3.6)"),
 	{ok, _OriginPid, OriginPort} = init_origin(tcp),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -379,7 +450,7 @@ connect_request_no_content_length(_) ->
 	doc("The payload for CONNECT requests has no defined semantics. "
 		"The content-length header should not be sent. (RFC7231 4.3.6)"),
 	{ok, _OriginPid, OriginPort} = init_origin(tcp),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -396,7 +467,7 @@ connect_response_ignore_transfer_encoding(_) ->
 		"to CONNECT requests. (RFC7231 4.3.6)"),
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
 	Headers = [{<<"transfer-encoding">>, <<"chunked">>}],
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(200, Headers),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, 200, Headers),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -417,7 +488,7 @@ connect_response_ignore_content_length(_) ->
 		"to CONNECT requests. (RFC7231 4.3.6)"),
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
 	Headers = [{<<"content-length">>, <<"1000">>}],
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(200, Headers),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, 200, Headers),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
