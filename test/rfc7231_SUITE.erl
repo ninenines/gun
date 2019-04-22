@@ -125,74 +125,42 @@ do_proxy_loop(Transport, ClientSocket, OriginSocket) ->
 connect_http(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_http(tcp).
+	do_connect_http(tcp, tcp).
 
 connect_https(_) ->
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_http(tls).
-
-do_connect_http(Transport) ->
-	{ok, OriginPid, OriginPort} = init_origin(Transport, http),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
-	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
-	{ok, ConnPid} = gun:open("localhost", ProxyPort),
-	{ok, http} = gun:await_up(ConnPid),
-	StreamRef = gun:connect(ConnPid, #{
-		host => "localhost",
-		port => OriginPort,
-		transport => Transport
-	}),
-	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
-	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
-	_ = gun:get(ConnPid, "/proxied"),
-	Data = receive_from(OriginPid),
-	Lines = binary:split(Data, <<"\r\n">>, [global]),
-	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
-	#{
-		transport := Transport,
-		protocol := http,
-		origin_host := "localhost",
-		origin_port := OriginPort,
-		intermediaries := [#{
-			type := connect,
-			host := "localhost",
-			port := ProxyPort,
-			transport := tcp,
-			protocol := http
-	}]} = gun:info(ConnPid),
-	gun:close(ConnPid).
+	do_connect_http(tls, tcp).
 
 connect_http_over_https_proxy(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via an HTTPS proxy. (RFC7231 4.3.6)"),
-	do_connect_http_over_https_proxy(tcp).
+	do_connect_http(tcp, tls).
 
 connect_https_over_https_proxy(_) ->
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via an HTTPS proxy. (RFC7231 4.3.6)"),
-	do_connect_http_over_https_proxy(tls).
+	do_connect_http(tls, tls).
 
-do_connect_http_over_https_proxy(Transport) ->
-	{ok, OriginPid, OriginPort} = init_origin(Transport, http),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(tls),
+do_connect_http(OriginTransport, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
-	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{transport => tls}),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{transport => ProxyTransport}),
 	{ok, http} = gun:await_up(ConnPid),
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => Transport
+		transport => OriginTransport
 	}),
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
-%	timer:sleep(2000),
 	_ = gun:get(ConnPid, "/proxied"),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	#{
-		transport := Transport,
+		transport := OriginTransport,
 		protocol := http,
 		origin_host := "localhost",
 		origin_port := OriginPort,
@@ -200,7 +168,7 @@ do_connect_http_over_https_proxy(Transport) ->
 			type := connect,
 			host := "localhost",
 			port := ProxyPort,
-			transport := tls,
+			transport := ProxyTransport,
 			protocol := http
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
