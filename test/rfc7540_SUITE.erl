@@ -60,7 +60,7 @@ do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
 	{ok, http2} = gun:await_up(ConnPid),
 	%% Change the origin's port in the state to trigger the default port behavior.
 	_ = sys:replace_state(ConnPid, fun({StateName, StateData}) ->
-		{StateName, setelement(7, StateData, DefaultPort)}
+		{StateName, setelement(8, StateData, DefaultPort)}
 	end, 5000),
 	%% Confirm the default port is not sent in the request.
 	timer:sleep(100), %% Give enough time for the handshake to fully complete.
