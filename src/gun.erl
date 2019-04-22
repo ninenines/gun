@@ -821,6 +821,12 @@ connected(cast, {connect, ReplyTo, StreamRef, Destination0, Headers},
 	end,
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers),
 	{keep_state, State#state{protocol_state=ProtoState2}};
+%% When using gun_tls_proxy we need a separate message to know whether
+%% we need to switch to a different protocol.
+connected(info, {connect_protocol, Protocol}, #state{protocol=Protocol}) ->
+	keep_state_and_data;
+connected(info, {connect_protocol, Protocol}, State=#state{protocol_state=ProtoState}) ->
+	commands([{switch_protocol, Protocol, ProtoState}], State);
 connected(cast, {cancel, ReplyTo, StreamRef},
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	ProtoState2 = Protocol:cancel(ProtoState, StreamRef, ReplyTo),

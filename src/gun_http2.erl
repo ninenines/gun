@@ -285,6 +285,7 @@ prepare_headers(#http2_state{transport=Transport}, Method, Host0, Port, Path, He
 		method => Method,
 		scheme => case Transport of
 			gun_tls -> <<"https">>;
+			gun_tls_proxy -> <<"https">>;
 			gun_tcp -> <<"http">>
 		end,
 		authority => Authority,

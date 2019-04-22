@@ -222,8 +222,13 @@ not_connected({call, _}, Msg={send, _}, State) ->
 not_connected(cast, Msg={setopts, _}, State) ->
 	?DEBUG_LOG("postpone ~0p state ~0p", [Msg, State]),
 	{keep_state_and_data, postpone};
-not_connected(cast, Msg={connect_proc, {ok, Socket}}, State) ->
+not_connected(cast, Msg={connect_proc, {ok, Socket}}, State=#state{owner_pid=OwnerPid}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	Protocol = case ssl:negotiated_protocol(Socket) of
+		{ok, <<"h2">>} -> gun_http2;
+		_ -> gun_http
+	end,
+	OwnerPid ! {connect_protocol, Protocol},
 	ok = ssl:setopts(Socket, [{active, true}]),
 	{next_state, connected, State#state{proxy_socket=Socket}};
 not_connected(cast, Msg={connect_proc, Error}, State) ->

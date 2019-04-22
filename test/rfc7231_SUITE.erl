@@ -176,23 +176,33 @@ do_connect_http(OriginTransport, ProxyTransport) ->
 connect_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/2 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_h2(tcp).
+	do_connect_h2(tcp, tcp).
 
 connect_h2(_) ->
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/2 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_h2(tls).
+	do_connect_h2(tls, tcp).
 
-do_connect_h2(Transport) ->
-	{ok, OriginPid, OriginPort} = init_origin(Transport, http2),
-	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp),
+connect_h2c_over_https_proxy(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/2 server via an HTTPS proxy. (RFC7231 4.3.6)"),
+	do_connect_h2(tcp, tls).
+
+connect_h2_over_https_proxy(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/2 server via an HTTPS proxy. (RFC7231 4.3.6)"),
+	do_connect_h2(tls, tls).
+
+do_connect_h2(OriginTransport, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http2),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
-	{ok, ConnPid} = gun:open("localhost", ProxyPort),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{transport => ProxyTransport}),
 	{ok, http} = gun:await_up(ConnPid),
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => Transport,
+		transport => OriginTransport,
 		protocols => [http2]
 	}),
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
@@ -201,7 +211,7 @@ do_connect_h2(Transport) ->
 	_ = gun:get(ConnPid, "/proxied"),
 	<<_:24, 1:8, _/bits>> = receive_from(OriginPid),
 	#{
-		transport := Transport,
+		transport := OriginTransport,
 		protocol := http2,
 		origin_host := "localhost",
 		origin_port := OriginPort,
@@ -209,7 +219,7 @@ do_connect_h2(Transport) ->
 			type := connect,
 			host := "localhost",
 			port := ProxyPort,
-			transport := tcp,
+			transport := ProxyTransport,
 			protocol := http
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
