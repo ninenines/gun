@@ -125,24 +125,24 @@ do_proxy_loop(Transport, ClientSocket, OriginSocket) ->
 connect_http(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_http(tcp, tcp).
+	do_connect_http(<<"http">>, tcp, tcp).
 
 connect_https(_) ->
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_http(tls, tcp).
+	do_connect_http(<<"https">>, tls, tcp).
 
 connect_http_over_https_proxy(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via an HTTPS proxy. (RFC7231 4.3.6)"),
-	do_connect_http(tcp, tls).
+	do_connect_http(<<"http">>, tcp, tls).
 
 connect_https_over_https_proxy(_) ->
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via an HTTPS proxy. (RFC7231 4.3.6)"),
-	do_connect_http(tls, tls).
+	do_connect_http(<<"https">>, tls, tls).
 
-do_connect_http(OriginTransport, ProxyTransport) ->
+do_connect_http(OriginScheme, OriginTransport, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
@@ -162,6 +162,7 @@ do_connect_http(OriginTransport, ProxyTransport) ->
 	#{
 		transport := OriginTransport,
 		protocol := http,
+		origin_scheme := OriginScheme,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -176,24 +177,24 @@ do_connect_http(OriginTransport, ProxyTransport) ->
 connect_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/2 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_h2(tcp, tcp).
+	do_connect_h2(<<"http">>, tcp, tcp).
 
 connect_h2(_) ->
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/2 server via an HTTP proxy. (RFC7231 4.3.6)"),
-	do_connect_h2(tls, tcp).
+	do_connect_h2(<<"https">>, tls, tcp).
 
 connect_h2c_over_https_proxy(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/2 server via an HTTPS proxy. (RFC7231 4.3.6)"),
-	do_connect_h2(tcp, tls).
+	do_connect_h2(<<"http">>, tcp, tls).
 
 connect_h2_over_https_proxy(_) ->
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/2 server via an HTTPS proxy. (RFC7231 4.3.6)"),
-	do_connect_h2(tls, tls).
+	do_connect_h2(<<"https">>, tls, tls).
 
-do_connect_h2(OriginTransport, ProxyTransport) ->
+do_connect_h2(OriginScheme, OriginTransport, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http2),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
@@ -213,6 +214,7 @@ do_connect_h2(OriginTransport, ProxyTransport) ->
 	#{
 		transport := OriginTransport,
 		protocol := http2,
+		origin_scheme := OriginScheme,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -254,6 +256,7 @@ connect_through_multiple_proxies(_) ->
 	#{
 		transport := tcp,
 		protocol := http,
+		origin_scheme := <<"http">>,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -292,6 +295,7 @@ connect_delay(_) ->
 	#{
 		transport := tcp,
 		protocol := http,
+		origin_scheme := <<"http">>,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -324,6 +328,7 @@ connect_response_201(_) ->
 	#{
 		transport := tcp,
 		protocol := http,
+		origin_scheme := <<"http">>,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -368,6 +373,7 @@ do_connect_failure(Status) ->
 	#{
 		transport := tcp,
 		protocol := http,
+		origin_scheme := <<"http">>,
 		origin_host := "localhost",
 		origin_port := ProxyPort,
 		intermediaries := []

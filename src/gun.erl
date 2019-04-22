@@ -308,7 +308,6 @@ info(ServerPid) ->
 		protocol => Protocol:name(),
 		sock_ip => SockIP,
 		sock_port => SockPort,
-		%% @todo Add origin_scheme to documentation/tests.
 		origin_scheme => OriginScheme,
 		origin_host => OriginHost,
 		origin_port => OriginPort,
