@@ -233,7 +233,10 @@ not_connected(cast, Msg={connect_proc, {ok, Socket}}, State=#state{owner_pid=Own
 		_ -> gun_http
 	end,
 	OwnerPid ! {connect_protocol, Protocol},
-	ok = ssl:setopts(Socket, [{active, true}]),
+	%% We need to spawn this call before OTP-21.2 because it triggers
+	%% a cb_setopts call that blocks us. Might be OK to just leave it
+	%% like this once we support 21.2+ only.
+	spawn(fun() -> ok = ssl:setopts(Socket, [{active, true}]) end),
 	{next_state, connected, State#state{proxy_socket=Socket}};
 not_connected(cast, Msg={connect_proc, Error}, State) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
