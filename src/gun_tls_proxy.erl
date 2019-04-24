@@ -110,10 +110,10 @@ start_link(Host, Port, Opts, Timeout, OutSocket, OutTransport) ->
 			{self(), Host, Port, Opts, Timeout, OutSocket, OutTransport},
 			[]) of
 		{ok, Pid} when is_port(OutSocket) ->
-			gen_tcp:controlling_process(OutSocket, Pid),
+			ok = gen_tcp:controlling_process(OutSocket, Pid),
 			{ok, Pid};
 		{ok, Pid} when not is_pid(OutSocket) ->
-			ssl:controlling_process(OutSocket, Pid),
+			ok = ssl:controlling_process(OutSocket, Pid),
 			{ok, Pid};
 		Other ->
 			Other
@@ -211,7 +211,7 @@ connect_proc(ProxyPid, Host, Port, Opts, Timeout) ->
 	|Opts], Timeout) of
 		{ok, Socket} ->
 			?DEBUG_LOG("socket ~0p", [Socket]),
-			ssl:controlling_process(Socket, ProxyPid),
+			ok = ssl:controlling_process(Socket, ProxyPid),
 			gen_statem:cast(ProxyPid, {?FUNCTION_NAME, {ok, Socket}});
 		Error ->
 			?DEBUG_LOG("error ~0p", [Error]),
