@@ -315,10 +315,17 @@ retry_0(_) ->
 	doc("Ensure Gun gives up immediately with retry=0."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
+	%% On Windows when the connection is refused the OS will retry
+	%% 3 times before giving up, with a 500ms delay between tries.
+	%% This adds approximately 1 second to connection failures.
+	After = case os:type() of
+		{win32, _} -> 1200;
+		_ -> 200
+	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
-	after 200 ->
+	after After ->
 		error(timeout)
 	end.
 
@@ -326,10 +333,14 @@ retry_1(_) ->
 	doc("Ensure Gun gives up with retry=1."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
+	After = case os:type() of
+		{win32, _} -> 2700;
+		_ -> 700
+	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
-	after 700 ->
+	after After ->
 		error(timeout)
 	end.
 
@@ -342,10 +353,14 @@ retry_immediately(_) ->
 		end),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{retry => 1, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
+	After = case os:type() of
+		{win32, _} -> 1200;
+		_ -> 200
+	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
-	after 200 ->
+	after After ->
 		error(timeout)
 	end.
 
@@ -353,17 +368,36 @@ retry_timeout(_) ->
 	doc("Ensure the retry_timeout value is enforced."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 1000}),
 	Ref = monitor(process, Pid),
+	After = case os:type() of
+		{win32, _} -> 2800;
+		_ -> 800
+	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			error(shutdown_too_early)
-	after 800 ->
+	after After ->
 		ok
 	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
-	after 800 ->
+	after After ->
 		error(shutdown_too_late)
+	end.
+
+shutdown_reason(_) ->
+	doc("The last connection failure must be propagated."),
+	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
+	Ref = monitor(process, Pid),
+	After = case os:type() of
+		{win32, _} -> 1200;
+		_ -> 200
+	end,
+	receive
+		{'DOWN', Ref, process, Pid, {shutdown, econnrefused}} ->
+			ok
+	after After ->
+		error(timeout)
 	end.
 
 stream_info_http(_) ->
@@ -426,17 +460,6 @@ stream_info_http2(_) ->
 	timer:sleep(300),
 	{error, not_connected} = gun:stream_info(Pid, StreamRef),
 	gun:close(Pid).
-
-shutdown_reason(_) ->
-	doc("The last connection failure must be propagated."),
-	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
-	Ref = monitor(process, Pid),
-	receive
-		{'DOWN', Ref, process, Pid, {shutdown, econnrefused}} ->
-			ok
-	after 200 ->
-		error(timeout)
-	end.
 
 transform_header_name(_) ->
 	doc("The transform_header_name option allows changing the case of header names."),
