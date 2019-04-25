@@ -16,6 +16,12 @@ Gun is tested and supported on Linux, FreeBSD, Windows and OSX.
 
 Gun is developed for Erlang/OTP 20.0 and newer.
 
+Note that Gun will not work on the Windows build of Erlang/OTP 20.3
+due to a bug in Erlang/OTP's stdlib application. The ticket number
+for this bug is OTP-13995 and it was fixed in the patch release
+OTP-20.3.2. Replacing the `gen_statem.beam` file on an 20.3
+installation is enough to fix the issue.
+
 === License
 
 Gun uses the ISC License.
