@@ -69,6 +69,8 @@ Result :: {inform, Status, Headers}
         | {data, IsFin, Data}
         | {trailers, Trailers}
         | {push, NewStreamRef, Method, URI, Headers}
+        | {upgrade, Protocols, Headers}
+        | {ws, Frame}
         | {error, Reason}
 
 Reason :: {stream_error | connection_error | down, any()}
@@ -79,14 +81,18 @@ Because the messages and returned tuples are equivalent,
 please refer to the manual pages for each message for
 further information:
 
-* link:man:gun_push(3)[gun_push(3)] - Server-initiated push
 * link:man:gun_inform(3)[gun_inform(3)] - Informational response
 * link:man:gun_response(3)[gun_response(3)] - Response
 * link:man:gun_data(3)[gun_data(3)] - Response body
 * link:man:gun_trailers(3)[gun_trailers(3)] - Response trailers
+* link:man:gun_push(3)[gun_push(3)] - Server-initiated push
+* link:man:gun_upgrade(3)[gun_upgrade(3)] - Successful protocol upgrade
+* link:man:gun_ws(3)[gun_ws(3)] - Websocket frame
 
 == Changelog
 
+* *2.0*: `upgrade` and `ws` tuples can now be returned.
+* *2.0*: The error tuple type now includes the type of error.
 * *1.0*: Function introduced.
 
 == Examples

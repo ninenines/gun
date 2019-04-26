@@ -494,6 +494,8 @@ connect(ServerPid, Destination, Headers, ReqOpts) ->
 	| {data, fin | nofin, binary()}
 	| {trailers, resp_headers()}
 	| {push, reference(), binary(), binary(), resp_headers()}
+	| {upgrade, [binary()], resp_headers()}
+	| {ws, ws_frame()} %% @todo Excluding ping/pong, for now.
 	| {error, {stream_error | connection_error | down, any()} | timeout}.
 
 -spec await(pid(), reference()) -> await_result().
@@ -512,7 +514,6 @@ await(ServerPid, StreamRef, Timeout) ->
 	demonitor(MRef, [flush]),
 	Res.
 
-%% @todo Add gun_upgrade and gun_ws?
 -spec await(pid(), reference(), timeout(), reference()) -> await_result().
 await(ServerPid, StreamRef, Timeout, MRef) ->
 	receive
@@ -526,6 +527,10 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{trailers, Trailers};
 		{gun_push, ServerPid, StreamRef, NewStreamRef, Method, URI, Headers} ->
 			{push, NewStreamRef, Method, URI, Headers};
+		{gun_upgrade, ServerPid, StreamRef, Protocols, Headers} ->
+			{upgrade, Protocols, Headers};
+		{gun_ws, ServerPid, StreamRef, Frame} ->
+			{ws, Frame};
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->

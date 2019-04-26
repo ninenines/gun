@@ -54,6 +54,7 @@ may also be returned when a timeout or an error occur.
 
 == Changelog
 
+* *2.0*: The error tuple type now includes the type of error.
 * *1.0*: Function introduced.
 
 == Examples
