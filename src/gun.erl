@@ -880,19 +880,19 @@ connected(Type, Event, State) ->
 handle_common(cast, {shutdown, Owner}, _, #state{owner=Owner}) ->
 	%% @todo Graceful shutdown.
 	stop;
-%% We stop when the owner is gone.
+%% We stop when the owner is down.
 handle_common(info, {'DOWN', OwnerRef, process, Owner, Reason}, _, #state{
 		owner=Owner, owner_ref=OwnerRef, socket=Socket, transport=Transport,
 		protocol=Protocol, protocol_state=ProtoState}) ->
 	_ = case Protocol of
 		undefined -> ok;
-		_ -> Protocol:close(owner_gone, ProtoState)
+		_ -> Protocol:close(owner_down, ProtoState)
 	end,
 	_ = case Socket of
 		undefined -> ok;
 		_ -> Transport:close(Socket)
 	end,
-	owner_gone(Reason);
+	owner_down(Reason);
 handle_common({call, From}, _, _, _) ->
 	{keep_state_and_data, {reply, From, {error, bad_call}}};
 %% @todo The ReplyTo patch disabled the notowner behavior.
@@ -1008,8 +1008,8 @@ keepalive_cancel(State=#state{keepalive_ref=KeepaliveRef}) ->
 	end,
 	State#state{keepalive_ref=undefined}.
 
--spec owner_gone(_) -> stop | {stop, _}.
-owner_gone(normal) -> stop;
-owner_gone(shutdown) -> {stop, shutdown};
-owner_gone(Shutdown = {shutdown, _}) -> {stop, Shutdown};
-owner_gone(Reason) -> {stop, {shutdown, {owner_gone, Reason}}}.
+-spec owner_down(_) -> stop | {stop, _}.
+owner_down(normal) -> stop;
+owner_down(shutdown) -> {stop, shutdown};
+owner_down(Shutdown = {shutdown, _}) -> {stop, Shutdown};
+owner_down(Reason) -> {stop, {shutdown, {owner_down, Reason}}}.

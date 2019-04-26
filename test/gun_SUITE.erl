@@ -74,7 +74,7 @@ connect_timeout_infinity(_) ->
 		error(timeout)
 	end.
 
-detect_owner_gone(_) ->
+detect_owner_down(_) ->
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Self = self(),
@@ -100,7 +100,7 @@ detect_owner_gone(_) ->
 		error(timeout)
 	end.
 
-detect_owner_gone_unexpected(_) ->
+detect_owner_down_unexpected(_) ->
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Self = self(),
@@ -120,14 +120,14 @@ detect_owner_gone_unexpected(_) ->
 	end,
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {shutdown, {owner_gone, unexpected}}} ->
+		{'DOWN', Ref, process, Pid, {shutdown, {owner_down, unexpected}}} ->
 			ok
 	after 1000 ->
 		true = erlang:is_process_alive(Pid),
 		error(timeout)
 	end.
 
-detect_owner_gone_ws(_) ->
+detect_owner_down_ws(_) ->
 	Name = name(),
 	{ok, _} = cowboy:start_clear(Name, [], #{env => #{
 		dispatch => cowboy_router:compile([{'_', [{"/", ws_echo, []}]}])
