@@ -65,13 +65,14 @@ may also be returned when a timeout or an error occur.
 [source,erlang]
 ----
 Result :: {inform, Status, Headers}
-          {response, IsFin, Status, Headers}
-          {data, IsFin, Data}
-          {trailers, Trailers}
-          {push, NewStreamRef, Method, URI, Headers}
-          {error, Reason}
+        | {response, IsFin, Status, Headers}
+        | {data, IsFin, Data}
+        | {trailers, Trailers}
+        | {push, NewStreamRef, Method, URI, Headers}
+        | {error, Reason}
 
-Reason :: timeout | any()
+Reason :: {stream_error | connection_error | down, any()}
+        | timeout
 ----
 
 Because the messages and returned tuples are equivalent,

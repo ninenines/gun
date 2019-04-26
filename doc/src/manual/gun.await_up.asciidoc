@@ -24,7 +24,7 @@ ConnPid    :: pid()
 MonitorRef :: reference()
 Timeout    :: timeout()
 Protocol   :: http | http2
-Reason     :: timeout | any()
+Reason     :: {down, any()} | timeout
 ----
 
 Wait for the connection to be up.

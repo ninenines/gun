@@ -26,7 +26,8 @@ MonitorRef :: reference()
 Timeout    :: timeout()
 Body       :: binary()
 Trailers   :: [{binary(), binary()}]
-Reason     :: timeout | any()
+Reason     :: {stream_error | connection_error | down, any()}
+            | timeout
 ----
 
 Wait for the complete response body.
