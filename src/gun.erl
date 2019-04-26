@@ -1005,4 +1005,4 @@ keepalive_cancel(State=#state{keepalive_ref=KeepaliveRef}) ->
 owner_gone(normal) -> stop;
 owner_gone(shutdown) -> {stop, shutdown};
 owner_gone(Shutdown = {shutdown, _}) -> {stop, Shutdown};
-owner_gone(Reason) -> {stop, {owner_gone, Reason}}.
+owner_gone(Reason) -> {stop, {shutdown, {owner_gone, Reason}}}.

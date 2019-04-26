@@ -100,6 +100,33 @@ detect_owner_gone(_) ->
 		error(timeout)
 	end.
 
+detect_owner_gone_unexpected(_) ->
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	Self = self(),
+	spawn(fun() ->
+		{ok, ConnPid} = gun:open("localhost", Port),
+		Self ! {conn, ConnPid},
+		gun:await_up(ConnPid),
+		timer:sleep(100),
+		exit(unexpected)
+	end),
+	{ok, _} = gen_tcp:accept(ListenSocket, 5000),
+	Pid = receive
+		{conn, C} ->
+			C
+	after 1000 ->
+		error(timeout)
+	end,
+	Ref = monitor(process, Pid),
+	receive
+		{'DOWN', Ref, process, Pid, {shutdown, {owner_gone, unexpected}}} ->
+			ok
+	after 1000 ->
+		true = erlang:is_process_alive(Pid),
+		error(timeout)
+	end.
+
 detect_owner_gone_ws(_) ->
 	Name = name(),
 	{ok, _} = cowboy:start_clear(Name, [], #{env => #{
