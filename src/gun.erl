@@ -518,11 +518,11 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 		{gun_push, ServerPid, StreamRef, NewStreamRef, Method, URI, Headers} ->
 			{push, NewStreamRef, Method, URI, Headers};
 		{gun_error, ServerPid, StreamRef, Reason} ->
-			{error, Reason};
+			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->
-			{error, Reason};
+			{error, {connection_error, Reason}};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
-			{error, Reason}
+			{error, {down, Reason}}
 	after Timeout ->
 		{error, timeout}
 	end.
@@ -556,11 +556,11 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 		{gun_trailers, ServerPid, StreamRef, Trailers} ->
 			{ok, Acc, Trailers};
 		{gun_error, ServerPid, StreamRef, Reason} ->
-			{error, Reason};
+			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->
-			{error, Reason};
+			{error, {connection_error, Reason}};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
-			{error, Reason}
+			{error, {down, Reason}}
 	after Timeout ->
 		{error, timeout}
 	end.
@@ -587,7 +587,7 @@ await_up(ServerPid, Timeout, MRef) ->
 		{gun_up, ServerPid, Protocol} ->
 			{ok, Protocol};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
-			{error, Reason}
+			{error, {down, Reason}}
 	after Timeout ->
 		{error, timeout}
 	end.
