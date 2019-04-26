@@ -55,6 +55,12 @@ form of a map.
 {ok, ConnPid} = gun:open("example.org", 8443, #{transport => tls}).
 ----
 
+When using TLS you may want to tweak the
+http://erlang.org/doc/man/ssl_app.html#configuration[configuration]
+for the `ssl` application, in particular the `session_lifetime`
+and `session_cache_client_max` to limit the amount of memory
+used for the TLS sessions cache.
+
 === Waiting for the connection to be established
 
 When Gun successfully connects to the server, it sends a
