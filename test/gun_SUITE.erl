@@ -488,6 +488,14 @@ stream_info_http2(_) ->
 	{error, not_connected} = gun:stream_info(Pid, StreamRef),
 	gun:close(Pid).
 
+supervise_false(_) ->
+	doc("The supervise option allows starting without a supervisor."),
+	{ok, _, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{supervise => false}),
+	{ok, http} = gun:await_up(Pid),
+	[] = [P || {_, P, _, _} <- supervisor:which_children(gun_sup), P =:= Pid],
+	ok.
+
 transform_header_name(_) ->
 	doc("The transform_header_name option allows changing the case of header names."),
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),

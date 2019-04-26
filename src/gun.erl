@@ -111,6 +111,7 @@
 	protocols       => [http | http2],
 	retry           => non_neg_integer(),
 	retry_timeout   => pos_integer(),
+	supervise       => boolean(),
 	trace           => boolean(),
 	transport       => tcp | tls | ssl,
 	transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
@@ -211,7 +212,11 @@ do_open(Host, Port, Opts0) ->
 	end,
 	case check_options(maps:to_list(Opts)) of
 		ok ->
-			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
+			Result = case maps:get(supervise, Opts, true) of
+				true -> supervisor:start_child(gun_sup, [self(), Host, Port, Opts]);
+				false -> start_link(self(), Host, Port, Opts)
+			end,
+			case Result of
 				OK = {ok, ServerPid} ->
 					consider_tracing(ServerPid, Opts),
 					OK;
@@ -259,6 +264,8 @@ check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	check_options(Opts);
 check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
+	check_options(Opts);
+check_options([{supervise, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);
 check_options([{trace, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);

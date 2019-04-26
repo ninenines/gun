@@ -208,6 +208,7 @@ opts() :: #{
     protocols       => [http | http2],
     retry           => non_neg_integer(),
     retry_timeout   => pos_integer(),
+    supervise       => boolean(),
     trace           => boolean(),
     transport       => tcp | tls,
     transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
@@ -248,6 +249,11 @@ Number of times Gun will try to reconnect on failure before giving up.
 retry_timeout (5000)::
 
 Time between retries in milliseconds.
+
+supervise (true)::
+
+Whether the Gun process should be started under the `gun_sup`
+supervisor. Set to `false` to use your own supervisor.
 
 trace (false)::
 
