@@ -70,6 +70,51 @@ do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
 	AuthorityHeaderPort = Rest,
 	gun:close(ConnPid).
 
+lingering_data_counts_toward_connection_window(_) ->
+	doc("DATA frames received after sending RST_STREAM must be counted "
+		"toward the connection flow-control window. (RFC7540 5.1)"),
+	{ok, _, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+		%% Step 2.
+		%% Receive a HEADERS frame.
+		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+		%% Skip the header.
+		{ok, _} = gen_tcp:recv(Socket, SkipLen, 1000),
+		%% Skip the data.
+		{ok, <<_:24, 0:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+		%% Send a HEADERS frame.
+		{HeadersBlock, _} = cow_hpack:encode([
+			{<<":status">>, <<"200">>}
+		]),
+		%% Step 3.
+		ok = Transport:send(Socket, [
+			cow_http2:headers(1, nofin, HeadersBlock)
+		]),
+		%% Step 5.
+		%% Make sure Gun sends the RST_STREAM.
+		timer:sleep(100),
+		%% Step 7.
+		ok = Transport:send(Socket, [
+			cow_http2:data(1, nofin, <<0:0/unit:8>>),
+			cow_http2:data(1, nofin, <<0:1000/unit:8>>)
+		]),
+		%% Skip RST_STREAM.
+		{ok, << 4:24, 3:8, 1:40, _:32 >>} = gen_tcp:recv(Socket, 13, 1000),
+		%% Received a WINDOW_UPDATE frame after we got RST_STREAM.
+		{ok, << 4:24, 8:8, 0:40, 1000:32 >>} = gen_tcp:recv(Socket, 13, 1000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	%% Step 1.
+	StreamRef = gun:get(ConnPid, "/"),
+	%% Step 4.
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	%% Step 6.
+	gun:cancel(ConnPid, StreamRef),
+	%% Make sure Gun sends the WINDOW_UPDATE and the server test passes.
+	timer:sleep(300),
+	gun:close(ConnPid).
+
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "
 		"that stream dependency information is attached. (RFC7540 6.2)"),
