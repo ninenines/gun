@@ -277,6 +277,26 @@ map_headers(_) ->
 	[<<"user-agent: Gun/map-headers">>] = [L || <<"user-agent: ", _/bits>> = L <- Lines],
 	gun:close(Pid).
 
+postpone_request_while_not_connected(_) ->
+	doc("Ensure Gun doesn't raise error when requesting in retries"),
+	%% Try connecting to a server that isn't up yet.
+	{ok, Pid} = gun:open("localhost", 23456, #{retry => 5, retry_timeout => 1000}),
+	_ = gun:get(Pid, "/postponed"),
+	%% Make sure the connect call completed and we are waiting for a retry.
+	Timeout = case os:type() of
+		{win32, _} -> 2500;
+		_ -> 500
+	end,
+	timer:sleep(Timeout),
+	%% Start the server so that next retry will result in the client connecting successfully.
+	{ok, ListenSocket} = gen_tcp:listen(23456, [binary, {active, false}]),
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	%% The client should now be up.
+	{ok, http} = gun:await_up(Pid),
+	%% The server receives the postponed request.
+	{ok, <<"GET /postponed HTTP/1.1\r\n", _/bits>>} = gen_tcp:recv(ClientSocket, 0, 5000),
+	ok.
+
 reply_to(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
 	do_reply_to(http),

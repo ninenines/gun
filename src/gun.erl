@@ -1061,6 +1061,9 @@ handle_common(cast, Any, _, #state{owner=Owner}) when element(2, Any) =/= Owner 
 	element(2, Any) ! {gun_error, self(), {notowner,
 		"Operations are restricted to the owner of the connection."}},
 	keep_state_and_data;
+%% We postpone all HTTP/Websocket operations until we are connected.
+handle_common(cast, _, StateName, _) when StateName =/= connected ->
+	{keep_state_and_data, postpone};
 handle_common(Type, Event, StateName, StateData) ->
 	error_logger:error_msg("Unexpected event in state ~p of type ~p:~n~w~n~p~n",
 		[StateName, Type, Event, StateData]),
