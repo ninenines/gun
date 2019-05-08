@@ -106,6 +106,7 @@
 
 -type opts() :: #{
 	connect_timeout => timeout(),
+	event_handler   => {module(), any()},
 	http_opts       => http_opts(),
 	http2_opts      => http2_opts(),
 	protocols       => [http | http2],
@@ -184,7 +185,9 @@
 	transport :: module(),
 	messages :: {atom(), atom(), atom()},
 	protocol :: module(),
-	protocol_state :: any()
+	protocol_state :: any(),
+	event_handler :: module(),
+	event_handler_state :: any()
 }).
 
 %% Connection.
@@ -232,6 +235,8 @@ check_options([]) ->
 check_options([{connect_timeout, infinity}|Opts]) ->
 	check_options(Opts);
 check_options([{connect_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
+	check_options(Opts);
+check_options([{event_handler, {Mod, _}}|Opts]) when is_atom(Mod) ->
 	check_options(Opts);
 check_options([{http_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_http:check_options(ProtoOpts) of
@@ -724,18 +729,29 @@ init({Owner, Host, Port, Opts}) ->
 		tls -> {<<"https">>, gun_tls}
 	end,
 	OwnerRef = monitor(process, Owner),
+	{EventHandler, EventHandlerState0} = maps:get(event_handler, Opts,
+		{gun_default_event_h, undefined}),
+	EventHandlerState = EventHandler:init(#{
+		owner => Owner,
+		transport => OriginTransport,
+		origin_scheme => OriginScheme,
+		origin_host => Host,
+		origin_port => Port,
+		opts => Opts
+	}, EventHandlerState0),
 	State = #state{owner=Owner, owner_ref=OwnerRef,
 		host=Host, port=Port, origin_scheme=OriginScheme,
 		origin_host=Host, origin_port=Port, opts=Opts,
-		transport=Transport, messages=Transport:messages()},
+		transport=Transport, messages=Transport:messages(),
+		event_handler=EventHandler, event_handler_state=EventHandlerState},
 	{ok, not_connected, State,
 		{next_event, internal, {retries, Retry}}}.
 
 default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
-not_connected(_, {retries, Retries},
-		State=#state{host=Host, port=Port, opts=Opts, transport=Transport}) ->
+not_connected(_, {retries, Retries}, State0=#state{host=Host, port=Port, opts=Opts,
+		transport=Transport, event_handler=EventHandler, event_handler_state=EventHandlerState0}) ->
 	TransOpts0 = maps:get(transport_opts, Opts, []),
 	TransOpts1 = case Transport of
 		gun_tcp -> TransOpts0;
@@ -743,27 +759,47 @@ not_connected(_, {retries, Retries},
 	end,
 	TransOpts = [binary, {active, false}|TransOpts1],
 	ConnectTimeout = maps:get(connect_timeout, Opts, infinity),
+	ConnectEvent = #{
+		host => Host,
+		port => Port,
+		transport => Transport:name(),
+		transport_opts => TransOpts,
+		timeout => ConnectTimeout
+	},
+	EventHandlerState1 = EventHandler:connect_start(ConnectEvent, EventHandlerState0),
 	case Transport:connect(Host, Port, TransOpts, ConnectTimeout) of
-		{ok, Socket} when Transport =:= gun_tcp ->
-			Protocol = case maps:get(protocols, Opts, [http]) of
-				[http] -> gun_http;
-				[http2] -> gun_http2
+		{ok, Socket} ->
+			Protocol = case Transport of
+				gun_tcp ->
+					case maps:get(protocols, Opts, [http]) of
+						[http] -> gun_http;
+						[http2] -> gun_http2
+					end;
+				gun_tls ->
+					case ssl:negotiated_protocol(Socket) of
+						{ok, <<"h2">>} -> gun_http2;
+						_ -> gun_http
+					end
 			end,
-			{next_state, connected, State,
+			EventHandlerState = EventHandler:connect_end(ConnectEvent#{
+				socket => Socket,
+				protocol => Protocol:name()
+			}, EventHandlerState1),
+			{next_state, connected, State0#state{event_handler_state=EventHandlerState},
 				{next_event, internal, {connected, Socket, Protocol}}};
-		{ok, Socket} when Transport =:= gun_tls ->
-			Protocol = case ssl:negotiated_protocol(Socket) of
-				{ok, <<"h2">>} -> gun_http2;
-				_ -> gun_http
-			end,
-			{next_state, connected, State,
-				{next_event, internal, {connected, Socket, Protocol}}};
-		{error, Reason} when Retries =:= 0 ->
-			{stop, {shutdown, Reason}};
-		{error, _Reason} ->
-			Timeout = maps:get(retry_timeout, Opts, 5000),
-			{keep_state, State,
-				{state_timeout, Timeout, {retries, Retries - 1}}}
+		{error, Reason} ->
+			EventHandlerState = EventHandler:connect_end(ConnectEvent#{
+				error => Reason
+			}, EventHandlerState1),
+			State = State0#state{event_handler_state=EventHandlerState},
+			case Retries of
+				0 ->
+					{stop, {shutdown, Reason}, State};
+				_ ->
+					Timeout = maps:get(retry_timeout, Opts, 5000),
+					{keep_state, State,
+						{state_timeout, Timeout, {retries, Retries - 1}}}
+			end
 	end;
 not_connected({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
