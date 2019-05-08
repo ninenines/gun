@@ -36,6 +36,12 @@ AUTO_CI_WINDOWS ?= OTP-20+
 
 include erlang.mk
 
+# Don't run the autobahn test suite by default.
+
+ifndef FULL
+CT_SUITES := $(filter-out ws_autobahn,$(CT_SUITES))
+endif
+
 # Enable eunit.
 
 TEST_ERLC_OPTS += +'{parse_transform, eunit_autoexport}'
