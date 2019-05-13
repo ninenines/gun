@@ -1006,7 +1006,8 @@ commands([{switch_protocol, Protocol, _ProtoState0}|Tail],
 
 disconnect(State=#state{owner=Owner, opts=Opts,
 		socket=Socket, transport=Transport,
-		protocol=Protocol, protocol_state=ProtoState}, Reason) ->
+		protocol=Protocol, protocol_state=ProtoState,
+		event_handler=EventHandler, event_handler_state=EventHandlerState0}, Reason) ->
 	Protocol:close(Reason, ProtoState),
 	%% @todo Need a special state for orderly shutdown of a connection.
 	Transport:close(Socket),
@@ -1015,14 +1016,20 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 	%% @todo Stop keepalive timeout, flush message.
 	{KilledStreams, UnprocessedStreams} = Protocol:down(ProtoState),
 	Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams, UnprocessedStreams},
+	%% Trigger the disconnect event.
+	DisconnectEvent = #{
+		reason => Reason
+	},
+	EventHandlerState = EventHandler:disconnect(DisconnectEvent, EventHandlerState0),
 	Retry = maps:get(retry, Opts, 5),
 	case Retry of
 		0 ->
-			{stop, {shutdown, Reason}};
+			{stop, {shutdown, Reason}, State#state{event_handler_state=EventHandlerState}};
 		_ ->
 			{next_state, not_connected,
 				keepalive_cancel(State#state{socket=undefined,
-					protocol=undefined, protocol_state=undefined}),
+					protocol=undefined, protocol_state=undefined,
+					event_handler_state=EventHandlerState}),
 				{next_event, internal, {retries, Retry - 1}}}
 	end.
 

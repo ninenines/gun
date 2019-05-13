@@ -20,6 +20,7 @@
 
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
+-import(gun_test, [init_origin/1]).
 
 all() ->
 	ct_helper:all(?MODULE).
@@ -99,6 +100,21 @@ connect_end_ok(Config) ->
 	} = do_receive_event(connect_end),
 	gun:close(Pid).
 
+disconnect(_) ->
+	doc("Confirm that the disconnect event callback is called on disconnect."),
+	Self = self(),
+	Opts = #{event_handler => {?MODULE, Self}},
+	{ok, OriginPid, OriginPort} = init_origin(tcp),
+	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
+	{ok, http} = gun:await_up(Pid),
+	%% We make the origin exit to trigger a disconnect.
+	unlink(OriginPid),
+	exit(OriginPid, shutdown),
+	#{
+		reason := closed
+	} = do_receive_event(disconnect),
+	gun:close(Pid).
+
 %% Internal.
 
 do_receive_event(Event) ->
@@ -120,5 +136,9 @@ connect_start(EventData, Pid) ->
 	Pid.
 
 connect_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+disconnect(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
