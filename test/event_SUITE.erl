@@ -115,6 +115,18 @@ disconnect(_) ->
 	} = do_receive_event(disconnect),
 	gun:close(Pid).
 
+terminate(_) ->
+	doc("Confirm that the terminate event callback is called on terminate."),
+	Self = self(),
+	Opts = #{event_handler => {?MODULE, Self}},
+	{ok, Pid} = gun:open("localhost", 12345, Opts),
+	gun:close(Pid),
+	#{
+		state := not_connected,
+		reason := shutdown
+	} = do_receive_event(terminate),
+	ok.
+
 %% Internal.
 
 do_receive_event(Event) ->
@@ -128,6 +140,9 @@ do_receive_event(Event) ->
 %% gun_event callbacks.
 
 init(EventData, Pid) ->
+	%% We enable trap_exit to ensure we get a terminate event
+	%% when we call gun:close/1.
+	process_flag(trap_exit, true),
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
@@ -140,5 +155,9 @@ connect_end(EventData, Pid) ->
 	Pid.
 
 disconnect(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+terminate(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.

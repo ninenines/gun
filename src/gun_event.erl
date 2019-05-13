@@ -51,6 +51,15 @@
 
 -callback disconnect(disconnect_event(), State) -> State.
 
+%% terminate.
+
+-type terminate_event() :: #{
+	state := not_connected | connected,
+	reason := normal | shutdown | {shutdown, any()} | any()
+}.
+
+-callback terminate(terminate_event(), State) -> State.
+
 %% @todo domain_lookup_start
 %% @todo domain_lookup_end
 %% @todo tls_handshake_start
@@ -58,7 +67,6 @@
 %% @todo origin_changed
 %% @todo transport_changed
 %% @todo protocol_changed
-%% @todo terminate
 %% @todo stream_start
 %% @todo stream_end
 %% @todo request_start

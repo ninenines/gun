@@ -19,6 +19,7 @@
 -export([connect_start/2]).
 -export([connect_end/2]).
 -export([disconnect/2]).
+-export([terminate/2]).
 
 init(_EventData, State) ->
 	State.
@@ -30,4 +31,7 @@ connect_end(_EventData, State) ->
 	State.
 
 disconnect(_EventData, State) ->
+	State.
+
+terminate(_EventData, State) ->
 	State.

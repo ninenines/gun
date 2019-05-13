@@ -94,6 +94,7 @@
 -export([init/1]).
 -export([not_connected/3]).
 -export([connected/3]).
+-export([terminate/3]).
 
 -type req_headers() :: [{binary() | string() | atom(), iodata()}]
 	| #{binary() | string() | atom() => iodata()}.
@@ -1077,3 +1078,11 @@ owner_down(normal) -> stop;
 owner_down(shutdown) -> {stop, shutdown};
 owner_down(Shutdown = {shutdown, _}) -> {stop, Shutdown};
 owner_down(Reason) -> {stop, {shutdown, {owner_down, Reason}}}.
+
+terminate(Reason, StateName, #state{event_handler=EventHandler,
+		event_handler_state=EventHandlerState}) ->
+	TerminateEvent = #{
+		state => StateName,
+		reason => Reason
+	},
+	EventHandler:terminate(TerminateEvent, EventHandlerState).
