@@ -730,21 +730,21 @@ init({Owner, Host, Port, Opts}) ->
 		tls -> {<<"https">>, gun_tls}
 	end,
 	OwnerRef = monitor(process, Owner),
-	{EventHandler, EventHandlerState0} = maps:get(event_handler, Opts,
+	{EvHandler, EvHandlerState0} = maps:get(event_handler, Opts,
 		{gun_default_event_h, undefined}),
-	EventHandlerState = EventHandler:init(#{
+	EvHandlerState = EvHandler:init(#{
 		owner => Owner,
 		transport => OriginTransport,
 		origin_scheme => OriginScheme,
 		origin_host => Host,
 		origin_port => Port,
 		opts => Opts
-	}, EventHandlerState0),
+	}, EvHandlerState0),
 	State = #state{owner=Owner, owner_ref=OwnerRef,
 		host=Host, port=Port, origin_scheme=OriginScheme,
 		origin_host=Host, origin_port=Port, opts=Opts,
 		transport=Transport, messages=Transport:messages(),
-		event_handler=EventHandler, event_handler_state=EventHandlerState},
+		event_handler=EvHandler, event_handler_state=EvHandlerState},
 	{ok, not_connected, State,
 		{next_event, internal, {retries, Retry}}}.
 
@@ -752,7 +752,7 @@ default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
 not_connected(_, {retries, Retries}, State0=#state{host=Host, port=Port, opts=Opts,
-		transport=Transport, event_handler=EventHandler, event_handler_state=EventHandlerState0}) ->
+		transport=Transport, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	TransOpts0 = maps:get(transport_opts, Opts, []),
 	TransOpts1 = case Transport of
 		gun_tcp -> TransOpts0;
@@ -767,7 +767,7 @@ not_connected(_, {retries, Retries}, State0=#state{host=Host, port=Port, opts=Op
 		transport_opts => TransOpts,
 		timeout => ConnectTimeout
 	},
-	EventHandlerState1 = EventHandler:connect_start(ConnectEvent, EventHandlerState0),
+	EvHandlerState1 = EvHandler:connect_start(ConnectEvent, EvHandlerState0),
 	case Transport:connect(Host, Port, TransOpts, ConnectTimeout) of
 		{ok, Socket} ->
 			Protocol = case Transport of
@@ -782,17 +782,17 @@ not_connected(_, {retries, Retries}, State0=#state{host=Host, port=Port, opts=Op
 						_ -> gun_http
 					end
 			end,
-			EventHandlerState = EventHandler:connect_end(ConnectEvent#{
+			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				socket => Socket,
 				protocol => Protocol:name()
-			}, EventHandlerState1),
-			{next_state, connected, State0#state{event_handler_state=EventHandlerState},
+			}, EvHandlerState1),
+			{next_state, connected, State0#state{event_handler_state=EvHandlerState},
 				{next_event, internal, {connected, Socket, Protocol}}};
 		{error, Reason} ->
-			EventHandlerState = EventHandler:connect_end(ConnectEvent#{
+			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				error => Reason
-			}, EventHandlerState1),
-			State = State0#state{event_handler_state=EventHandlerState},
+			}, EvHandlerState1),
+			State = State0#state{event_handler_state=EvHandlerState},
 			case Retries of
 				0 ->
 					{stop, {shutdown, Reason}, State};
@@ -830,8 +830,10 @@ connected(internal, {connected, Socket, Protocol},
 		protocol=Protocol, protocol_state=ProtoState}))};
 %% Socket events.
 connected(info, {OK, Socket, Data}, State=#state{socket=Socket, messages={OK, _, _},
-		protocol=Protocol, protocol_state=ProtoState}) ->
-	commands(Protocol:handle(Data, ProtoState), active(State));
+		protocol=Protocol, protocol_state=ProtoState,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState, EvHandler, EvHandlerState0),
+	commands(Commands, active(State#state{event_handler_state=EvHandlerState}));
 connected(info, {Closed, Socket}, State=#state{socket=Socket, messages={_, Closed, _}}) ->
 	disconnect(State, closed);
 connected(info, {Error, Socket, Reason}, State=#state{socket=Socket, messages={_, _, Error}}) ->
@@ -846,22 +848,28 @@ connected(info, keepalive, State=#state{protocol=Protocol, protocol_state=ProtoS
 %% Public HTTP interface.
 connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers},
 		State=#state{origin_host=Host, origin_port=Port,
-			protocol=Protocol, protocol_state=ProtoState}) ->
-	ProtoState2 = Protocol:headers(ProtoState,
-		StreamRef, ReplyTo, Method, Host, Port, Path, Headers),
-	{keep_state, State#state{protocol_state=ProtoState2}};
+			protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{ProtoState2, EvHandlerState} = Protocol:headers(ProtoState,
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
+		EvHandler, EvHandlerState0),
+	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body},
 		State=#state{origin_host=Host, origin_port=Port,
-			protocol=Protocol, protocol_state=ProtoState}) ->
-	ProtoState2 = Protocol:request(ProtoState,
-		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body),
-	{keep_state, State#state{protocol_state=ProtoState2}};
+			protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{ProtoState2, EvHandlerState} = Protocol:request(ProtoState,
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
+		EvHandler, EvHandlerState0),
+	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 %% @todo Do we want to reject ReplyTo if it's not the process
 %% who initiated the connection? For both data and cancel.
 connected(cast, {data, ReplyTo, StreamRef, IsFin, Data},
-		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	ProtoState2 = Protocol:data(ProtoState, StreamRef, ReplyTo, IsFin, Data),
-	{keep_state, State#state{protocol_state=ProtoState2}};
+		State=#state{protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{ProtoState2, EvHandlerState} = Protocol:data(ProtoState,
+		StreamRef, ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
+	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 connected(cast, {connect, ReplyTo, StreamRef, Destination0, Headers},
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	%% The protocol option has been deprecated in favor of the protocols option.
@@ -1008,7 +1016,7 @@ commands([{switch_protocol, Protocol, _ProtoState0}|Tail],
 disconnect(State=#state{owner=Owner, opts=Opts,
 		socket=Socket, transport=Transport,
 		protocol=Protocol, protocol_state=ProtoState,
-		event_handler=EventHandler, event_handler_state=EventHandlerState0}, Reason) ->
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason) ->
 	Protocol:close(Reason, ProtoState),
 	%% @todo Need a special state for orderly shutdown of a connection.
 	Transport:close(Socket),
@@ -1021,16 +1029,16 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 	DisconnectEvent = #{
 		reason => Reason
 	},
-	EventHandlerState = EventHandler:disconnect(DisconnectEvent, EventHandlerState0),
+	EvHandlerState = EvHandler:disconnect(DisconnectEvent, EvHandlerState0),
 	Retry = maps:get(retry, Opts, 5),
 	case Retry of
 		0 ->
-			{stop, {shutdown, Reason}, State#state{event_handler_state=EventHandlerState}};
+			{stop, {shutdown, Reason}, State#state{event_handler_state=EvHandlerState}};
 		_ ->
 			{next_state, not_connected,
 				keepalive_cancel(State#state{socket=undefined,
 					protocol=undefined, protocol_state=undefined,
-					event_handler_state=EventHandlerState}),
+					event_handler_state=EvHandlerState}),
 				{next_event, internal, {retries, Retry - 1}}}
 	end.
 
@@ -1079,10 +1087,10 @@ owner_down(shutdown) -> {stop, shutdown};
 owner_down(Shutdown = {shutdown, _}) -> {stop, Shutdown};
 owner_down(Reason) -> {stop, {shutdown, {owner_down, Reason}}}.
 
-terminate(Reason, StateName, #state{event_handler=EventHandler,
-		event_handler_state=EventHandlerState}) ->
+terminate(Reason, StateName, #state{event_handler=EvHandler,
+		event_handler_state=EvHandlerState}) ->
 	TerminateEvent = #{
 		state => StateName,
 		reason => Reason
 	},
-	EventHandler:terminate(TerminateEvent, EventHandlerState).
+	EvHandler:terminate(TerminateEvent, EvHandlerState).

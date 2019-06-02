@@ -17,7 +17,7 @@
 -export([check_options/1]).
 -export([name/0]).
 -export([init/8]).
--export([handle/2]).
+-export([handle/4]).
 -export([close/2]).
 -export([send/2]).
 -export([down/1]).
@@ -71,6 +71,9 @@ init(Owner, Socket, Transport, StreamRef, Headers, Extensions, Handler, Opts) ->
 	HandlerState = Handler:init(Owner, StreamRef, Headers, Opts),
 	{switch_protocol, ?MODULE, #ws_state{owner=Owner, socket=Socket, transport=Transport,
 		extensions=Extensions, handler=Handler, handler_state=HandlerState}}.
+
+handle(Data, State, _EvHandler, EvHandlerState) ->
+	{handle(Data, State), EvHandlerState}.
 
 %% Do not handle anything if we received a close frame.
 handle(_, State=#ws_state{in=close}) ->

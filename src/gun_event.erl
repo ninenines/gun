@@ -43,6 +43,31 @@
 -callback connect_start(connect_event(), State) -> State.
 -callback connect_end(connect_event(), State) -> State.
 
+%% request_start/request_headers.
+
+-type request_start_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	function := headers | request,
+	method := iodata(),
+	scheme => binary(),
+	authority := iodata(),
+	path := iodata(),
+	headers := [{binary(), iodata()}]
+}.
+
+-callback request_start(request_start_event(), State) -> State.
+-callback request_headers(request_start_event(), State) -> State.
+
+%% request_end.
+
+-type request_end_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid()
+}.
+
+-callback request_end(request_end_event(), State) -> State.
+
 %% disconnect.
 
 -type disconnect_event() :: #{
@@ -67,17 +92,14 @@
 %% @todo origin_changed
 %% @todo transport_changed
 %% @todo protocol_changed
-%% @todo stream_start
-%% @todo stream_end
-%% @todo request_start
-%% @todo request_headers
-%% @todo request_end
 %% @todo response_start (call it once per inform + one for the response)
 %% @todo response_inform
 %% @todo response_headers
 %% @todo response_end
 %% @todo push_promise_start
 %% @todo push_promise_end
+%% @todo cancel_start
+%% @todo cancel_end
 %% @todo ws_upgrade_start
 %% @todo ws_upgrade_end
 %% @todo ws_frame_read_start

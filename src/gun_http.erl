@@ -17,12 +17,12 @@
 -export([check_options/1]).
 -export([name/0]).
 -export([init/4]).
--export([handle/2]).
+-export([handle/4]).
 -export([close/2]).
 -export([keepalive/1]).
--export([headers/8]).
--export([request/9]).
--export([data/5]).
+-export([headers/10]).
+-export([request/11]).
+-export([data/7]).
 -export([connect/5]).
 -export([cancel/3]).
 -export([stream_info/2]).
@@ -92,6 +92,9 @@ init(Owner, Socket, Transport, Opts) ->
 	TransformHeaderName = maps:get(transform_header_name, Opts, fun (N) -> N end),
 	#http_state{owner=Owner, socket=Socket, transport=Transport, version=Version,
 		content_handlers=Handlers, transform_header_name=TransformHeaderName}.
+
+handle(Data, State, _EvHandler, EvHandlerState) ->
+	{handle(Data, State), EvHandlerState}.
 
 %% Stop looping when we got no more data.
 handle(<<>>, State) ->
@@ -345,42 +348,76 @@ keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}) ->
 keepalive(State) ->
 	State.
 
-headers(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers) ->
+headers(State=#http_state{socket=Socket, transport=Transport, version=Version, out=head},
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
+		EvHandler, EvHandlerState0) ->
+	Authority0 = host_header(Transport, Host, Port),
 	Headers2 = lists:keydelete(<<"transfer-encoding">>, 1, Headers),
-	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, host_header(Transport, Host, Port)}|Headers2];
-		true -> Headers2
-	end,
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
 	Out = request_io_from_headers(Headers2),
+	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
+		false -> {Authority0, [{<<"host">>, Authority0}|Headers2]};
+		{_, Authority1} -> {Authority1, Headers2}
+	end,
 	Headers4 = case Out of
 		body_chunked when Version =:= 'HTTP/1.0' -> Headers3;
 		body_chunked -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers3];
 		_ -> Headers3
 	end,
 	Headers5 = transform_header_names(State, Headers4),
+	RequestEvent = #{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo,
+		function => ?FUNCTION_NAME,
+		method => Method,
+		authority => Authority,
+		path => Path,
+		headers => Headers5
+	},
+	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
 	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers5)),
-	new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo, Method).
+	EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo, Method),
+		EvHandlerState}.
 
-request(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=head}, StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body) ->
+request(State=#http_state{socket=Socket, transport=Transport, version=Version, out=head},
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
+		EvHandler, EvHandlerState0) ->
+	Authority0 = host_header(Transport, Host, Port),
 	Headers2 = lists:keydelete(<<"content-length">>, 1,
 		lists:keydelete(<<"transfer-encoding">>, 1, Headers)),
-	Headers3 = case lists:keymember(<<"host">>, 1, Headers) of
-		false -> [{<<"host">>, host_header(Transport, Host, Port)}|Headers2];
-		true -> Headers2
-	end,
-	Headers4 = transform_header_names(State, Headers3),
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
+	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
+		false -> {Authority0, [{<<"host">>, Authority0}|Headers2]};
+		{_, Authority1} -> {Authority1, Headers2}
+	end,
+	Headers4 = transform_header_names(State, Headers3),
+	Headers5 = [
+		{<<"content-length">>, integer_to_binary(iolist_size(Body))}
+	|Headers4],
+	RequestEvent = #{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo,
+		function => ?FUNCTION_NAME,
+		method => Method,
+		authority => Authority,
+		path => Path,
+		headers => Headers5
+	},
+	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
 	Transport:send(Socket, [
-		cow_http:request(Method, Path, Version, [
-			{<<"content-length">>, integer_to_binary(iolist_size(Body))}
-		|Headers4]),
+		cow_http:request(Method, Path, Version, Headers5),
 		Body]),
-	new_stream(State#http_state{connection=Conn}, StreamRef, ReplyTo, Method).
+	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+	RequestEndEvent = #{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo
+	},
+	EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
+	{new_stream(State#http_state{connection=Conn}, StreamRef, ReplyTo, Method),
+		EvHandlerState}.
 
 host_header(Transport, Host0, Port) ->
 	Host = case Host0 of
@@ -399,14 +436,15 @@ transform_header_names(#http_state{transform_header_name = Fun}, Headers) ->
 	lists:keymap(Fun, 1, Headers).
 
 %% We are expecting a new stream.
-data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _) ->
-	error_stream_closed(State, StreamRef, ReplyTo);
+data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _, _, EvHandlerState) ->
+	{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
 %% There are no active streams.
-data(State=#http_state{streams=[]}, StreamRef, ReplyTo, _, _) ->
-	error_stream_not_found(State, StreamRef, ReplyTo);
+data(State=#http_state{streams=[]}, StreamRef, ReplyTo, _, _, _, EvHandlerState) ->
+	{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState};
 %% We can only send data on the last created stream.
 data(State=#http_state{socket=Socket, transport=Transport, version=Version,
-		out=Out, streams=Streams}, StreamRef, ReplyTo, IsFin, Data) ->
+		out=Out, streams=Streams}, StreamRef, ReplyTo, IsFin, Data,
+		EvHandler, EvHandlerState0) ->
 	case lists:last(Streams) of
 		#stream{ref=StreamRef, is_alive=true} ->
 			DataLength = iolist_size(Data),
@@ -421,25 +459,35 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 								cow_http_te:last_chunk()
 							])
 					end,
-					State#http_state{out=head};
+					RequestEndEvent = #{
+						stream_ref => StreamRef,
+						reply_to => ReplyTo
+					},
+					EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState0),
+					{State#http_state{out=head}, EvHandlerState};
 				body_chunked when Version =:= 'HTTP/1.1' ->
 					Transport:send(Socket, cow_http_te:chunk(Data)),
-					State;
+					{State, EvHandlerState0};
 				{body, Length} when DataLength =< Length ->
 					Transport:send(Socket, Data),
 					Length2 = Length - DataLength,
 					if
 						Length2 =:= 0, IsFin =:= fin ->
-							State#http_state{out=head};
+							RequestEndEvent = #{
+								stream_ref => StreamRef,
+								reply_to => ReplyTo
+							},
+							EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState0),
+							{State#http_state{out=head}, EvHandlerState};
 						Length2 > 0, IsFin =:= nofin ->
-							State#http_state{out={body, Length2}}
+							{State#http_state{out={body, Length2}}, EvHandlerState0}
 					end;
 				body_chunked -> %% HTTP/1.0
 					Transport:send(Socket, Data),
-					State
+					{State, EvHandlerState0}
 			end;
 		_ ->
-			error_stream_not_found(State, StreamRef, ReplyTo)
+			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
 	end.
 
 connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _) when Streams =/= [] ->

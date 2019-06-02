@@ -18,6 +18,9 @@
 -export([init/2]).
 -export([connect_start/2]).
 -export([connect_end/2]).
+-export([request_start/2]).
+-export([request_headers/2]).
+-export([request_end/2]).
 -export([disconnect/2]).
 -export([terminate/2]).
 
@@ -28,6 +31,15 @@ connect_start(_EventData, State) ->
 	State.
 
 connect_end(_EventData, State) ->
+	State.
+
+request_start(_EventData, State) ->
+	State.
+
+request_headers(_EventData, State) ->
+	State.
+
+request_end(_EventData, State) ->
 	State.
 
 disconnect(_EventData, State) ->

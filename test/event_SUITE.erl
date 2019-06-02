@@ -23,7 +23,17 @@
 -import(gun_test, [init_origin/1]).
 
 all() ->
-	ct_helper:all(?MODULE).
+	[
+		{group, http},
+		{group, http2}
+	].
+
+groups() ->
+	Tests = ct_helper:all(?MODULE),
+	[
+		{http, [parallel], Tests},
+		{http2, [parallel], Tests}
+	].
 
 init_per_suite(Config) ->
 	{ok, _} = cowboy:start_clear(?MODULE, [], #{env => #{
@@ -37,10 +47,13 @@ end_per_suite(_) ->
 
 %% init.
 
-init(_) ->
+init(Config) ->
 	doc("Confirm that the init event callback is called."),
 	Self = self(),
-	Opts = #{event_handler => {?MODULE, Self}},
+	Opts = #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))]
+	},
 	{ok, Pid} = gun:open("localhost", 12345, Opts),
 	#{
 		owner := Self,
@@ -54,11 +67,9 @@ init(_) ->
 
 %% connect_start/connect_end.
 
-connect_start(_) ->
+connect_start(Config) ->
 	doc("Confirm that the connect_start event callback is called."),
-	Self = self(),
-	Opts = #{event_handler => {?MODULE, Self}},
-	{ok, Pid} = gun:open("localhost", 12345, Opts),
+	{ok, Pid, _} = do_gun_open(12345, Config),
 	#{
 		host := "localhost",
 		port := 12345,
@@ -68,11 +79,9 @@ connect_start(_) ->
 	} = do_receive_event(?FUNCTION_NAME),
 	gun:close(Pid).
 
-connect_end_error(_) ->
+connect_end_error(Config) ->
 	doc("Confirm that the connect_end event callback is called on connect failure."),
-	Self = self(),
-	Opts = #{event_handler => {?MODULE, Self}},
-	{ok, Pid} = gun:open("localhost", 12345, Opts),
+	{ok, Pid, _} = do_gun_open(12345, Config),
 	#{
 		host := "localhost",
 		port := 12345,
@@ -85,10 +94,8 @@ connect_end_error(_) ->
 
 connect_end_ok(Config) ->
 	doc("Confirm that the connect_end event callback is called on connect success."),
-	Self = self(),
-	Opts = #{event_handler => {?MODULE, Self}},
-	OriginPort = config(origin_port, Config),
-	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
+	{ok, Pid, OriginPort} = do_gun_open(Config),
+	{ok, Protocol} = gun:await_up(Pid),
 	#{
 		host := "localhost",
 		port := OriginPort,
@@ -96,17 +103,111 @@ connect_end_ok(Config) ->
 		transport_opts := _,
 		timeout := _,
 		socket := _,
-		protocol := http
+		protocol := Protocol
 	} = do_receive_event(connect_end),
 	gun:close(Pid).
 
-disconnect(_) ->
+request_start(Config) ->
+	doc("Confirm that the request_start event callback is called."),
+	do_request_event(Config, ?FUNCTION_NAME),
+	do_request_event_headers(Config, ?FUNCTION_NAME).
+
+request_headers(Config) ->
+	doc("Confirm that the request_headers event callback is called."),
+	do_request_event(Config, ?FUNCTION_NAME),
+	do_request_event_headers(Config, ?FUNCTION_NAME).
+
+do_request_event(Config, EventName) ->
+	{ok, Pid, OriginPort} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/"),
+	ReplyTo = self(),
+	Authority = iolist_to_binary([<<"localhost:">>, integer_to_list(OriginPort)]),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		function := request,
+		method := <<"GET">>,
+		authority := EventAuthority,
+		path := "/",
+		headers := [_|_]
+	} = do_receive_event(EventName),
+	Authority = iolist_to_binary(EventAuthority),
+	gun:close(Pid).
+
+do_request_event_headers(Config, EventName) ->
+	{ok, Pid, OriginPort} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:put(Pid, "/", [
+		{<<"content-type">>, <<"text/plain">>}
+	]),
+	ReplyTo = self(),
+	Authority = iolist_to_binary([<<"localhost:">>, integer_to_list(OriginPort)]),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		function := headers,
+		method := <<"PUT">>,
+		authority := EventAuthority,
+		path := "/",
+		headers := [_|_]
+	} = do_receive_event(EventName),
+	Authority = iolist_to_binary(EventAuthority),
+	gun:close(Pid).
+
+request_end(Config) ->
+	doc("Confirm that the request_end event callback is called."),
+	do_request_end_event(Config, ?FUNCTION_NAME),
+	do_request_end_event_headers(Config, ?FUNCTION_NAME),
+	do_request_end_event_headers_content_length(Config, ?FUNCTION_NAME).
+
+do_request_end_event(Config, EventName) ->
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+do_request_end_event_headers(Config, EventName) ->
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:put(Pid, "/", [
+		{<<"content-type">>, <<"text/plain">>}
+	]),
+	gun:data(Pid, StreamRef, nofin, <<"Hello ">>),
+	gun:data(Pid, StreamRef, fin, <<"world!">>),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+do_request_end_event_headers_content_length(Config, EventName) ->
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:put(Pid, "/", [
+		{<<"content-type">>, <<"text/plain">>},
+		{<<"content-length">>, <<"12">>}
+	]),
+	gun:data(Pid, StreamRef, nofin, <<"Hello ">>),
+	gun:data(Pid, StreamRef, fin, <<"world!">>),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+disconnect(Config) ->
 	doc("Confirm that the disconnect event callback is called on disconnect."),
-	Self = self(),
-	Opts = #{event_handler => {?MODULE, Self}},
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
-	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
-	{ok, http} = gun:await_up(Pid),
+	{ok, Pid, _} = do_gun_open(OriginPort, Config),
+	{ok, _} = gun:await_up(Pid),
 	%% We make the origin exit to trigger a disconnect.
 	unlink(OriginPid),
 	exit(OriginPid, shutdown),
@@ -115,11 +216,9 @@ disconnect(_) ->
 	} = do_receive_event(disconnect),
 	gun:close(Pid).
 
-terminate(_) ->
+terminate(Config) ->
 	doc("Confirm that the terminate event callback is called on terminate."),
-	Self = self(),
-	Opts = #{event_handler => {?MODULE, Self}},
-	{ok, Pid} = gun:open("localhost", 12345, Opts),
+	{ok, Pid, _} = do_gun_open(12345, Config),
 	gun:close(Pid),
 	#{
 		state := not_connected,
@@ -128,6 +227,18 @@ terminate(_) ->
 	ok.
 
 %% Internal.
+
+do_gun_open(Config) ->
+	OriginPort = config(origin_port, Config),
+	do_gun_open(OriginPort, Config).
+
+do_gun_open(OriginPort, Config) ->
+	Opts = #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))]
+	},
+	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
+	{ok, Pid, OriginPort}.
 
 do_receive_event(Event) ->
 	receive
@@ -151,6 +262,18 @@ connect_start(EventData, Pid) ->
 	Pid.
 
 connect_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+request_start(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+request_headers(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+request_end(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
