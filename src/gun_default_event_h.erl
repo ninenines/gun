@@ -21,6 +21,9 @@
 -export([request_start/2]).
 -export([request_headers/2]).
 -export([request_end/2]).
+-export([response_inform/2]).
+-export([response_headers/2]).
+-export([response_end/2]).
 -export([disconnect/2]).
 -export([terminate/2]).
 
@@ -40,6 +43,15 @@ request_headers(_EventData, State) ->
 	State.
 
 request_end(_EventData, State) ->
+	State.
+
+response_inform(_EventData, State) ->
+	State.
+
+response_headers(_EventData, State) ->
+	State.
+
+response_end(_EventData, State) ->
 	State.
 
 disconnect(_EventData, State) ->

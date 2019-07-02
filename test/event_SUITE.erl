@@ -37,7 +37,13 @@ groups() ->
 
 init_per_suite(Config) ->
 	{ok, _} = cowboy:start_clear(?MODULE, [], #{env => #{
-		dispatch => cowboy_router:compile([{'_', [{"/", ws_echo, []}]}])
+		dispatch => cowboy_router:compile([{'_', [
+			{"/", hello_h, []},
+			{"/empty", empty_h, []},
+			{"/inform", inform_h, []},
+			{"/stream", stream_h, []},
+			{"/trailers", trailers_h, []}
+		]}])
 	}}),
 	OriginPort = ranch:get_port(?MODULE),
 	[{origin_port, OriginPort}|Config].
@@ -157,11 +163,11 @@ do_request_event_headers(Config, EventName) ->
 
 request_end(Config) ->
 	doc("Confirm that the request_end event callback is called."),
-	do_request_end_event(Config, ?FUNCTION_NAME),
-	do_request_end_event_headers(Config, ?FUNCTION_NAME),
-	do_request_end_event_headers_content_length(Config, ?FUNCTION_NAME).
+	do_request_end(Config, ?FUNCTION_NAME),
+	do_request_end_headers(Config, ?FUNCTION_NAME),
+	do_request_end_headers_content_length(Config, ?FUNCTION_NAME).
 
-do_request_end_event(Config, EventName) ->
+do_request_end(Config, EventName) ->
 	{ok, Pid, _} = do_gun_open(Config),
 	{ok, _} = gun:await_up(Pid),
 	StreamRef = gun:get(Pid, "/"),
@@ -172,7 +178,7 @@ do_request_end_event(Config, EventName) ->
 	} = do_receive_event(EventName),
 	gun:close(Pid).
 
-do_request_end_event_headers(Config, EventName) ->
+do_request_end_headers(Config, EventName) ->
 	{ok, Pid, _} = do_gun_open(Config),
 	{ok, _} = gun:await_up(Pid),
 	StreamRef = gun:put(Pid, "/", [
@@ -187,7 +193,7 @@ do_request_end_event_headers(Config, EventName) ->
 	} = do_receive_event(EventName),
 	gun:close(Pid).
 
-do_request_end_event_headers_content_length(Config, EventName) ->
+do_request_end_headers_content_length(Config, EventName) ->
 	{ok, Pid, _} = do_gun_open(Config),
 	{ok, _} = gun:await_up(Pid),
 	StreamRef = gun:put(Pid, "/", [
@@ -196,6 +202,58 @@ do_request_end_event_headers_content_length(Config, EventName) ->
 	]),
 	gun:data(Pid, StreamRef, nofin, <<"Hello ">>),
 	gun:data(Pid, StreamRef, fin, <<"world!">>),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+response_inform(Config) ->
+	doc("Confirm that the request_inform event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/inform"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		status := 103,
+		headers := [_|_]
+	} = do_receive_event(?FUNCTION_NAME),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		status := 103,
+		headers := [_|_]
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+response_headers(Config) ->
+	doc("Confirm that the request_headers event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		status := 200,
+		headers := [_|_]
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+response_end(Config) ->
+	doc("Confirm that the request_headers event callback is called."),
+	do_response_end(Config, ?FUNCTION_NAME, "/"),
+	do_response_end(Config, ?FUNCTION_NAME, "/empty"),
+	do_response_end(Config, ?FUNCTION_NAME, "/stream"),
+	do_response_end(Config, ?FUNCTION_NAME, "/trailers").
+
+do_response_end(Config, EventName, Path) ->
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, Path),
 	ReplyTo = self(),
 	#{
 		stream_ref := StreamRef,
@@ -274,6 +332,18 @@ request_headers(EventData, Pid) ->
 	Pid.
 
 request_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+response_inform(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+response_headers(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+response_end(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 

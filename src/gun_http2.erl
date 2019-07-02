@@ -161,14 +161,21 @@ maybe_ack(State=#http2_state{socket=Socket, transport=Transport}, Frame) ->
 
 data_frame(State=#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine0}, StreamID, IsFin, Data,
-		_EvHandler, EvHandlerState) ->
-	Stream = #stream{handler_state=Handlers0} = get_stream_by_id(State, StreamID),
+		EvHandler, EvHandlerState0) ->
+	Stream = #stream{ref=StreamRef, reply_to=ReplyTo,
+		handler_state=Handlers0} = get_stream_by_id(State, StreamID),
 	Handlers = gun_content_handler:handle(IsFin, Data, Handlers0),
 	Size = byte_size(Data),
-	HTTP2Machine = case Size of
+	{HTTP2Machine, EvHandlerState} = case Size of
 		%% We do not send a WINDOW_UPDATE if the DATA frame was of size 0.
+		0 when IsFin =:= fin ->
+			EvHandlerState1 = EvHandler:response_end(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo
+			}, EvHandlerState0),
+			{HTTP2Machine0, EvHandlerState1};
 		0 ->
-			HTTP2Machine0;
+			{HTTP2Machine0, EvHandlerState0};
 		_ ->
 			Transport:send(Socket, cow_http2:window_update(Size)),
 			HTTP2Machine1 = cow_http2_machine:update_window(Size, HTTP2Machine0),
@@ -176,9 +183,14 @@ data_frame(State=#http2_state{socket=Socket, transport=Transport,
 			case IsFin of
 				nofin ->
 					Transport:send(Socket, cow_http2:window_update(StreamID, Size)),
-					cow_http2_machine:update_window(StreamID, Size, HTTP2Machine1);
+					{cow_http2_machine:update_window(StreamID, Size, HTTP2Machine1),
+						EvHandlerState0};
 				fin ->
-					HTTP2Machine1
+					EvHandlerState1 = EvHandler:response_end(#{
+						stream_ref => StreamRef,
+						reply_to => ReplyTo
+					}, EvHandlerState0),
+					{HTTP2Machine1, EvHandlerState1}
 			end
 	end,
 	{maybe_delete_stream(store_stream(State#http2_state{http2_machine=HTTP2Machine},
@@ -187,29 +199,50 @@ data_frame(State=#http2_state{socket=Socket, transport=Transport,
 
 headers_frame(State=#http2_state{content_handlers=Handlers0},
 		StreamID, IsFin, Headers, PseudoHeaders, _BodyLen,
-		_EvHandler, EvHandlerState) ->
+		EvHandler, EvHandlerState0) ->
 	Stream = #stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, StreamID),
 	case PseudoHeaders of
 		#{status := Status} when Status >= 100, Status =< 199 ->
 			ReplyTo ! {gun_inform, self(), StreamRef, Status, Headers},
+			EvHandlerState = EvHandler:response_inform(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo,
+				status => Status,
+				headers => Headers
+			}, EvHandlerState0),
 			{State, EvHandlerState};
 		#{status := Status} ->
 			ReplyTo ! {gun_response, self(), StreamRef, IsFin, Status, Headers},
-			Handlers = case IsFin of
-				fin -> undefined;
+			EvHandlerState1 = EvHandler:response_headers(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo,
+				status => Status,
+				headers => Headers
+			}, EvHandlerState0),
+			{Handlers, EvHandlerState} = case IsFin of
+				fin ->
+					EvHandlerState2 = EvHandler:response_end(#{
+						stream_ref => StreamRef,
+						reply_to => ReplyTo
+					}, EvHandlerState1),
+					{undefined, EvHandlerState2};
 				nofin ->
-					gun_content_handler:init(ReplyTo, StreamRef,
-						Status, Headers, Handlers0)
+					{gun_content_handler:init(ReplyTo, StreamRef,
+						Status, Headers, Handlers0), EvHandlerState1}
 			end,
 			{maybe_delete_stream(store_stream(State, Stream#stream{handler_state=Handlers}),
 				StreamID, remote, IsFin),
 				EvHandlerState}
 	end.
 
-trailers_frame(State, StreamID, Trailers, _EvHandler, EvHandlerState) ->
+trailers_frame(State, StreamID, Trailers, EvHandler, EvHandlerState0) ->
 	#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, StreamID),
 	%% @todo We probably want to pass this to gun_content_handler?
 	ReplyTo ! {gun_trailers, self(), StreamRef, Trailers},
+	EvHandlerState = EvHandler:response_end(#{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo
+	}, EvHandlerState0),
 	{maybe_delete_stream(State, StreamID, remote, fin), EvHandlerState}.
 
 rst_stream_frame(State=#http2_state{streams=Streams0}, StreamID, Reason) ->

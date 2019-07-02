@@ -68,6 +68,27 @@
 
 -callback request_end(request_end_event(), State) -> State.
 
+%% response_inform/response_headers.
+
+-type response_headers_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	status := non_neg_integer(),
+	headers := [{binary(), binary()}]
+}.
+
+-callback response_inform(response_headers_event(), State) -> State.
+-callback response_headers(response_headers_event(), State) -> State.
+
+%% response_end.
+
+-type response_end_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid()
+}.
+
+-callback response_end(response_end_event(), State) -> State.
+
 %% disconnect.
 
 -type disconnect_event() :: #{
@@ -92,10 +113,8 @@
 %% @todo origin_changed
 %% @todo transport_changed
 %% @todo protocol_changed
-%% @todo response_start (call it once per inform + one for the response)
-%% @todo response_inform
-%% @todo response_headers
-%% @todo response_end
+%% @todo response_start (needs changes in cow_http2_machine to have an event before decoding headers)
+%% @todo response_trailers (same)
 %% @todo push_promise_start
 %% @todo push_promise_end
 %% @todo cancel_start
