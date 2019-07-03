@@ -113,7 +113,27 @@ parse(Data, State0=#http2_state{http2_machine=HTTP2Machine}, EvHandler, EvHandle
 
 %% Frames received.
 
-frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandlerState) ->
+frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandlerState0) ->
+	EvHandlerState = if
+		is_tuple(Frame) andalso element(1, Frame) =:= headers ->
+			EvStreamID = element(2, Frame),
+			case cow_http2_machine:get_stream_remote_state(EvStreamID, HTTP2Machine0) of
+				{ok, idle} ->
+					#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, EvStreamID),
+					EvHandler:response_start(#{
+						stream_ref => StreamRef,
+						reply_to => ReplyTo
+					}, EvHandlerState0);
+				{ok, nofin} ->
+					%% @todo response_trailers.
+					EvHandlerState0;
+				%% This is an invalid headers frame.
+				_ ->
+					EvHandlerState0
+			end;
+		true ->
+			EvHandlerState0
+	end,
 	case cow_http2_machine:frame(Frame, HTTP2Machine0) of
 		{ok, HTTP2Machine} ->
 			{maybe_ack(State#http2_state{http2_machine=HTTP2Machine}, Frame),

@@ -68,6 +68,15 @@
 
 -callback request_end(request_end_event(), State) -> State.
 
+%% response_start.
+
+-type response_start_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid()
+}.
+
+-callback response_start(response_start_event(), State) -> State.
+
 %% response_inform/response_headers.
 
 -type response_headers_event() :: #{
@@ -113,8 +122,7 @@
 %% @todo origin_changed
 %% @todo transport_changed
 %% @todo protocol_changed
-%% @todo response_start (needs changes in cow_http2_machine to have an event before decoding headers)
-%% @todo response_trailers (same)
+%% @todo response_trailers
 %% @todo push_promise_start
 %% @todo push_promise_end
 %% @todo cancel_start

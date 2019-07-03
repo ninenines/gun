@@ -100,7 +100,19 @@ handle(<<>>, State, _, EvHandlerState) ->
 handle(_, #http_state{streams=[]}, _, EvHandlerState) ->
 	{close, EvHandlerState};
 %% Wait for the full response headers before trying to parse them.
-handle(Data, State=#http_state{in=head, buffer=Buffer}, EvHandler, EvHandlerState) ->
+handle(Data, State=#http_state{in=head, buffer=Buffer,
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]}, EvHandler, EvHandlerState0) ->
+	%% Send the event only if there was no data in the buffer.
+	%% If there is data in the buffer then we already sent the event.
+	EvHandlerState = case Buffer of
+		<<>> ->
+			EvHandler:response_start(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo
+			}, EvHandlerState0);
+		_ ->
+			EvHandlerState0
+	end,
 	Data2 = << Buffer/binary, Data/binary >>,
 	case binary:match(Data2, <<"\r\n\r\n">>) of
 		nomatch -> {{state, State#http_state{buffer=Data2}}, EvHandlerState};

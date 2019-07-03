@@ -209,6 +209,18 @@ do_request_end_headers_content_length(Config, EventName) ->
 	} = do_receive_event(EventName),
 	gun:close(Pid).
 
+response_start(Config) ->
+	doc("Confirm that the request_start event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
 response_inform(Config) ->
 	doc("Confirm that the request_inform event callback is called."),
 	{ok, Pid, _} = do_gun_open(Config),
@@ -332,6 +344,10 @@ request_headers(EventData, Pid) ->
 	Pid.
 
 request_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+response_start(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
