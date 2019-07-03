@@ -197,10 +197,12 @@ handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
 			{Trailers, Rest} = cow_http:parse_headers(Data2),
 			%% @todo We probably want to pass this to gun_content_handler?
 			ReplyTo ! {gun_trailers, self(), stream_ref(StreamRef), Trailers},
-			EvHandlerState = EvHandler:response_end(#{
+			ResponseEvent = #{
 				stream_ref => StreamRef,
 				reply_to => ReplyTo
-			}, EvHandlerState0),
+			},
+			EvHandlerState1 = EvHandler:response_trailers(ResponseEvent#{headers => Trailers}, EvHandlerState0),
+			EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
 			case Conn of
 				keepalive ->
 					handle(Rest, end_stream(State#http_state{buffer= <<>>}), EvHandler, EvHandlerState);

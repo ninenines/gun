@@ -89,6 +89,16 @@
 -callback response_inform(response_headers_event(), State) -> State.
 -callback response_headers(response_headers_event(), State) -> State.
 
+%% response_trailers.
+
+-type response_trailers_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	headers := [{binary(), binary()}]
+}.
+
+-callback response_trailers(response_trailers_event(), State) -> State.
+
 %% response_end.
 
 -type response_end_event() :: #{
@@ -122,7 +132,6 @@
 %% @todo origin_changed
 %% @todo transport_changed
 %% @todo protocol_changed
-%% @todo response_trailers
 %% @todo push_promise_start
 %% @todo push_promise_end
 %% @todo cancel_start

@@ -24,6 +24,7 @@
 -export([response_start/2]).
 -export([response_inform/2]).
 -export([response_headers/2]).
+-export([response_trailers/2]).
 -export([response_end/2]).
 -export([disconnect/2]).
 -export([terminate/2]).
@@ -53,6 +54,9 @@ response_inform(_EventData, State) ->
 	State.
 
 response_headers(_EventData, State) ->
+	State.
+
+response_trailers(_EventData, State) ->
 	State.
 
 response_end(_EventData, State) ->

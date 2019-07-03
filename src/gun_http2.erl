@@ -124,10 +124,7 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandl
 						stream_ref => StreamRef,
 						reply_to => ReplyTo
 					}, EvHandlerState0);
-				{ok, nofin} ->
-					%% @todo response_trailers.
-					EvHandlerState0;
-				%% This is an invalid headers frame.
+				%% Trailers or invalid header frame.
 				_ ->
 					EvHandlerState0
 			end;
@@ -259,10 +256,12 @@ trailers_frame(State, StreamID, Trailers, EvHandler, EvHandlerState0) ->
 	#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, StreamID),
 	%% @todo We probably want to pass this to gun_content_handler?
 	ReplyTo ! {gun_trailers, self(), StreamRef, Trailers},
-	EvHandlerState = EvHandler:response_end(#{
+	ResponseEvent = #{
 		stream_ref => StreamRef,
 		reply_to => ReplyTo
-	}, EvHandlerState0),
+	},
+	EvHandlerState1 = EvHandler:response_trailers(ResponseEvent#{headers => Trailers}, EvHandlerState0),
+	EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
 	{maybe_delete_stream(State, StreamID, remote, fin), EvHandlerState}.
 
 rst_stream_frame(State=#http2_state{streams=Streams0}, StreamID, Reason) ->

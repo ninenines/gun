@@ -255,6 +255,19 @@ response_headers(Config) ->
 	} = do_receive_event(?FUNCTION_NAME),
 	gun:close(Pid).
 
+response_trailers(Config) ->
+	doc("Confirm that the request_trailers event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/trailers", [{<<"te">>, <<"trailers">>}]),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		headers := [_|_]
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
 response_end(Config) ->
 	doc("Confirm that the request_headers event callback is called."),
 	do_response_end(Config, ?FUNCTION_NAME, "/"),
@@ -265,7 +278,7 @@ response_end(Config) ->
 do_response_end(Config, EventName, Path) ->
 	{ok, Pid, _} = do_gun_open(Config),
 	{ok, _} = gun:await_up(Pid),
-	StreamRef = gun:get(Pid, Path),
+	StreamRef = gun:get(Pid, Path, [{<<"te">>, <<"trailers">>}]),
 	ReplyTo = self(),
 	#{
 		stream_ref := StreamRef,
@@ -356,6 +369,10 @@ response_inform(EventData, Pid) ->
 	Pid.
 
 response_headers(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+response_trailers(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
