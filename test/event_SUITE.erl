@@ -32,7 +32,7 @@ groups() ->
 	Tests = ct_helper:all(?MODULE),
 	[
 		{http, [parallel], Tests},
-		{http2, [parallel], Tests}
+		{http2, [parallel], Tests -- [ws_upgrade, ws_upgrade_all_events, protocol_changed]}
 	].
 
 init_per_suite(Config) ->
@@ -42,7 +42,8 @@ init_per_suite(Config) ->
 			{"/empty", empty_h, []},
 			{"/inform", inform_h, []},
 			{"/stream", stream_h, []},
-			{"/trailers", trailers_h, []}
+			{"/trailers", trailers_h, []},
+			{"/ws", ws_echo, []}
 		]}])
 	}}),
 	OriginPort = ranch:get_port(?MODULE),
@@ -165,7 +166,8 @@ request_end(Config) ->
 	doc("Confirm that the request_end event callback is called."),
 	do_request_end(Config, ?FUNCTION_NAME),
 	do_request_end_headers(Config, ?FUNCTION_NAME),
-	do_request_end_headers_content_length(Config, ?FUNCTION_NAME).
+	do_request_end_headers_content_length(Config, ?FUNCTION_NAME),
+	do_request_end_headers_content_length_0(Config, ?FUNCTION_NAME).
 
 do_request_end(Config, EventName) ->
 	{ok, Pid, _} = do_gun_open(Config),
@@ -202,6 +204,21 @@ do_request_end_headers_content_length(Config, EventName) ->
 	]),
 	gun:data(Pid, StreamRef, nofin, <<"Hello ">>),
 	gun:data(Pid, StreamRef, fin, <<"world!">>),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+do_request_end_headers_content_length_0(Config, EventName) ->
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:put(Pid, "/", [
+		{<<"content-type">>, <<"text/plain">>},
+		{<<"content-length">>, <<"0">>}
+	]),
+	gun:data(Pid, StreamRef, fin, <<>>),
 	ReplyTo = self(),
 	#{
 		stream_ref := StreamRef,
@@ -283,6 +300,84 @@ do_response_end(Config, EventName, Path) ->
 	#{
 		stream_ref := StreamRef,
 		reply_to := ReplyTo
+	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+ws_upgrade(Config) ->
+	doc("Confirm that the ws_upgrade event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:ws_upgrade(Pid, "/ws"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		opts := #{}
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+ws_upgrade_all_events(Config) ->
+	doc("Confirm that a Websocket upgrade triggers all relevant events."),
+	{ok, Pid, OriginPort} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:ws_upgrade(Pid, "/ws"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		opts := #{}
+	} = do_receive_event(ws_upgrade),
+	Authority = iolist_to_binary([<<"localhost:">>, integer_to_list(OriginPort)]),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		function := ws_upgrade,
+		method := <<"GET">>,
+		authority := EventAuthority1,
+		path := "/ws",
+		headers := [_|_]
+	} = do_receive_event(request_start),
+	Authority = iolist_to_binary(EventAuthority1),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		function := ws_upgrade,
+		method := <<"GET">>,
+		authority := EventAuthority2,
+		path := "/ws",
+		headers := [_|_]
+	} = do_receive_event(request_headers),
+	Authority = iolist_to_binary(EventAuthority2),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(request_end),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(response_start),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		status := 101,
+		headers := [_|_]
+	} = do_receive_event(response_inform),
+	#{
+		protocol := ws
+	} = do_receive_event(protocol_changed),
+	gun:close(Pid).
+
+protocol_changed(Config) ->
+	doc("Confirm that the protocol_changed event callback is called."),
+	do_protocol_changed_ws(Config, ?FUNCTION_NAME).
+	%% @todo do_protocol_changed_connect
+
+do_protocol_changed_ws(Config, EventName) ->
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	_ = gun:ws_upgrade(Pid, "/ws"),
+	#{
+		protocol := ws
 	} = do_receive_event(EventName),
 	gun:close(Pid).
 
@@ -377,6 +472,14 @@ response_trailers(EventData, Pid) ->
 	Pid.
 
 response_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+ws_upgrade(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+protocol_changed(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 

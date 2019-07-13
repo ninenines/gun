@@ -905,25 +905,25 @@ connected(cast, {cancel, ReplyTo, StreamRef},
 %% Public Websocket interface.
 %% @todo Maybe make an interface in the protocol module instead of checking on protocol name.
 %% An interface would also make sure that HTTP/1.0 can't upgrade.
-connected(cast, {ws_upgrade, Owner, StreamRef, Path, Headers},
-		State=#state{owner=Owner, origin_host=Host, origin_port=Port, opts=Opts,
-			protocol=Protocol, protocol_state=ProtoState})
-		when Protocol =:= gun_http ->
+connected(cast, {ws_upgrade, Owner, StreamRef, Path, Headers}, State=#state{opts=Opts}) ->
 	WsOpts = maps:get(ws_opts, Opts, #{}),
-	ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, WsOpts),
-	{keep_state, State#state{protocol_state=ProtoState2}};
+	connected(cast, {ws_upgrade, Owner, StreamRef, Path, Headers, WsOpts}, State);
 connected(cast, {ws_upgrade, Owner, StreamRef, Path, Headers, WsOpts},
 		State=#state{owner=Owner, origin_host=Host, origin_port=Port,
-			protocol=Protocol, protocol_state=ProtoState})
+			protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0})
 		when Protocol =:= gun_http ->
-	ProtoState2 = Protocol:ws_upgrade(ProtoState, StreamRef, Host, Port, Path, Headers, WsOpts),
-	{keep_state, State#state{protocol_state=ProtoState2}};
-	%% @todo can fail if http/1.0
-%% @todo Probably don't error out here, have a protocol function/command.
-connected(cast, {ws_upgrade, ReplyTo, StreamRef, _, _}, _) ->
-	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
-		"Websocket is only supported over HTTP/1.1."}},
-	keep_state_and_data;
+	EvHandlerState1 = EvHandler:ws_upgrade(#{
+		stream_ref => StreamRef,
+		reply_to => Owner, %% Only the owner can upgrade the connection at this time.
+		opts => WsOpts
+	}, EvHandlerState0),
+	%% @todo Can fail if HTTP/1.0.
+	{ProtoState2, EvHandlerState} = Protocol:ws_upgrade(ProtoState,
+		StreamRef, Host, Port, Path, Headers, WsOpts,
+		EvHandler, EvHandlerState1),
+	{keep_state, State#state{protocol_state=ProtoState2,
+		event_handler_state=EvHandlerState}};
 connected(cast, {ws_upgrade, ReplyTo, StreamRef, _, _, _}, _) ->
 	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 		"Websocket is only supported over HTTP/1.1."}},
@@ -1004,14 +1004,20 @@ commands([{switch_transport, Transport, Socket}|Tail], State) ->
 	commands(Tail, active(State#state{socket=Socket, transport=Transport,
 		messages=Transport:messages()}));
 %% @todo The two loops should be reunified and this clause generalized.
-commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State) ->
-	{keep_state, keepalive_cancel(State#state{protocol=Protocol, protocol_state=ProtoState})};
+commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State=#state{
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
+	{keep_state, keepalive_cancel(State#state{protocol=Protocol, protocol_state=ProtoState,
+		event_handler_state=EvHandlerState})};
 %% @todo And this state should probably not be ignored.
-commands([{switch_protocol, Protocol, _ProtoState0}|Tail],
-		State=#state{owner=Owner, opts=Opts, socket=Socket, transport=Transport}) ->
+commands([{switch_protocol, Protocol, _ProtoState0}|Tail], State=#state{
+		owner=Owner, opts=Opts, socket=Socket, transport=Transport,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	ProtoOpts = maps:get(http2_opts, Opts, #{}),
 	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
-	commands(Tail, keepalive_timeout(State#state{protocol=Protocol, protocol_state=ProtoState})).
+	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
+	commands(Tail, keepalive_timeout(State#state{protocol=Protocol, protocol_state=ProtoState,
+		event_handler_state=EvHandlerState})).
 
 disconnect(State=#state{owner=Owner, opts=Opts,
 		socket=Socket, transport=Transport,

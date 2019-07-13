@@ -26,6 +26,8 @@
 -export([response_headers/2]).
 -export([response_trailers/2]).
 -export([response_end/2]).
+-export([ws_upgrade/2]).
+-export([protocol_changed/2]).
 -export([disconnect/2]).
 -export([terminate/2]).
 
@@ -60,6 +62,12 @@ response_trailers(_EventData, State) ->
 	State.
 
 response_end(_EventData, State) ->
+	State.
+
+ws_upgrade(_EventData, State) ->
+	State.
+
+protocol_changed(_EventData, State) ->
 	State.
 
 disconnect(_EventData, State) ->

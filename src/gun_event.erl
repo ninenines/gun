@@ -48,7 +48,7 @@
 -type request_start_event() :: #{
 	stream_ref := reference(),
 	reply_to := pid(),
-	function := headers | request,
+	function := headers | request | ws_upgrade,
 	method := iodata(),
 	scheme => binary(),
 	authority := iodata(),
@@ -108,6 +108,38 @@
 
 -callback response_end(response_end_event(), State) -> State.
 
+%% ws_upgrade.
+%%
+%% This event is a signal that the following request and response
+%% result from a gun:ws_upgrade/2,3,4 call.
+%%
+%% There is no corresponding "end" event. Instead, the success is
+%% indicated by a protocol_changed event following the informational
+%% response.
+
+-type ws_upgrade_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	opts := gun:ws_opts()
+}.
+
+-callback ws_upgrade(ws_upgrade_event(), State) -> State.
+
+%% protocol_changed.
+%%
+%% This event can occur either following a successful ws_upgrade
+%% event or following a successful CONNECT request.
+%%
+%% @todo Currently there is only a connection-wide variant of this
+%% event. In the future there will be a stream-wide variant to
+%% support CONNECT and Websocket over HTTP/2.
+
+-type protocol_changed_event() :: #{
+	protocol := http2 | ws
+}.
+
+-callback protocol_changed(protocol_changed_event(), State) -> State.
+
 %% disconnect.
 
 -type disconnect_event() :: #{
@@ -131,13 +163,10 @@
 %% @todo tls_handshake_end
 %% @todo origin_changed
 %% @todo transport_changed
-%% @todo protocol_changed
 %% @todo push_promise_start
 %% @todo push_promise_end
 %% @todo cancel_start
 %% @todo cancel_end
-%% @todo ws_upgrade_start
-%% @todo ws_upgrade_end
 %% @todo ws_frame_read_start
 %% @todo ws_frame_read_header
 %% @todo ws_frame_read_end

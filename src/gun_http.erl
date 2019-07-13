@@ -27,7 +27,7 @@
 -export([cancel/3]).
 -export([stream_info/2]).
 -export([down/1]).
--export([ws_upgrade/7]).
+-export([ws_upgrade/9]).
 
 %% Functions shared with gun_http2.
 -export([host_header/3]).
@@ -107,7 +107,7 @@ handle(Data, State=#http_state{in=head, buffer=Buffer,
 	EvHandlerState = case Buffer of
 		<<>> ->
 			EvHandler:response_start(#{
-				stream_ref => StreamRef,
+				stream_ref => stream_ref(StreamRef),
 				reply_to => ReplyTo
 			}, EvHandlerState0);
 		_ ->
@@ -255,9 +255,14 @@ handle_head(Data, State=#http_state{socket=Socket, transport=Transport,
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
 	case {Status, StreamRef} of
 		{101, {websocket, RealStreamRef, WsKey, WsExtensions, WsOpts}} ->
-			%% @todo Websocket's 101 response_inform.
+			EvHandlerState = EvHandler:response_inform(#{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo,
+				status => 101,
+				headers => Headers
+			}, EvHandlerState0),
 			{ws_handshake(Rest2, State, RealStreamRef, Headers, WsKey, WsExtensions, WsOpts),
-				EvHandlerState0};
+				EvHandlerState};
 		%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 		{_, {connect, RealStreamRef, Destination}} when Status >= 200, Status < 300 ->
 			case IsAlive of
@@ -424,76 +429,75 @@ keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}) ->
 keepalive(State) ->
 	State.
 
-headers(State=#http_state{socket=Socket, transport=Transport, version=Version, out=head},
+headers(State=#http_state{out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
 		EvHandler, EvHandlerState0) ->
-	Authority0 = host_header(Transport, Host, Port),
-	Headers2 = lists:keydelete(<<"transfer-encoding">>, 1, Headers),
-	%% We use Headers2 because this is the smallest list.
-	Conn = conn_from_headers(Version, Headers2),
-	Out = request_io_from_headers(Headers2),
-	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
-		false -> {Authority0, [{<<"host">>, Authority0}|Headers2]};
-		{_, Authority1} -> {Authority1, Headers2}
-	end,
-	Headers4 = case Out of
-		body_chunked when Version =:= 'HTTP/1.0' -> Headers3;
-		body_chunked -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers3];
-		_ -> Headers3
-	end,
-	Headers5 = transform_header_names(State, Headers4),
-	RequestEvent = #{
-		stream_ref => StreamRef,
-		reply_to => ReplyTo,
-		function => ?FUNCTION_NAME,
-		method => Method,
-		authority => Authority,
-		path => Path,
-		headers => Headers5
-	},
-	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
-	Transport:send(Socket, cow_http:request(Method, Path, Version, Headers5)),
-	EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+	{Conn, Out, EvHandlerState} = send_request(State, StreamRef, ReplyTo,
+		Method, Host, Port, Path, Headers, undefined,
+		EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo, Method),
 		EvHandlerState}.
 
-request(State=#http_state{socket=Socket, transport=Transport, version=Version, out=head},
-		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
-		EvHandler, EvHandlerState0) ->
-	Authority0 = host_header(Transport, Host, Port),
-	Headers2 = lists:keydelete(<<"content-length">>, 1,
-		lists:keydelete(<<"transfer-encoding">>, 1, Headers)),
+request(State=#http_state{out=head}, StreamRef, ReplyTo,
+		Method, Host, Port, Path, Headers, Body, EvHandler, EvHandlerState0) ->
+	{Conn, Out, EvHandlerState} = send_request(State, StreamRef, ReplyTo,
+		Method, Host, Port, Path, Headers, Body,
+		EvHandler, EvHandlerState0, ?FUNCTION_NAME),
+	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo, Method),
+		EvHandlerState}.
+
+send_request(State=#http_state{socket=Socket, transport=Transport, version=Version},
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers0, Body,
+		EvHandler, EvHandlerState0, Function) ->
+	Headers1 = lists:keydelete(<<"transfer-encoding">>, 1, Headers0),
+	Headers2 = case Body of
+		undefined -> Headers1;
+		_ -> lists:keydelete(<<"content-length">>, 1, Headers1)
+	end,
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
+	Out = case Body of
+		undefined when Function =:= ws_upgrade -> head;
+		undefined -> request_io_from_headers(Headers2);
+		_ -> head
+	end,
+	Authority0 = host_header(Transport, Host, Port),
 	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
 		false -> {Authority0, [{<<"host">>, Authority0}|Headers2]};
 		{_, Authority1} -> {Authority1, Headers2}
 	end,
 	Headers4 = transform_header_names(State, Headers3),
-	Headers5 = [
-		{<<"content-length">>, integer_to_binary(iolist_size(Body))}
-	|Headers4],
+	Headers = case {Body, Out} of
+		{undefined, body_chunked} when Version =:= 'HTTP/1.0' -> Headers4;
+		{undefined, body_chunked} -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers4];
+		{undefined, _} -> Headers4;
+		_ -> [{<<"content-length">>, integer_to_binary(iolist_size(Body))}|Headers4]
+	end,
 	RequestEvent = #{
 		stream_ref => StreamRef,
 		reply_to => ReplyTo,
-		function => ?FUNCTION_NAME,
+		function => Function,
 		method => Method,
 		authority => Authority,
 		path => Path,
-		headers => Headers5
+		headers => Headers
 	},
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
 	Transport:send(Socket, [
-		cow_http:request(Method, Path, Version, Headers5),
-		Body]),
+		cow_http:request(Method, Path, Version, Headers),
+		[Body || Body =/= undefined]]),
 	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	RequestEndEvent = #{
-		stream_ref => StreamRef,
-		reply_to => ReplyTo
-	},
-	EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
-	{new_stream(State#http_state{connection=Conn}, StreamRef, ReplyTo, Method),
-		EvHandlerState}.
+	EvHandlerState = case Out of
+		head ->
+			RequestEndEvent = #{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo
+			},
+			EvHandler:request_end(RequestEndEvent, EvHandlerState2);
+		_ ->
+			EvHandlerState2
+	end,
+	{Conn, Out, EvHandlerState}.
 
 host_header(Transport, Host0, Port) ->
 	Host = case Host0 of
@@ -652,17 +656,16 @@ conn_from_headers(Version, Headers) ->
 		false ->
 			keepalive;
 		{_, ConnHd} ->
-			ConnList = cow_http_hd:parse_connection(ConnHd),
-			case lists:member(<<"keep-alive">>, ConnList) of
-				true -> keepalive;
-				false -> close
-			end
+			conn_from_header(cow_http_hd:parse_connection(ConnHd))
 	end.
+
+conn_from_header([]) -> close;
+conn_from_header([<<"keep-alive">>|_]) -> keepalive;
+conn_from_header([<<"upgrade">>|_]) -> keepalive;
+conn_from_header([_|Tail]) -> conn_from_header(Tail).
 
 request_io_from_headers(Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
-		{_, <<"0">>} ->
-			head;
 		{_, Length} ->
 			{body, cow_http_hd:parse_content_length(Length)};
 		_ ->
@@ -716,10 +719,11 @@ end_stream(State=#http_state{streams=[_|Tail]}) ->
 %% Websocket upgrade.
 
 %% Ensure version is 1.1.
-ws_upgrade(#http_state{version='HTTP/1.0'}, _, _, _, _, _, _) ->
-	error; %% @todo
-ws_upgrade(State=#http_state{socket=Socket, transport=Transport, owner=Owner, out=head},
-		StreamRef, Host, Port, Path, Headers0, WsOpts) ->
+ws_upgrade(#http_state{version='HTTP/1.0'}, _, _, _, _, _, _, _, _) ->
+	error; %% @todo Probably don't error out here, have a protocol function/command.
+ws_upgrade(State=#http_state{owner=ReplyTo, out=head},
+		StreamRef, Host, Port, Path, Headers0, WsOpts,
+		EvHandler, EvHandlerState0) ->
 	{Headers1, GunExtensions} = case maps:get(compress, WsOpts, false) of
 		true -> {[{<<"sec-websocket-extensions">>,
 				<<"permessage-deflate; client_max_window_bits; server_max_window_bits=15">>}
@@ -734,20 +738,19 @@ ws_upgrade(State=#http_state{socket=Socket, transport=Transport, owner=Owner, ou
 			[{<<"sec-websocket-protocol">>, Proto}|Headers1]
 	end,
 	Key = cow_ws:key(),
-	Headers3 = [
+	Headers = [
 		{<<"connection">>, <<"upgrade">>},
 		{<<"upgrade">>, <<"websocket">>},
 		{<<"sec-websocket-version">>, <<"13">>},
 		{<<"sec-websocket-key">>, Key}
 		|Headers2
 	],
-	Headers = case lists:keymember(<<"host">>, 1, Headers0) of
-		true -> Headers3;
-		false -> [{<<"host">>, host_header(Transport, Host, Port)}|Headers3]
-	end,
-	Transport:send(Socket, cow_http:request(<<"GET">>, Path, 'HTTP/1.1', Headers)),
-	new_stream(State#http_state{connection=keepalive, out=head},
-		{websocket, StreamRef, Key, GunExtensions, WsOpts}, Owner, <<"GET">>).
+	{Conn, Out, EvHandlerState} = send_request(State, StreamRef, ReplyTo,
+		<<"GET">>, Host, Port, Path, Headers, undefined,
+		EvHandler, EvHandlerState0, ?FUNCTION_NAME),
+	{new_stream(State#http_state{connection=Conn, out=Out},
+		{websocket, StreamRef, Key, GunExtensions, WsOpts}, ReplyTo, <<"GET">>),
+		EvHandlerState}.
 
 ws_handshake(Buffer, State, StreamRef, Headers, Key, GunExtensions, Opts) ->
 	%% @todo check upgrade, connection
