@@ -28,6 +28,11 @@
 -export([response_end/2]).
 -export([ws_upgrade/2]).
 -export([protocol_changed/2]).
+-export([ws_recv_frame_start/2]).
+-export([ws_recv_frame_header/2]).
+-export([ws_recv_frame_end/2]).
+-export([ws_send_frame_start/2]).
+-export([ws_send_frame_end/2]).
 -export([disconnect/2]).
 -export([terminate/2]).
 
@@ -68,6 +73,21 @@ ws_upgrade(_EventData, State) ->
 	State.
 
 protocol_changed(_EventData, State) ->
+	State.
+
+ws_recv_frame_start(_EventData, State) ->
+	State.
+
+ws_recv_frame_header(_EventData, State) ->
+	State.
+
+ws_recv_frame_end(_EventData, State) ->
+	State.
+
+ws_send_frame_start(_EventData, State) ->
+	State.
+
+ws_send_frame_end(_EventData, State) ->
 	State.
 
 disconnect(_EventData, State) ->

@@ -30,9 +30,11 @@ all() ->
 
 groups() ->
 	Tests = ct_helper:all(?MODULE),
+	%% We currently do not support Websocket over HTTP/2.
+	WsTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 3) =:= "ws_"],
 	[
 		{http, [parallel], Tests},
-		{http2, [parallel], Tests -- [ws_upgrade, ws_upgrade_all_events, protocol_changed]}
+		{http2, [parallel], Tests -- [protocol_changed|WsTests]}
 	].
 
 init_per_suite(Config) ->
@@ -381,6 +383,82 @@ do_protocol_changed_ws(Config, EventName) ->
 	} = do_receive_event(EventName),
 	gun:close(Pid).
 
+ws_recv_frame_start(Config) ->
+	doc("Confirm that the ws_recv_frame_start event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:ws_upgrade(Pid, "/ws"),
+	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
+	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		frag_state := undefined,
+		extensions := #{}
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+ws_recv_frame_header(Config) ->
+	doc("Confirm that the ws_recv_frame_header event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:ws_upgrade(Pid, "/ws"),
+	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
+	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		frag_state := undefined,
+		extensions := #{},
+		type := text,
+		rsv := <<0:3>>,
+		len := 6,
+		mask_key := _
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+ws_recv_frame_end(Config) ->
+	doc("Confirm that the ws_recv_frame_end event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:ws_upgrade(Pid, "/ws"),
+	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
+	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		extensions := #{},
+		close_code := undefined,
+		payload := <<"Hello!">>
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+ws_send_frame_start(Config) ->
+	doc("Confirm that the ws_send_frame_start event callback is called."),
+	do_ws_send_frame(Config, ?FUNCTION_NAME).
+
+ws_send_frame_end(Config) ->
+	doc("Confirm that the ws_send_frame_end event callback is called."),
+	do_ws_send_frame(Config, ?FUNCTION_NAME).
+
+do_ws_send_frame(Config, EventName) ->
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:ws_upgrade(Pid, "/ws"),
+	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
+	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		extensions := #{},
+		frame := {text, <<"Hello!">>}
+	} = do_receive_event(EventName),
+	gun:close(Pid).
+
 disconnect(Config) ->
 	doc("Confirm that the disconnect event callback is called on disconnect."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
@@ -480,6 +558,26 @@ ws_upgrade(EventData, Pid) ->
 	Pid.
 
 protocol_changed(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+ws_recv_frame_start(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+ws_recv_frame_header(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+ws_recv_frame_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+ws_send_frame_start(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+ws_send_frame_end(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 

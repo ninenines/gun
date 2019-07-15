@@ -18,7 +18,7 @@
 -export([name/0]).
 -export([init/4]).
 -export([handle/4]).
--export([close/2]).
+-export([close/4]).
 -export([keepalive/1]).
 -export([headers/10]).
 -export([request/11]).
@@ -294,8 +294,8 @@ ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	end.
 
 %% @todo Use Reason.
-close(_, #http2_state{streams=Streams}) ->
-	close_streams(Streams).
+close(_, #http2_state{streams=Streams}, _, EvHandlerState) ->
+	{close_streams(Streams), EvHandlerState}.
 
 close_streams([]) ->
 	ok;

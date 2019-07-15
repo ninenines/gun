@@ -18,7 +18,7 @@
 -export([name/0]).
 -export([init/4]).
 -export([handle/4]).
--export([close/2]).
+-export([close/4]).
 -export([keepalive/1]).
 -export([headers/10]).
 -export([request/11]).
@@ -404,11 +404,11 @@ send_data_if_alive(_, State, _) ->
 	State.
 
 %% @todo Use Reason.
-close(_, State=#http_state{in=body_close, streams=[_|Tail]}) ->
+close(_, State=#http_state{in=body_close, streams=[_|Tail]}, _, EvHandlerState) ->
 	_ = send_data_if_alive(<<>>, State, fin),
-	close_streams(Tail);
-close(_, #http_state{streams=Streams}) ->
-	close_streams(Streams).
+	{close_streams(Tail), EvHandlerState};
+close(_, #http_state{streams=Streams}, _, EvHandlerState) ->
+	{close_streams(Streams), EvHandlerState}.
 
 close_streams([]) ->
 	ok;

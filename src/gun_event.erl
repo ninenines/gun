@@ -140,6 +140,56 @@
 
 -callback protocol_changed(protocol_changed_event(), State) -> State.
 
+%% ws_recv_frame_start.
+
+-type ws_recv_frame_start_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	frag_state := cow_ws:frag_state(),
+	extensions := cow_ws:extensions()
+}.
+
+-callback ws_recv_frame_start(ws_recv_frame_start_event(), State) -> State.
+
+%% ws_recv_frame_header.
+
+-type ws_recv_frame_header_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	frag_state := cow_ws:frag_state(),
+	extensions := cow_ws:extensions(),
+	type := cow_ws:frame_type(),
+	rsv := cow_ws:rsv(),
+	len := non_neg_integer(),
+	mask_key := cow_ws:mask_key()
+}.
+
+-callback ws_recv_frame_header(ws_recv_frame_header_event(), State) -> State.
+
+%% ws_recv_frame_end.
+
+-type ws_recv_frame_end_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	extensions := cow_ws:extensions(),
+	close_code := undefined | cow_ws:close_code(),
+	payload := binary()
+}.
+
+-callback ws_recv_frame_end(ws_recv_frame_end_event(), State) -> State.
+
+%% ws_send_frame_start/ws_send_frame_end.
+
+-type ws_send_frame_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	extensions := cow_ws:extensions(),
+	frame := gun:ws_frame()
+}.
+
+-callback ws_send_frame_start(ws_send_frame_event(), State) -> State.
+-callback ws_send_frame_end(ws_send_frame_event(), State) -> State.
+
 %% disconnect.
 
 -type disconnect_event() :: #{
@@ -167,8 +217,3 @@
 %% @todo push_promise_end
 %% @todo cancel_start
 %% @todo cancel_end
-%% @todo ws_frame_read_start
-%% @todo ws_frame_read_header
-%% @todo ws_frame_read_end
-%% @todo ws_frame_write_start
-%% @todo ws_frame_write_end

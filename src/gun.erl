@@ -928,9 +928,11 @@ connected(cast, {ws_upgrade, ReplyTo, StreamRef, _, _, _}, _) ->
 	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 		"Websocket is only supported over HTTP/1.1."}},
 	keep_state_and_data;
-connected(cast, {ws_send, Owner, Frame},
-		State=#state{owner=Owner, protocol=Protocol=gun_ws, protocol_state=ProtoState}) ->
-	commands(Protocol:send(Frame, ProtoState), State);
+connected(cast, {ws_send, Owner, Frame}, State=#state{
+		owner=Owner, protocol=Protocol=gun_ws, protocol_state=ProtoState,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Commands, EvHandlerState} = Protocol:send(Frame, ProtoState, EvHandler, EvHandlerState0),
+	commands(Commands, State#state{event_handler_state=EvHandlerState});
 connected(cast, {ws_send, ReplyTo, _}, _) ->
 	ReplyTo ! {gun_error, self(), {badstate,
 		"Connection needs to be upgraded to Websocket "
@@ -947,18 +949,19 @@ handle_common(cast, {shutdown, Owner}, _, #state{owner=Owner}) ->
 	%% @todo Graceful shutdown.
 	stop;
 %% We stop when the owner is down.
-handle_common(info, {'DOWN', OwnerRef, process, Owner, Reason}, _, #state{
+handle_common(info, {'DOWN', OwnerRef, process, Owner, Reason}, _, State=#state{
 		owner=Owner, owner_ref=OwnerRef, socket=Socket, transport=Transport,
-		protocol=Protocol, protocol_state=ProtoState}) ->
-	_ = case Protocol of
-		undefined -> ok;
-		_ -> Protocol:close(owner_down, ProtoState)
+		protocol=Protocol, protocol_state=ProtoState,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{_, EvHandlerState} = case Protocol of
+		undefined -> {ok, EvHandlerState0};
+		_ -> Protocol:close(owner_down, ProtoState, EvHandler, EvHandlerState0)
 	end,
 	_ = case Socket of
 		undefined -> ok;
 		_ -> Transport:close(Socket)
 	end,
-	owner_down(Reason);
+	owner_down(Reason, State#state{event_handler_state=EvHandlerState});
 handle_common({call, From}, _, _, _) ->
 	{keep_state_and_data, {reply, From, {error, bad_call}}};
 %% @todo The ReplyTo patch disabled the notowner behavior.
@@ -1023,9 +1026,9 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 		socket=Socket, transport=Transport,
 		protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason) ->
-	Protocol:close(Reason, ProtoState),
+	{_, EvHandlerState1} = Protocol:close(Reason, ProtoState, EvHandler, EvHandlerState0),
 	%% @todo Need a special state for orderly shutdown of a connection.
-	Transport:close(Socket),
+	_ = Transport:close(Socket),
 	%% We closed the socket, discard any remaining socket events.
 	disconnect_flush(State),
 	%% @todo Stop keepalive timeout, flush message.
@@ -1035,7 +1038,7 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 	DisconnectEvent = #{
 		reason => Reason
 	},
-	EvHandlerState = EvHandler:disconnect(DisconnectEvent, EvHandlerState0),
+	EvHandlerState = EvHandler:disconnect(DisconnectEvent, EvHandlerState1),
 	Retry = maps:get(retry, Opts, 5),
 	case Retry of
 		0 ->
@@ -1087,11 +1090,10 @@ keepalive_cancel(State=#state{keepalive_ref=KeepaliveRef}) ->
 	end,
 	State#state{keepalive_ref=undefined}.
 
--spec owner_down(_) -> stop | {stop, _}.
-owner_down(normal) -> stop;
-owner_down(shutdown) -> {stop, shutdown};
-owner_down(Shutdown = {shutdown, _}) -> {stop, Shutdown};
-owner_down(Reason) -> {stop, {shutdown, {owner_down, Reason}}}.
+owner_down(normal, State) -> {stop, normal, State};
+owner_down(shutdown, State) -> {stop, shutdown, State};
+owner_down(Shutdown = {shutdown, _}, State) -> {stop, Shutdown, State};
+owner_down(Reason, State) -> {stop, {shutdown, {owner_down, Reason}}, State}.
 
 terminate(Reason, StateName, #state{event_handler=EvHandler,
 		event_handler_state=EvHandlerState}) ->
