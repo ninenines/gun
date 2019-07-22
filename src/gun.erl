@@ -93,6 +93,9 @@
 -export([callback_mode/0]).
 -export([init/1]).
 -export([not_connected/3]).
+-export([domain_lookup/3]).
+-export([connecting/3]).
+-export([tls_handshake/3]).
 -export([connected/3]).
 -export([terminate/3]).
 
@@ -107,17 +110,20 @@
 
 -type opts() :: #{
 	connect_timeout => timeout(),
-	event_handler   => {module(), any()},
-	http_opts       => http_opts(),
-	http2_opts      => http2_opts(),
-	protocols       => [http | http2],
-	retry           => non_neg_integer(),
-	retry_timeout   => pos_integer(),
-	supervise       => boolean(),
-	trace           => boolean(),
-	transport       => tcp | tls | ssl,
-	transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
-	ws_opts         => ws_opts()
+	domain_lookup_timeout => timeout(),
+	event_handler => {module(), any()},
+	http_opts => http_opts(),
+	http2_opts => http2_opts(),
+	protocols => [http | http2],
+	retry => non_neg_integer(),
+	retry_timeout => pos_integer(),
+	supervise => boolean(),
+	tcp_opts => [gen_tcp:connect_option()],
+	tls_handshake_timeout => timeout(),
+	tls_opts => [ssl:connect_option()],
+	trace => boolean(),
+	transport => tcp | tls | ssl,
+	ws_opts => ws_opts()
 }.
 -export_type([opts/0]).
 %% @todo Add an option to disable/enable the notowner behavior.
@@ -237,6 +243,10 @@ check_options([{connect_timeout, infinity}|Opts]) ->
 	check_options(Opts);
 check_options([{connect_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
+check_options([{domain_lookup_timeout, infinity}|Opts]) ->
+	check_options(Opts);
+check_options([{domain_lookup_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
+	check_options(Opts);
 check_options([{event_handler, {Mod, _}}|Opts]) when is_atom(Mod) ->
 	check_options(Opts);
 check_options([{http_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
@@ -273,11 +283,17 @@ check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
 check_options([{supervise, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);
+check_options([{tcp_opts, L}|Opts]) when is_list(L) ->
+	check_options(Opts);
+check_options([{tls_handshake_timeout, infinity}|Opts]) ->
+	check_options(Opts);
+check_options([{tls_handshake_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
+	check_options(Opts);
+check_options([{tls_opts, L}|Opts]) when is_list(L) ->
+	check_options(Opts);
 check_options([{trace, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);
 check_options([{transport, T}|Opts]) when T =:= tcp; T =:= tls ->
-	check_options(Opts);
-check_options([{transport_opts, L}|Opts]) when is_list(L) ->
 	check_options(Opts);
 check_options([{ws_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_ws:check_options(ProtoOpts) of
@@ -745,66 +761,125 @@ init({Owner, Host, Port, Opts}) ->
 		origin_host=Host, origin_port=Port, opts=Opts,
 		transport=Transport, messages=Transport:messages(),
 		event_handler=EvHandler, event_handler_state=EvHandlerState},
-	{ok, not_connected, State,
-		{next_event, internal, {retries, Retry}}}.
+	{ok, domain_lookup, State,
+		{next_event, internal, {retries, Retry, not_connected}}}.
 
 default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
-not_connected(_, {retries, Retries}, State0=#state{host=Host, port=Port, opts=Opts,
-		transport=Transport, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	TransOpts0 = maps:get(transport_opts, Opts, []),
-	TransOpts1 = case Transport of
-		gun_tcp -> TransOpts0;
-		gun_tls -> ensure_alpn(maps:get(protocols, Opts, [http2, http]), TransOpts0)
-	end,
-	TransOpts = [binary, {active, false}|TransOpts1],
-	ConnectTimeout = maps:get(connect_timeout, Opts, infinity),
-	ConnectEvent = #{
+%% @todo This is where we would implement the backoff mechanism presumably.
+not_connected(_, {retries, 0, Reason}, State) ->
+	{stop, {shutdown, Reason}, State};
+not_connected(_, {retries, Retries, _}, State=#state{opts=Opts}) ->
+	Timeout = maps:get(retry_timeout, Opts, 5000),
+	{next_state, domain_lookup, State,
+		{state_timeout, Timeout, {retries, Retries - 1, not_connected}}};
+not_connected({call, From}, {stream_info, _}, _) ->
+	{keep_state_and_data, {reply, From, {error, not_connected}}};
+not_connected(Type, Event, State) ->
+	handle_common(Type, Event, ?FUNCTION_NAME, State).
+
+domain_lookup(_, {retries, Retries, _}, State=#state{host=Host, port=Port, opts=Opts,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	TransOpts = maps:get(tcp_opts, Opts, []),
+	DomainLookupTimeout = maps:get(domain_lookup_timeout, Opts, infinity),
+	DomainLookupEvent = #{
 		host => Host,
 		port => Port,
-		transport => Transport:name(),
-		transport_opts => TransOpts,
+		tcp_opts => TransOpts,
+		timeout => DomainLookupTimeout
+	},
+	EvHandlerState1 = EvHandler:domain_lookup_start(DomainLookupEvent, EvHandlerState0),
+	case gun_tcp:domain_lookup(Host, Port, TransOpts, DomainLookupTimeout) of
+		{ok, LookupInfo} ->
+			EvHandlerState = EvHandler:domain_lookup_end(DomainLookupEvent#{
+				lookup_info => LookupInfo
+			}, EvHandlerState1),
+			{next_state, connecting, State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {retries, Retries, LookupInfo}}};
+		{error, Reason} ->
+			EvHandlerState = EvHandler:domain_lookup_end(DomainLookupEvent#{
+				error => Reason
+			}, EvHandlerState1),
+			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {retries, Retries, Reason}}}
+	end;
+domain_lookup({call, From}, {stream_info, _}, _) ->
+	{keep_state_and_data, {reply, From, {error, not_connected}}};
+domain_lookup(Type, Event, State) ->
+	handle_common(Type, Event, ?FUNCTION_NAME, State).
+
+connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
+		transport=Transport, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	ConnectTimeout = maps:get(connect_timeout, Opts, infinity),
+	ConnectEvent = #{
+		lookup_info => LookupInfo,
 		timeout => ConnectTimeout
 	},
 	EvHandlerState1 = EvHandler:connect_start(ConnectEvent, EvHandlerState0),
-	case Transport:connect(Host, Port, TransOpts, ConnectTimeout) of
-		{ok, Socket} ->
-			Protocol = case Transport of
-				gun_tcp ->
-					case maps:get(protocols, Opts, [http]) of
-						[http] -> gun_http;
-						[http2] -> gun_http2
-					end;
-				gun_tls ->
-					case ssl:negotiated_protocol(Socket) of
-						{ok, <<"h2">>} -> gun_http2;
-						_ -> gun_http
-					end
+	case gun_tcp:connect(LookupInfo, ConnectTimeout) of
+		{ok, Socket} when Transport =:= gun_tcp ->
+			Protocol = case maps:get(protocols, Opts, [http]) of
+				[http] -> gun_http;
+				[http2] -> gun_http2
 			end,
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				socket => Socket,
 				protocol => Protocol:name()
 			}, EvHandlerState1),
-			{next_state, connected, State0#state{event_handler_state=EvHandlerState},
+			{next_state, connected, State#state{event_handler_state=EvHandlerState},
 				{next_event, internal, {connected, Socket, Protocol}}};
+		{ok, Socket} when Transport =:= gun_tls ->
+			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
+				socket => Socket
+			}, EvHandlerState1),
+			{next_state, tls_handshake, State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {retries, Retries, Socket}}};
 		{error, Reason} ->
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				error => Reason
 			}, EvHandlerState1),
-			State = State0#state{event_handler_state=EvHandlerState},
-			case Retries of
-				0 ->
-					{stop, {shutdown, Reason}, State};
-				_ ->
-					Timeout = maps:get(retry_timeout, Opts, 5000),
-					{keep_state, State,
-						{state_timeout, Timeout, {retries, Retries - 1}}}
-			end
+			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {retries, Retries, Reason}}}
 	end;
-not_connected({call, From}, {stream_info, _}, _) ->
+connecting({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
-not_connected(Type, Event, State) ->
+connecting(Type, Event, State) ->
+	handle_common(Type, Event, ?FUNCTION_NAME, State).
+
+tls_handshake(_, {retries, Retries, Socket0}, State=#state{opts=Opts,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	TransOpts0 = maps:get(tls_opts, Opts, []),
+	TransOpts = ensure_alpn(maps:get(protocols, Opts, [http2, http]), TransOpts0),
+	HandshakeTimeout = maps:get(tls_handshake_timeout, Opts, infinity),
+	HandshakeEvent = #{
+		socket => Socket0,
+		tls_opts => TransOpts,
+		timeout => HandshakeTimeout
+	},
+	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
+	case gun_tls:connect(Socket0, TransOpts, HandshakeTimeout) of
+		{ok, Socket} ->
+			Protocol = case ssl:negotiated_protocol(Socket) of
+				{ok, <<"h2">>} -> gun_http2;
+				_ -> gun_http
+			end,
+			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+				socket => Socket,
+				protocol => Protocol:name()
+			}, EvHandlerState1),
+			{next_state, connected, State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {connected, Socket, Protocol}}};
+		{error, Reason} ->
+			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+				error => Reason
+			}, EvHandlerState1),
+			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {retries, Retries, Reason}}}
+	end;
+tls_handshake({call, From}, {stream_info, _}, _) ->
+	{keep_state_and_data, {reply, From, {error, not_connected}}};
+tls_handshake(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
 ensure_alpn(Protocols0, TransOpts) ->
@@ -1048,7 +1123,7 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 				keepalive_cancel(State#state{socket=undefined,
 					protocol=undefined, protocol_state=undefined,
 					event_handler_state=EvHandlerState}),
-				{next_event, internal, {retries, Retry - 1}}}
+				{next_event, internal, {retries, Retry - 1, Reason}}}
 	end.
 
 disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->

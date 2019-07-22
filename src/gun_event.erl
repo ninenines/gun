@@ -27,21 +27,45 @@
 
 -callback init(init_event(), State) -> State.
 
+%% domain_lookup_start/domain_lookup_end.
+
+-type domain_lookup_event() :: #{
+	host := inet:hostname() | inet:ip_address(),
+	port := inet:port_number(),
+	tcp_opts := [gen_tcp:connect_option()],
+	timeout := timeout(),
+	lookup_info => gun_tcp:lookup_info(),
+	error => any()
+}.
+
+-callback domain_lookup_start(domain_lookup_event(), State) -> State.
+-callback domain_lookup_end(domain_lookup_event(), State) -> State.
+
 %% connect_start/connect_end.
 
 -type connect_event() :: #{
-	host := inet:hostname() | inet:ip_address(),
-	port := inet:port_number(),
-	transport := tcp | tls,
-	transport_opts := [gen_tcp:connect_option()] | [ssl:connect_option()],
+	lookup_info := gun_tcp:lookup_info(),
 	timeout := timeout(),
-	socket => inet:socket() | ssl:sslsocket() | pid(),
-	protocol => http | http2,
+	socket => inet:socket(),
+	protocol => http | http2, %% Only when transport is tcp.
 	error => any()
 }.
 
 -callback connect_start(connect_event(), State) -> State.
 -callback connect_end(connect_event(), State) -> State.
+
+%% tls_handshake_start/tls_handshake_end.
+
+-type tls_handshake_event() :: #{
+	socket := inet:socket() | ssl:sslsocket(), %% The socket before/after will be different.
+	tls_opts := [ssl:connect_option()],
+	timeout := timeout(),
+	protocol => http | http2,
+	error => any()
+}.
+
+-callback tls_handshake_start(tls_handshake_event(), State) -> State.
+-callback tls_handshake_end(tls_handshake_event(), State) -> State.
 
 %% request_start/request_headers.
 
@@ -201,16 +225,12 @@
 %% terminate.
 
 -type terminate_event() :: #{
-	state := not_connected | connected,
+	state := not_connected | domain_lookup | connecting | tls_handshake | connected,
 	reason := normal | shutdown | {shutdown, any()} | any()
 }.
 
 -callback terminate(terminate_event(), State) -> State.
 
-%% @todo domain_lookup_start
-%% @todo domain_lookup_end
-%% @todo tls_handshake_start
-%% @todo tls_handshake_end
 %% @todo origin_changed
 %% @todo transport_changed
 %% @todo push_promise_start

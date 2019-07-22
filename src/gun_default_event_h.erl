@@ -16,8 +16,12 @@
 -behavior(gun_event).
 
 -export([init/2]).
+-export([domain_lookup_start/2]).
+-export([domain_lookup_end/2]).
 -export([connect_start/2]).
 -export([connect_end/2]).
+-export([tls_handshake_start/2]).
+-export([tls_handshake_end/2]).
 -export([request_start/2]).
 -export([request_headers/2]).
 -export([request_end/2]).
@@ -39,10 +43,22 @@
 init(_EventData, State) ->
 	State.
 
+domain_lookup_start(_EventData, State) ->
+	State.
+
+domain_lookup_end(_EventData, State) ->
+	State.
+
 connect_start(_EventData, State) ->
 	State.
 
 connect_end(_EventData, State) ->
+	State.
+
+tls_handshake_start(_EventData, State) ->
+	State.
+
+tls_handshake_end(_EventData, State) ->
 	State.
 
 request_start(_EventData, State) ->

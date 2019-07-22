@@ -54,18 +54,22 @@ atom_hostname(_) ->
 
 connect_timeout(_) ->
 	doc("Ensure an integer value for connect_timeout is accepted."),
-	{ok, Pid} = gun:open("localhost", 12345, #{connect_timeout => 1000, retry => 0}),
-	Ref = monitor(process, Pid),
-	receive
-		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
-			ok
-	after 5000 ->
-		error(timeout)
-	end.
+	do_timeout(connect_timeout, 1000).
 
 connect_timeout_infinity(_) ->
 	doc("Ensure infinity for connect_timeout is accepted."),
-	{ok, Pid} = gun:open("localhost", 12345, #{connect_timeout => infinity, retry => 0}),
+	do_timeout(connect_timeout, infinity).
+
+domain_lookup_timeout(_) ->
+	doc("Ensure an integer value for domain_lookup_timeout is accepted."),
+	do_timeout(domain_lookup_timeout, 1000).
+
+domain_lookup_timeout_infinity(_) ->
+	doc("Ensure infinity for domain_lookup_timeout is accepted."),
+	do_timeout(domain_lookup_timeout, infinity).
+
+do_timeout(Opt, Timeout) ->
+	{ok, Pid} = gun:open("localhost", 12345, #{Opt => Timeout, retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
@@ -495,6 +499,14 @@ supervise_false(_) ->
 	{ok, http} = gun:await_up(Pid),
 	[] = [P || {_, P, _, _} <- supervisor:which_children(gun_sup), P =:= Pid],
 	ok.
+
+tls_handshake_timeout(_) ->
+	doc("Ensure an integer value for tls_handshake_timeout is accepted."),
+	do_timeout(tls_handshake_timeout, 1000).
+
+tls_handshake_timeout_infinity(_) ->
+	doc("Ensure infinity for tls_handshake_timeout is accepted."),
+	do_timeout(tls_handshake_timeout, infinity).
 
 transform_header_name(_) ->
 	doc("The transform_header_name option allows changing the case of header names."),

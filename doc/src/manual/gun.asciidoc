@@ -202,17 +202,20 @@ Time between pings in milliseconds.
 [source,erlang]
 ----
 opts() :: #{
-    connect_timeout => timeout(),
-    http_opts       => http_opts(),
-    http2_opts      => http2_opts(),
-    protocols       => [http | http2],
-    retry           => non_neg_integer(),
-    retry_timeout   => pos_integer(),
-    supervise       => boolean(),
-    trace           => boolean(),
-    transport       => tcp | tls,
-    transport_opts  => [gen_tcp:connect_option()] | [ssl:connect_option()],
-    ws_opts         => ws_opts()
+    connect_timeout       => timeout(),
+    domain_lookup_timeout => timeout(),
+    http_opts             => http_opts(),
+    http2_opts            => http2_opts(),
+    protocols             => [http | http2],
+    retry                 => non_neg_integer(),
+    retry_timeout         => pos_integer(),
+    supervise             => boolean(),
+    tcp_opts              => [gen_tcp:connect_option()],
+    tls_handshake_timeout => timeout(),
+    tls_opts              => [ssl:connect_option()],
+    trace                 => boolean(),
+    transport             => tcp | tls,
+    ws_opts               => ws_opts()
 }
 ----
 
@@ -223,6 +226,10 @@ The default value is given next to the option name:
 connect_timeout (infinity)::
 
 Connection timeout.
+
+domain_lookup_timeout (infinity)::
+
+Domain lookup timeout.
 
 http_opts (#{})::
 
@@ -255,6 +262,19 @@ supervise (true)::
 Whether the Gun process should be started under the `gun_sup`
 supervisor. Set to `false` to use your own supervisor.
 
+tcp_opts ([])::
+
+TCP options used when establishing the connection.
+
+tls_handshake_timeout (infinity)::
+
+TLS handshake timeout.
+
+tls_opts ([])::
+
+TLS options used for the TLS handshake after the connection
+has been established, when the transport is set to `tls`.
+
 trace (false)::
 
 Whether to enable `dbg` tracing of the connection process. Should
@@ -264,11 +284,6 @@ transport - see below::
 
 Whether to use TLS or plain TCP. The default varies depending on the
 port used. Port 443 defaults to `tls`. All other ports default to `tcp`.
-
-transport_opts ([])::
-
-Transport options. They are TCP options or TLS options depending on
-the selected transport.
 
 ws_opts (#{})::
 
@@ -332,6 +347,11 @@ undocumented and must be set to `gun_ws_h`.
 
 == Changelog
 
+* *2.0*: The `connect_timeout` option has been split into
+         three options: `domain_lookup_timeout`, `connect_timeout`
+         and when applicable `tls_handshake_timeout`.
+* *2.0*: The `transport_opts` option has been split into
+         two options: `tcp_opts` and `tls_opts`.
 * *2.0*: Introduce the type `req_headers()` and extend the
          types accepted for header names for greater
          interoperability. Header names are automatically

@@ -38,7 +38,7 @@ groups() ->
 	].
 
 init_per_suite(Config) ->
-	{ok, _} = cowboy:start_clear(?MODULE, [], #{env => #{
+	ProtoOpts = #{env => #{
 		dispatch => cowboy_router:compile([{'_', [
 			{"/", hello_h, []},
 			{"/empty", empty_h, []},
@@ -47,12 +47,16 @@ init_per_suite(Config) ->
 			{"/trailers", trailers_h, []},
 			{"/ws", ws_echo, []}
 		]}])
-	}}),
-	OriginPort = ranch:get_port(?MODULE),
-	[{origin_port, OriginPort}|Config].
+	}},
+	{ok, _} = cowboy:start_clear({?MODULE, tcp}, [], ProtoOpts),
+	TCPOriginPort = ranch:get_port({?MODULE, tcp}),
+	{ok, _} = cowboy:start_tls({?MODULE, tls}, ct_helper:get_certs_from_ets(), ProtoOpts),
+	TLSOriginPort = ranch:get_port({?MODULE, tls}),
+	[{tcp_origin_port, TCPOriginPort}, {tls_origin_port, TLSOriginPort}|Config].
 
 end_per_suite(_) ->
-	ok = cowboy:stop_listener(?MODULE).
+	ok = cowboy:stop_listener({?MODULE, tls}),
+	ok = cowboy:stop_listener({?MODULE, tcp}).
 
 %% init.
 
@@ -74,16 +78,64 @@ init(Config) ->
 	} = do_receive_event(?FUNCTION_NAME),
 	gun:close(Pid).
 
+%% domain_lookup_start/domain_lookup_end.
+
+domain_lookup_start(Config) ->
+	doc("Confirm that the domain_lookup_start event callback is called."),
+	{ok, Pid, _} = do_gun_open(12345, Config),
+	#{
+		host := "localhost",
+		port := 12345,
+		tcp_opts := _,
+		timeout := _
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+domain_lookup_end_error(Config) ->
+	doc("Confirm that the domain_lookup_end event callback is called on lookup failure."),
+	Opts = #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))]
+	},
+	{ok, Pid} = gun:open("this.should.not.exist", 12345, Opts),
+	#{
+		host := "this.should.not.exist",
+		port := 12345,
+		tcp_opts := _,
+		timeout := _,
+		error := nxdomain
+	} = do_receive_event(domain_lookup_end),
+	gun:close(Pid).
+
+domain_lookup_end_ok(Config) ->
+	doc("Confirm that the domain_lookup_end event callback is called on lookup success."),
+	{ok, Pid, _} = do_gun_open(12345, Config),
+	#{
+		host := "localhost",
+		port := 12345,
+		tcp_opts := _,
+		timeout := _,
+		lookup_info := #{
+			ip_addresses := [_|_],
+			port := 12345,
+			tcp_module := _,
+			tcp_opts := _
+		}
+	} = do_receive_event(domain_lookup_end),
+	gun:close(Pid).
+
 %% connect_start/connect_end.
 
 connect_start(Config) ->
 	doc("Confirm that the connect_start event callback is called."),
 	{ok, Pid, _} = do_gun_open(12345, Config),
 	#{
-		host := "localhost",
-		port := 12345,
-		transport := tcp,
-		transport_opts := _,
+		lookup_info := #{
+			ip_addresses := [_|_],
+			port := 12345,
+			tcp_module := _,
+			tcp_opts := _
+		},
 		timeout := _
 	} = do_receive_event(?FUNCTION_NAME),
 	gun:close(Pid).
@@ -92,28 +144,91 @@ connect_end_error(Config) ->
 	doc("Confirm that the connect_end event callback is called on connect failure."),
 	{ok, Pid, _} = do_gun_open(12345, Config),
 	#{
-		host := "localhost",
-		port := 12345,
-		transport := tcp,
-		transport_opts := _,
+		lookup_info := #{
+			ip_addresses := [_|_],
+			port := 12345,
+			tcp_module := _,
+			tcp_opts := _
+		},
 		timeout := _,
 		error := _
 	} = do_receive_event(connect_end),
 	gun:close(Pid).
 
-connect_end_ok(Config) ->
-	doc("Confirm that the connect_end event callback is called on connect success."),
+connect_end_ok_tcp(Config) ->
+	doc("Confirm that the connect_end event callback is called on connect success with TCP."),
 	{ok, Pid, OriginPort} = do_gun_open(Config),
 	{ok, Protocol} = gun:await_up(Pid),
 	#{
-		host := "localhost",
-		port := OriginPort,
-		transport := tcp,
-		transport_opts := _,
+		lookup_info := #{
+			ip_addresses := [_|_],
+			port := OriginPort,
+			tcp_module := _,
+			tcp_opts := _
+		},
 		timeout := _,
 		socket := _,
 		protocol := Protocol
 	} = do_receive_event(connect_end),
+	gun:close(Pid).
+
+connect_end_ok_tls(Config) ->
+	doc("Confirm that the connect_end event callback is called on connect success with TLS."),
+	{ok, Pid, OriginPort} = do_gun_open_tls(Config),
+	Event = #{
+		lookup_info := #{
+			ip_addresses := [_|_],
+			port := OriginPort,
+			tcp_module := _,
+			tcp_opts := _
+		},
+		timeout := _,
+		socket := _
+	} = do_receive_event(connect_end),
+	false = maps:is_key(protocol, Event),
+	gun:close(Pid).
+
+tls_handshake_start(Config) ->
+	doc("Confirm that the tls_handshake_start event callback is called."),
+	{ok, Pid, _} = do_gun_open_tls(Config),
+	#{
+		socket := Socket,
+		tls_opts := _,
+		timeout := _
+	} = do_receive_event(?FUNCTION_NAME),
+	true = is_port(Socket),
+	gun:close(Pid).
+
+tls_handshake_end_error(Config) ->
+	doc("Confirm that the tls_handshake_end event callback is called on TLS handshake error."),
+	%% We use the wrong port on purpose to trigger a handshake error.
+	OriginPort = config(tcp_origin_port, Config),
+	Opts = #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tls
+	},
+	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
+	#{
+		socket := Socket,
+		tls_opts := _,
+		timeout := _,
+		error := {tls_alert, _}
+	} = do_receive_event(tls_handshake_end),
+	true = is_port(Socket),
+	gun:close(Pid).
+
+tls_handshake_end_ok(Config) ->
+	doc("Confirm that the tls_handshake_end event callback is called on TLS handshake success."),
+	{ok, Pid, _} = do_gun_open_tls(Config),
+	{ok, Protocol} = gun:await_up(Pid),
+	#{
+		socket := Socket,
+		tls_opts := _,
+		timeout := _,
+		protocol := Protocol
+	} = do_receive_event(tls_handshake_end),
+	false = is_port(Socket),
 	gun:close(Pid).
 
 request_start(Config) ->
@@ -477,7 +592,7 @@ terminate(Config) ->
 	{ok, Pid, _} = do_gun_open(12345, Config),
 	gun:close(Pid),
 	#{
-		state := not_connected,
+		state := _,
 		reason := shutdown
 	} = do_receive_event(terminate),
 	ok.
@@ -485,13 +600,23 @@ terminate(Config) ->
 %% Internal.
 
 do_gun_open(Config) ->
-	OriginPort = config(origin_port, Config),
+	OriginPort = config(tcp_origin_port, Config),
 	do_gun_open(OriginPort, Config).
 
 do_gun_open(OriginPort, Config) ->
 	Opts = #{
 		event_handler => {?MODULE, self()},
 		protocols => [config(name, config(tc_group_properties, Config))]
+	},
+	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
+	{ok, Pid, OriginPort}.
+
+do_gun_open_tls(Config) ->
+	OriginPort = config(tls_origin_port, Config),
+	Opts = #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tls
 	},
 	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
 	{ok, Pid, OriginPort}.
@@ -513,11 +638,27 @@ init(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
+domain_lookup_start(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+domain_lookup_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
 connect_start(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
 connect_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+tls_handshake_start(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+tls_handshake_end(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
