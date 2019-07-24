@@ -30,10 +30,12 @@ all() ->
 
 groups() ->
 	Tests = ct_helper:all(?MODULE),
+	%% Push is not possible over HTTP/1.1.
+	PushTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 5) =:= "push_"],
 	%% We currently do not support Websocket over HTTP/2.
 	WsTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 3) =:= "ws_"],
 	[
-		{http, [parallel], Tests},
+		{http, [parallel], Tests -- PushTests},
 		{http2, [parallel], Tests -- [protocol_changed|WsTests]}
 	].
 
@@ -43,6 +45,7 @@ init_per_suite(Config) ->
 			{"/", hello_h, []},
 			{"/empty", empty_h, []},
 			{"/inform", inform_h, []},
+			{"/push", push_h, []},
 			{"/stream", stream_h, []},
 			{"/trailers", trailers_h, []},
 			{"/ws", ws_echo, []}
@@ -341,6 +344,58 @@ do_request_end_headers_content_length_0(Config, EventName) ->
 		stream_ref := StreamRef,
 		reply_to := ReplyTo
 	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+push_promise_start(Config) ->
+	doc("Confirm that the push_promise_start event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/push"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(?FUNCTION_NAME),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+push_promise_end(Config) ->
+	doc("Confirm that the push_promise_end event callback is called."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/push"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		promised_stream_ref := _,
+		method := <<"GET">>,
+		uri := <<"http://",_/bits>>,
+		headers := [_|_]
+	} = do_receive_event(?FUNCTION_NAME),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		promised_stream_ref := _,
+		method := <<"GET">>,
+		uri := <<"http://",_/bits>>,
+		headers := [_|_]
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+push_promise_followed_by_response(Config) ->
+	doc("Confirm that the push_promise_end event callbacks are followed by response_start."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	_ = gun:get(Pid, "/push"),
+	#{promised_stream_ref := PromisedStreamRef} = do_receive_event(push_promise_end),
+	#{stream_ref := StreamRef1} = do_receive_event(response_start),
+	#{stream_ref := StreamRef2} = do_receive_event(response_start),
+	#{stream_ref := StreamRef3} = do_receive_event(response_start),
+	true = lists:member(PromisedStreamRef, [StreamRef1, StreamRef2, StreamRef3]),
 	gun:close(Pid).
 
 response_start(Config) ->
@@ -671,6 +726,14 @@ request_headers(EventData, Pid) ->
 	Pid.
 
 request_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+push_promise_start(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+push_promise_end(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 

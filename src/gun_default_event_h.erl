@@ -25,6 +25,8 @@
 -export([request_start/2]).
 -export([request_headers/2]).
 -export([request_end/2]).
+-export([push_promise_start/2]).
+-export([push_promise_end/2]).
 -export([response_start/2]).
 -export([response_inform/2]).
 -export([response_headers/2]).
@@ -68,6 +70,12 @@ request_headers(_EventData, State) ->
 	State.
 
 request_end(_EventData, State) ->
+	State.
+
+push_promise_start(_EventData, State) ->
+	State.
+
+push_promise_end(_EventData, State) ->
 	State.
 
 response_start(_EventData, State) ->

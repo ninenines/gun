@@ -115,12 +115,16 @@ parse(Data, State0=#http2_state{http2_machine=HTTP2Machine}, EvHandler, EvHandle
 
 frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandlerState0) ->
 	EvHandlerState = if
-		is_tuple(Frame) andalso element(1, Frame) =:= headers ->
+		element(1, Frame) =:= headers; element(1, Frame) =:= push_promise ->
 			EvStreamID = element(2, Frame),
 			case cow_http2_machine:get_stream_remote_state(EvStreamID, HTTP2Machine0) of
 				{ok, idle} ->
 					#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, EvStreamID),
-					EvHandler:response_start(#{
+					EvCallback = case element(1, Frame) of
+						headers -> response_start;
+						push_promise -> push_promise_start
+					end,
+					EvHandler:EvCallback(#{
 						stream_ref => StreamRef,
 						reply_to => ReplyTo
 					}, EvHandlerState0);
@@ -149,9 +153,9 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandl
 			{rst_stream_frame(State#http2_state{http2_machine=HTTP2Machine}, StreamID, Reason),
 				EvHandlerState};
 		{ok, {push_promise, StreamID, PromisedStreamID, Headers, PseudoHeaders}, HTTP2Machine} ->
-			{push_promise_frame(State#http2_state{http2_machine=HTTP2Machine},
-				StreamID, PromisedStreamID, Headers, PseudoHeaders),
-				EvHandlerState};
+			push_promise_frame(State#http2_state{http2_machine=HTTP2Machine},
+				StreamID, PromisedStreamID, Headers, PseudoHeaders,
+				EvHandler, EvHandlerState);
 		{ok, Frame={goaway, _StreamID, _Reason, _Data}, HTTP2Machine} ->
 			{terminate(State#http2_state{http2_machine=HTTP2Machine},
 				{stop, Frame, 'Server is going away.'}),
@@ -277,13 +281,22 @@ rst_stream_frame(State=#http2_state{streams=Streams0}, StreamID, Reason) ->
 push_promise_frame(State=#http2_state{streams=Streams},
 		StreamID, PromisedStreamID, Headers, #{
 			method := Method, scheme := Scheme,
-			authority := Authority, path := Path}) ->
+			authority := Authority, path := Path},
+		EvHandler, EvHandlerState0) ->
 	#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, StreamID),
 	PromisedStreamRef = make_ref(),
-	ReplyTo ! {gun_push, self(), StreamRef, PromisedStreamRef, Method,
-		iolist_to_binary([Scheme, <<"://">>, Authority, Path]), Headers},
+	URI = iolist_to_binary([Scheme, <<"://">>, Authority, Path]),
+	ReplyTo ! {gun_push, self(), StreamRef, PromisedStreamRef, Method, URI, Headers},
+	EvHandlerState = EvHandler:push_promise_end(#{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo,
+		promised_stream_ref => PromisedStreamRef,
+		method => Method,
+		uri => URI,
+		headers => Headers
+	}, EvHandlerState0),
 	NewStream = #stream{id=PromisedStreamID, ref=PromisedStreamRef, reply_to=ReplyTo},
-	State#http2_state{streams=[NewStream|Streams]}.
+	{State#http2_state{streams=[NewStream|Streams]}, EvHandlerState}.
 
 ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	case cow_http2_machine:ignored_frame(HTTP2Machine0) of

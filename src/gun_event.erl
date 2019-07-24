@@ -92,6 +92,28 @@
 
 -callback request_end(request_end_event(), State) -> State.
 
+%% push_promise_start.
+
+-type push_promise_start_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid()
+}.
+
+-callback push_promise_start(push_promise_start_event(), State) -> State.
+
+%% push_promise_end.
+
+-type push_promise_end_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	promised_stream_ref := reference(),
+	method := binary(),
+	uri := binary(),
+	headers := [{binary(), iodata()}]
+}.
+
+-callback push_promise_end(push_promise_end_event(), State) -> State.
+
 %% response_start.
 
 -type response_start_event() :: #{
@@ -233,7 +255,5 @@
 
 %% @todo origin_changed
 %% @todo transport_changed
-%% @todo push_promise_start
-%% @todo push_promise_end
 %% @todo cancel_start
 %% @todo cancel_end
