@@ -236,6 +236,25 @@
 -callback ws_send_frame_start(ws_send_frame_event(), State) -> State.
 -callback ws_send_frame_end(ws_send_frame_event(), State) -> State.
 
+%% cancel.
+%%
+%% In the case of HTTP/1.1 we cannot actually cancel the stream,
+%% we only silence the stream to the user. Further response events
+%% may therefore be received and they provide a useful metric as
+%% these canceled requests monopolize the connection.
+%%
+%% For HTTP/2 both the client and the server may cancel streams.
+%% Events may still occur for a short time after the cancel.
+
+-type cancel_event() :: #{
+	stream_ref := reference(),
+	reply_to := pid(),
+	endpoint := local | remote,
+	reason := atom()
+}.
+
+-callback cancel(cancel_event(), State) -> State.
+
 %% disconnect.
 
 -type disconnect_event() :: #{
@@ -255,5 +274,3 @@
 
 %% @todo origin_changed
 %% @todo transport_changed
-%% @todo cancel_start
-%% @todo cancel_end

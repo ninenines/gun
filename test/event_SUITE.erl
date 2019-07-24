@@ -35,7 +35,7 @@ groups() ->
 	%% We currently do not support Websocket over HTTP/2.
 	WsTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 3) =:= "ws_"],
 	[
-		{http, [parallel], Tests -- PushTests},
+		{http, [parallel], Tests -- [cancel_remote|PushTests]},
 		{http2, [parallel], Tests -- [protocol_changed|WsTests]}
 	].
 
@@ -629,6 +629,36 @@ do_ws_send_frame(Config, EventName) ->
 	} = do_receive_event(EventName),
 	gun:close(Pid).
 
+cancel(Config) ->
+	doc("Confirm that the cancel event callback is called when we cancel a stream."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:post(Pid, "/stream", []),
+	gun:cancel(Pid, StreamRef),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		endpoint := local,
+		reason := cancel
+	} = do_receive_event(?FUNCTION_NAME),
+	gun:close(Pid).
+
+cancel_remote(Config) ->
+	doc("Confirm that the cancel event callback is called "
+		"when the remote endpoint cancels the stream."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:post(Pid, "/stream", []),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		endpoint := remote,
+		reason := _
+	} = do_receive_event(cancel),
+	gun:close(Pid).
+
 disconnect(Config) ->
 	doc("Confirm that the disconnect event callback is called on disconnect."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp),
@@ -639,7 +669,7 @@ disconnect(Config) ->
 	exit(OriginPid, shutdown),
 	#{
 		reason := closed
-	} = do_receive_event(disconnect),
+	} = do_receive_event(?FUNCTION_NAME),
 	gun:close(Pid).
 
 terminate(Config) ->
@@ -649,7 +679,7 @@ terminate(Config) ->
 	#{
 		state := _,
 		reason := shutdown
-	} = do_receive_event(terminate),
+	} = do_receive_event(?FUNCTION_NAME),
 	ok.
 
 %% Internal.
@@ -782,6 +812,10 @@ ws_send_frame_start(EventData, Pid) ->
 	Pid.
 
 ws_send_frame_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+cancel(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 

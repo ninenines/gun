@@ -973,10 +973,12 @@ connected(info, {connect_protocol, Protocol}, #state{protocol=Protocol}) ->
 	keep_state_and_data;
 connected(info, {connect_protocol, Protocol}, State=#state{protocol_state=ProtoState}) ->
 	commands([{switch_protocol, Protocol, ProtoState}], State);
-connected(cast, {cancel, ReplyTo, StreamRef},
-		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	ProtoState2 = Protocol:cancel(ProtoState, StreamRef, ReplyTo),
-	{keep_state, State#state{protocol_state=ProtoState2}};
+connected(cast, {cancel, ReplyTo, StreamRef}, State=#state{
+		protocol=Protocol, protocol_state=ProtoState,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{ProtoState2, EvHandlerState} = Protocol:cancel(ProtoState,
+		StreamRef, ReplyTo, EvHandler, EvHandlerState0),
+	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 %% Public Websocket interface.
 %% @todo Maybe make an interface in the protocol module instead of checking on protocol name.
 %% An interface would also make sure that HTTP/1.0 can't upgrade.

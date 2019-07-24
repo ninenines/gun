@@ -24,7 +24,7 @@
 -export([request/11]).
 -export([data/7]).
 -export([connect/5]).
--export([cancel/3]).
+-export([cancel/5]).
 -export([stream_info/2]).
 -export([down/1]).
 -export([ws_upgrade/9]).
@@ -605,12 +605,19 @@ connect(State=#http_state{socket=Socket, transport=Transport, version=Version},
 	new_stream(State, {connect, StreamRef, Destination}, ReplyTo, <<"CONNECT">>).
 
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
-cancel(State, StreamRef, ReplyTo) ->
-	case is_stream(State, StreamRef) of
+cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
+	case is_stream(State0, StreamRef) of
 		true ->
-			cancel_stream(State, StreamRef);
+			State = cancel_stream(State0, StreamRef),
+			EvHandlerState = EvHandler:cancel(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo,
+				endpoint => local,
+				reason => cancel
+			}, EvHandlerState0),
+			{State, EvHandlerState};
 		false ->
-			error_stream_not_found(State, StreamRef, ReplyTo)
+			{error_stream_not_found(State0, StreamRef, ReplyTo), EvHandlerState0}
 	end.
 
 stream_info(#http_state{streams=Streams}, StreamRef) ->

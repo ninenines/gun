@@ -23,7 +23,7 @@
 -export([headers/10]).
 -export([request/11]).
 -export([data/7]).
--export([cancel/3]).
+-export([cancel/5]).
 -export([stream_info/2]).
 -export([down/1]).
 
@@ -150,8 +150,8 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandl
 			trailers_frame(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, Trailers, EvHandler, EvHandlerState);
 		{ok, {rst_stream, StreamID, Reason}, HTTP2Machine} ->
-			{rst_stream_frame(State#http2_state{http2_machine=HTTP2Machine}, StreamID, Reason),
-				EvHandlerState};
+			rst_stream_frame(State#http2_state{http2_machine=HTTP2Machine},
+				StreamID, Reason, EvHandler, EvHandlerState);
 		{ok, {push_promise, StreamID, PromisedStreamID, Headers, PseudoHeaders}, HTTP2Machine} ->
 			push_promise_frame(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, PromisedStreamID, Headers, PseudoHeaders,
@@ -268,14 +268,21 @@ trailers_frame(State, StreamID, Trailers, EvHandler, EvHandlerState0) ->
 	EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
 	{maybe_delete_stream(State, StreamID, remote, fin), EvHandlerState}.
 
-rst_stream_frame(State=#http2_state{streams=Streams0}, StreamID, Reason) ->
+rst_stream_frame(State=#http2_state{streams=Streams0},
+		StreamID, Reason, EvHandler, EvHandlerState0) ->
 	case lists:keytake(StreamID, #stream.id, Streams0) of
 		{value, #stream{ref=StreamRef, reply_to=ReplyTo}, Streams} ->
 			ReplyTo ! {gun_error, self(), StreamRef,
 				{stream_error, Reason, 'Stream reset by server.'}},
-			State#http2_state{streams=Streams};
+			EvHandlerState = EvHandler:cancel(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo,
+				endpoint => remote,
+				reason => Reason
+			}, EvHandlerState0),
+			{State#http2_state{streams=Streams}, EvHandlerState};
 		false ->
-			State
+			{State, EvHandlerState0}
 	end.
 
 push_promise_frame(State=#http2_state{streams=Streams},
@@ -482,15 +489,23 @@ reset_stream(State=#http2_state{socket=Socket, transport=Transport,
 			State
 	end.
 
-cancel(State=#http2_state{socket=Socket, transport=Transport,
-		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo) ->
+cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP2Machine0},
+		StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
 		#stream{id=StreamID} ->
 			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
 			Transport:send(Socket, cow_http2:rst_stream(StreamID, cancel)),
-			delete_stream(State#http2_state{http2_machine=HTTP2Machine}, StreamID);
+			EvHandlerState = EvHandler:cancel(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo,
+				endpoint => local,
+				reason => cancel
+			}, EvHandlerState0),
+			{delete_stream(State#http2_state{http2_machine=HTTP2Machine}, StreamID),
+				EvHandlerState};
 		false ->
-			error_stream_not_found(State, StreamRef, ReplyTo)
+			{error_stream_not_found(State, StreamRef, ReplyTo),
+				EvHandlerState0}
 	end.
 
 stream_info(State, StreamRef) ->

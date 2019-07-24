@@ -39,6 +39,7 @@
 -export([ws_recv_frame_end/2]).
 -export([ws_send_frame_start/2]).
 -export([ws_send_frame_end/2]).
+-export([cancel/2]).
 -export([disconnect/2]).
 -export([terminate/2]).
 
@@ -112,6 +113,9 @@ ws_send_frame_start(_EventData, State) ->
 	State.
 
 ws_send_frame_end(_EventData, State) ->
+	State.
+
+cancel(_EventData, State) ->
 	State.
 
 disconnect(_EventData, State) ->
