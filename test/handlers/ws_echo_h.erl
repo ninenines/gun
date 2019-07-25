@@ -1,6 +1,6 @@
 %% Feel free to use, reuse and abuse the code in this file.
 
--module(ws_echo).
+-module(ws_echo_h).
 
 -export([init/2]).
 -export([websocket_handle/2]).

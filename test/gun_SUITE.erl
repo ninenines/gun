@@ -134,7 +134,7 @@ detect_owner_down_unexpected(_) ->
 detect_owner_down_ws(_) ->
 	Name = name(),
 	{ok, _} = cowboy:start_clear(Name, [], #{env => #{
-		dispatch => cowboy_router:compile([{'_', [{"/", ws_echo, []}]}])
+		dispatch => cowboy_router:compile([{'_', [{"/", ws_echo_h, []}]}])
 	}}),
 	Port = ranch:get_port(Name),
 	Self = self(),

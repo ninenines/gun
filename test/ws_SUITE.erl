@@ -29,7 +29,7 @@ groups() ->
 
 init_per_suite(Config) ->
 	Routes = [
-		{"/", ws_echo, []},
+		{"/", ws_echo_h, []},
 		{"/reject", ws_reject_h, []}
 	],
 	{ok, _} = cowboy:start_clear(ws, [], #{env => #{

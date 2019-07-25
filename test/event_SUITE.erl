@@ -50,7 +50,7 @@ init_per_suite(Config) ->
 			{"/push", push_h, []},
 			{"/stream", stream_h, []},
 			{"/trailers", trailers_h, []},
-			{"/ws", ws_echo, []}
+			{"/ws", ws_echo_h, []}
 		]}])
 	}},
 	{ok, _} = cowboy:start_clear({?MODULE, tcp}, [], ProtoOpts),
