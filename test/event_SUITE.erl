@@ -30,13 +30,15 @@ all() ->
 
 groups() ->
 	Tests = ct_helper:all(?MODULE),
+	%% Some tests are written only for HTTP/1.0.
+	HTTP10Tests = [T || T <- Tests, lists:sublist(atom_to_list(T), 7) =:= "http10_"],
 	%% Push is not possible over HTTP/1.1.
 	PushTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 5) =:= "push_"],
 	%% We currently do not support Websocket over HTTP/2.
 	WsTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 3) =:= "ws_"],
 	[
 		{http, [parallel], Tests -- [cancel_remote|PushTests]},
-		{http2, [parallel], Tests -- [protocol_changed|WsTests]}
+		{http2, [parallel], (Tests -- [protocol_changed|WsTests]) -- HTTP10Tests}
 	].
 
 init_per_suite(Config) ->
@@ -473,6 +475,25 @@ do_response_end(Config, EventName, Path) ->
 		stream_ref := StreamRef,
 		reply_to := ReplyTo
 	} = do_receive_event(EventName),
+	gun:close(Pid).
+
+http10_response_end_body_close(Config) ->
+	doc("Confirm that the request_headers event callback is called "
+		"when using HTTP/1.0 and the content-length header is not set."),
+	OriginPort = config(tcp_origin_port, Config),
+	Opts = #{
+		event_handler => {?MODULE, self()},
+		http_opts => #{version => 'HTTP/1.0'},
+		protocols => [config(name, config(tc_group_properties, Config))]
+	},
+	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
+	{ok, _} = gun:await_up(Pid),
+	StreamRef = gun:get(Pid, "/stream"),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo
+	} = do_receive_event(response_end),
 	gun:close(Pid).
 
 ws_upgrade(Config) ->

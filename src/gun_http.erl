@@ -404,8 +404,13 @@ send_data_if_alive(_, State, _) ->
 	State.
 
 %% @todo Use Reason.
-close(_, State=#http_state{in=body_close, streams=[_|Tail]}, _, EvHandlerState) ->
+close(_, State=#http_state{in=body_close, streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|Tail]},
+		EvHandler, EvHandlerState0) ->
 	_ = send_data_if_alive(<<>>, State, fin),
+	EvHandlerState = EvHandler:response_end(#{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo
+	}, EvHandlerState0),
 	{close_streams(Tail), EvHandlerState};
 close(_, #http_state{streams=Streams}, _, EvHandlerState) ->
 	{close_streams(Streams), EvHandlerState}.
