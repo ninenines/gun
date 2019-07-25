@@ -30,15 +30,15 @@ all() ->
 
 groups() ->
 	Tests = ct_helper:all(?MODULE),
-	%% Some tests are written only for HTTP/1.0.
-	HTTP10Tests = [T || T <- Tests, lists:sublist(atom_to_list(T), 7) =:= "http10_"],
+	%% Some tests are written only for HTTP/1.0 or HTTP/1.1.
+	HTTP1Tests = [T || T <- Tests, lists:sublist(atom_to_list(T), 6) =:= "http1_"],
 	%% Push is not possible over HTTP/1.1.
 	PushTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 5) =:= "push_"],
 	%% We currently do not support Websocket over HTTP/2.
 	WsTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 3) =:= "ws_"],
 	[
 		{http, [parallel], Tests -- [cancel_remote|PushTests]},
-		{http2, [parallel], (Tests -- [protocol_changed|WsTests]) -- HTTP10Tests}
+		{http2, [parallel], (Tests -- [protocol_changed|WsTests]) -- HTTP1Tests}
 	].
 
 init_per_suite(Config) ->
@@ -233,8 +233,92 @@ tls_handshake_end_ok(Config) ->
 		timeout := _,
 		protocol := Protocol
 	} = do_receive_event(tls_handshake_end),
-	false = is_port(Socket),
+	true = is_tuple(Socket),
 	gun:close(Pid).
+
+http1_tls_handshake_start_connect(Config) ->
+	doc("Confirm that the tls_handshake_start event callback is called "
+		"when using CONNECT to a TLS server via a TCP proxy."),
+	OriginPort = config(tls_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tcp
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		socket := Socket,
+		tls_opts := _,
+		timeout := _
+	} = do_receive_event(tls_handshake_start),
+	true = is_port(Socket),
+	gun:close(ConnPid).
+
+http1_tls_handshake_end_error_connect(Config) ->
+	doc("Confirm that the tls_handshake_end event callback is called on TLS handshake error "
+		"when using CONNECT to a TLS server via a TCP proxy."),
+	%% We use the wrong port on purpose to trigger a handshake error.
+	OriginPort = config(tcp_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tcp
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		socket := Socket,
+		tls_opts := _,
+		timeout := _,
+		error := {tls_alert, _}
+	} = do_receive_event(tls_handshake_end),
+	true = is_port(Socket),
+	gun:close(ConnPid).
+
+http1_tls_handshake_end_ok_connect(Config) ->
+	doc("Confirm that the tls_handshake_end event callback is called on TLS handshake success "
+		"when using CONNECT to a TLS server via a TCP proxy."),
+	OriginPort = config(tls_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tcp
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		socket := Socket,
+		tls_opts := _,
+		timeout := _,
+		protocol := http
+	} = do_receive_event(tls_handshake_end),
+	true = is_tuple(Socket),
+	gun:close(ConnPid).
 
 request_start(Config) ->
 	doc("Confirm that the request_start event callback is called."),
@@ -477,7 +561,7 @@ do_response_end(Config, EventName, Path) ->
 	} = do_receive_event(EventName),
 	gun:close(Pid).
 
-http10_response_end_body_close(Config) ->
+http1_response_end_body_close(Config) ->
 	doc("Confirm that the request_headers event callback is called "
 		"when using HTTP/1.0 and the content-length header is not set."),
 	OriginPort = config(tcp_origin_port, Config),

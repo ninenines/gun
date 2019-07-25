@@ -274,8 +274,8 @@ handle_head(Data, State=#http_state{socket=Socket, transport=Transport,
 					ok
 			end,
 			%% @todo Figure out whether the event should trigger if the stream was cancelled.
-			EvHandlerState = EvHandler:response_headers(#{
-				stream_ref => StreamRef,
+			EvHandlerState1 = EvHandler:response_headers(#{
+				stream_ref => RealStreamRef,
 				reply_to => ReplyTo,
 				status => Status,
 				headers => Headers
@@ -296,33 +296,52 @@ handle_head(Data, State=#http_state{socket=Socket, transport=Transport,
 					%% and handled by the gun module directly.
 					{[{state, State2#http_state{socket=ProxyPid, transport=gun_tls_proxy}},
 						{origin, <<"https">>, NewHost, NewPort, connect},
-						{switch_transport, gun_tls_proxy, ProxyPid}], EvHandlerState};
+						{switch_transport, gun_tls_proxy, ProxyPid}], EvHandlerState1};
 				#{transport := tls} ->
 					TLSOpts = maps:get(tls_opts, Destination, []),
 					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
+					HandshakeEvent = #{
+						stream_ref => RealStreamRef,
+						reply_to => ReplyTo,
+						socket => Socket,
+						tls_opts => TLSOpts,
+						timeout => TLSTimeout
+					},
+					EvHandlerState2 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState1),
 					case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 						{ok, TLSSocket} ->
-							case ssl:negotiated_protocol(TLSSocket) of
-								{ok, <<"h2">>} ->
+							Protocol = case ssl:negotiated_protocol(TLSSocket) of
+								{ok, <<"h2">>} -> gun_http2;
+								_ -> gun_http
+							end,
+							EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+								socket => TLSSocket,
+								protocol => Protocol:name()
+							}, EvHandlerState2),
+							case Protocol of
+								gun_http2 ->
 									{[{origin, <<"https">>, NewHost, NewPort, connect},
 										{switch_transport, gun_tls, TLSSocket},
 										{switch_protocol, gun_http2, State2}], EvHandlerState};
-								_ ->
+								gun_http ->
 									{[{state, State2#http_state{socket=TLSSocket, transport=gun_tls}},
 										{origin, <<"https">>, NewHost, NewPort, connect},
 										{switch_transport, gun_tls, TLSSocket}], EvHandlerState}
 							end;
-						Error ->
+						Error = {error, Reason} ->
+							EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+								error => Reason
+							}, EvHandlerState2),
 							{Error, EvHandlerState}
 					end;
 				_ ->
 					case maps:get(protocols, Destination, [http]) of
 						[http] ->
 							{[{state, State2},
-								{origin, <<"http">>, NewHost, NewPort, connect}], EvHandlerState};
+								{origin, <<"http">>, NewHost, NewPort, connect}], EvHandlerState1};
 						[http2] ->
 							{[{origin, <<"http">>, NewHost, NewPort, connect},
-								{switch_protocol, gun_http2, State2}], EvHandlerState}
+								{switch_protocol, gun_http2, State2}], EvHandlerState1}
 					end
 			end;
 		{_, _} when Status >= 100, Status =< 199 ->

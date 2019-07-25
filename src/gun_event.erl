@@ -55,8 +55,20 @@
 -callback connect_end(connect_event(), State) -> State.
 
 %% tls_handshake_start/tls_handshake_end.
+%%
+%% These events occur when connecting to a TLS server or when
+%% upgrading the connection to use TLS, for example using CONNECT.
+%% The stream_ref/reply_to values are only present when the TLS
+%% handshake occurs as a result of a request.
+%%
+%% @todo The current implementation of TLS over TLS will not result
+%% in an event being triggered when the TLS handshake fails. Instead
+%% the Gun process will exit because of the link to the gun_tls_proxy
+%% process.
 
 -type tls_handshake_event() :: #{
+	stream_ref => reference(),
+	reply_to => pid(),
 	socket := inet:socket() | ssl:sslsocket(), %% The socket before/after will be different.
 	tls_opts := [ssl:connect_option()],
 	timeout := timeout(),
