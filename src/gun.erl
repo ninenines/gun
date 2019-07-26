@@ -1081,8 +1081,14 @@ commands([{state, ProtoState}|Tail], State) ->
 %% of the intermediaries properly.
 commands([{origin, Scheme, Host, Port, Type}|Tail],
 		State=#state{transport=Transport, protocol=Protocol,
-			origin_host=IntermediateHost, origin_port=IntermediatePort,
-			intermediaries=Intermediaries}) ->
+			origin_host=IntermediateHost, origin_port=IntermediatePort, intermediaries=Intermediaries,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	EvHandlerState = EvHandler:origin_changed(#{
+		type => Type,
+		origin_scheme => Scheme,
+		origin_host => Host,
+		origin_port => Port
+	}, EvHandlerState0),
 	Info = #{
 		type => Type,
 		host => IntermediateHost,
@@ -1091,7 +1097,8 @@ commands([{origin, Scheme, Host, Port, Type}|Tail],
 		protocol => Protocol:name()
 	},
 	commands(Tail, State#state{origin_scheme=Scheme,
-		origin_host=Host, origin_port=Port, intermediaries=[Info|Intermediaries]});
+		origin_host=Host, origin_port=Port, intermediaries=[Info|Intermediaries],
+		event_handler_state=EvHandlerState});
 commands([{switch_transport, Transport, Socket}|Tail], State=#state{
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState = EvHandler:transport_changed(#{

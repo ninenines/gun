@@ -258,6 +258,17 @@
 
 -callback transport_changed(transport_changed_event(), State) -> State.
 
+%% origin_changed.
+
+-type origin_changed_event() :: #{
+	type := connect,
+	origin_scheme := binary(),
+	origin_host := inet:hostname() | inet:ip_address(),
+	origin_port := inet:port_number()
+}.
+
+-callback origin_changed(origin_changed_event(), State) -> State.
+
 %% cancel.
 %%
 %% In the case of HTTP/1.1 we cannot actually cancel the stream,
@@ -293,5 +304,3 @@
 }.
 
 -callback terminate(terminate_event(), State) -> State.
-
-%% @todo origin_changed
