@@ -968,11 +968,25 @@ connected(cast, {connect, ReplyTo, StreamRef, Destination0, Headers},
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers),
 	{keep_state, State#state{protocol_state=ProtoState2}};
 %% When using gun_tls_proxy we need a separate message to know whether
-%% we need to switch to a different protocol.
-connected(info, {connect_protocol, Protocol}, #state{protocol=Protocol}) ->
-	keep_state_and_data;
-connected(info, {connect_protocol, Protocol}, State=#state{protocol_state=ProtoState}) ->
-	commands([{switch_protocol, Protocol, ProtoState}], State);
+%% the handshake succeeded and whether we need to switch to a different protocol.
+connected(info, {gun_tls_proxy, Socket, {ok, NewProtocol}, HandshakeEvent},
+		State0=#state{socket=Socket, protocol=CurrentProtocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+		socket => Socket,
+		protocol => NewProtocol:name()
+	}, EvHandlerState0),
+	State = State0#state{event_handler_state=EvHandlerState},
+	case NewProtocol of
+		CurrentProtocol -> {keep_state, State};
+		_ -> commands([{switch_protocol, NewProtocol, ProtoState}], State)
+	end;
+connected(info, {gun_tls_proxy, Socket, Error = {error, Reason}, HandshakeEvent},
+		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+		error => Reason
+	}, EvHandlerState0),
+	commands([Error], State#state{event_handler_state=EvHandlerState});
 connected(cast, {cancel, ReplyTo, StreamRef}, State=#state{
 		protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->

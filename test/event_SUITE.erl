@@ -320,6 +320,96 @@ http1_tls_handshake_end_ok_connect(Config) ->
 	true = is_tuple(Socket),
 	gun:close(ConnPid).
 
+http1_tls_handshake_start_connect_over_https_proxy(Config) ->
+	doc("Confirm that the tls_handshake_start event callback is called "
+		"when using CONNECT to a TLS server via a TLS proxy."),
+	OriginPort = config(tls_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tls),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tls
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	%% We skip the TLS handshake event to the TLS proxy.
+	_ = do_receive_event(tls_handshake_start),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		socket := Socket,
+		tls_opts := _,
+		timeout := _
+	} = do_receive_event(tls_handshake_start),
+	true = is_tuple(Socket),
+	gun:close(ConnPid).
+
+http1_tls_handshake_end_error_connect_over_https_proxy(Config) ->
+	doc("Confirm that the tls_handshake_end event callback is called on TLS handshake error "
+		"when using CONNECT to a TLS server via a TLS proxy."),
+	%% We use the wrong port on purpose to trigger a handshake error.
+	OriginPort = config(tcp_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tls),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tls
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	%% We skip the TLS handshake event to the TLS proxy.
+	_ = do_receive_event(tls_handshake_end),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		socket := Socket,
+		tls_opts := _,
+		timeout := _,
+		error := {tls_alert, _}
+	} = do_receive_event(tls_handshake_end),
+	true = is_tuple(Socket),
+	gun:close(ConnPid).
+
+http1_tls_handshake_end_ok_connect_over_https_proxy(Config) ->
+	doc("Confirm that the tls_handshake_end event callback is called on TLS handshake success "
+		"when using CONNECT to a TLS server via a TLS proxy."),
+	OriginPort = config(tls_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tls),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tls
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	%% We skip the TLS handshake event to the TLS proxy.
+	_ = do_receive_event(tls_handshake_end),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	ReplyTo = self(),
+	#{
+		stream_ref := StreamRef,
+		reply_to := ReplyTo,
+		socket := Socket,
+		tls_opts := _,
+		timeout := _,
+		protocol := http
+	} = do_receive_event(tls_handshake_end),
+	true = is_pid(Socket),
+	gun:close(ConnPid).
+
 request_start(Config) ->
 	doc("Confirm that the request_start event callback is called."),
 	do_request_event(Config, ?FUNCTION_NAME),

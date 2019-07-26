@@ -46,7 +46,7 @@
 -endif.
 
 %% Gun-specific interface.
--export([start_link/6]).
+-export([start_link/7]).
 
 %% gun_tls_proxy_cb interface.
 -export([cb_controlling_process/2]).
@@ -89,7 +89,10 @@
 	%% The socket or proxy process we are sending to.
 	out_socket :: any(),
 	out_transport :: module(),
-	out_messages :: {atom(), atom(), atom()} %% @todo Missing passive.
+	out_messages :: {atom(), atom(), atom()}, %% @todo Missing passive.
+
+	%% Extra information to be sent to the owner when the handshake completes.
+	extra :: any()
 }).
 
 -ifdef(DEBUG_PROXY).
@@ -102,12 +105,11 @@
 
 %% Gun-specific interface.
 
-start_link(Host, Port, Opts, Timeout, OutSocket, OutTransport) ->
+start_link(Host, Port, Opts, Timeout, OutSocket, OutTransport, Extra) ->
 	?DEBUG_LOG("host ~0p port ~0p opts ~0p timeout ~0p out_socket ~0p out_transport ~0p",
 		[Host, Port, Opts, Timeout, OutSocket, OutTransport]),
-
 	case gen_statem:start_link(?MODULE,
-			{self(), Host, Port, Opts, Timeout, OutSocket, OutTransport},
+			{self(), Host, Port, Opts, Timeout, OutSocket, OutTransport, Extra},
 			[]) of
 		{ok, Pid} when is_port(OutSocket) ->
 			ok = gen_tcp:controlling_process(OutSocket, Pid),
@@ -176,13 +178,19 @@ sockname(Pid) ->
 -spec close(pid()) -> ok.
 close(Pid) ->
 	?DEBUG_LOG("pid ~0p", [Pid]),
-	gen_statem:call(Pid, ?FUNCTION_NAME).
+	try
+		gen_statem:call(Pid, ?FUNCTION_NAME)
+	catch
+		%% May happen for example when the handshake fails.
+		exit:{noproc, _} ->
+			ok
+	end.
 
 %% gen_statem.
 
 callback_mode() -> state_functions.
 
-init({OwnerPid, Host, Port, Opts, Timeout, OutSocket, OutTransport}) ->
+init({OwnerPid, Host, Port, Opts, Timeout, OutSocket, OutTransport, Extra}) ->
 	if
 		is_pid(OutSocket) ->
 			gen_statem:cast(OutSocket, {set_owner, self()});
@@ -199,7 +207,8 @@ init({OwnerPid, Host, Port, Opts, Timeout, OutSocket, OutTransport}) ->
 		" out_socket ~0p out_transport ~0p proxy_pid ~0p",
 		[OwnerPid, Host, Port, Opts, Timeout, OutSocket, OutTransport, ProxyPid]),
 	{ok, not_connected, #state{owner_pid=OwnerPid, host=Host, port=Port, proxy_pid=ProxyPid,
-		out_socket=OutSocket, out_transport=OutTransport, out_messages=Messages}}.
+		out_socket=OutSocket, out_transport=OutTransport, out_messages=Messages,
+		extra=Extra}}.
 
 connect_proc(ProxyPid, Host, Port, Opts, Timeout) ->
 	?DEBUG_LOG("proxy_pid ~0p host ~0p port ~0p opts ~0p timeout ~0p",
@@ -226,20 +235,23 @@ not_connected({call, _}, Msg={send, _}, State) ->
 not_connected(cast, Msg={setopts, _}, State) ->
 	?DEBUG_LOG("postpone ~0p state ~0p", [Msg, State]),
 	{keep_state_and_data, postpone};
-not_connected(cast, Msg={connect_proc, {ok, Socket}}, State=#state{owner_pid=OwnerPid}) ->
+not_connected(cast, Msg={connect_proc, {ok, Socket}}, State=#state{owner_pid=OwnerPid, extra=Extra}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
 	Protocol = case ssl:negotiated_protocol(Socket) of
 		{ok, <<"h2">>} -> gun_http2;
 		_ -> gun_http
 	end,
-	OwnerPid ! {connect_protocol, Protocol},
+	OwnerPid ! {?MODULE, self(), {ok, Protocol}, Extra},
 	%% We need to spawn this call before OTP-21.2 because it triggers
 	%% a cb_setopts call that blocks us. Might be OK to just leave it
 	%% like this once we support 21.2+ only.
 	spawn(fun() -> ok = ssl:setopts(Socket, [{active, true}]) end),
 	{next_state, connected, State#state{proxy_socket=Socket}};
-not_connected(cast, Msg={connect_proc, Error}, State) ->
+not_connected(cast, Msg={connect_proc, Error}, State=#state{owner_pid=OwnerPid, extra=Extra}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	OwnerPid ! {?MODULE, self(), Error, Extra},
+	%% We unlink from the owner process to avoid taking it down with us.
+	unlink(OwnerPid),
 	{stop, Error, State};
 not_connected(Type, Event, State) ->
 	handle_common(Type, Event, State).
@@ -387,7 +399,7 @@ proxy_active(State=#state{proxy_pid=ProxyPid, proxy_active=Active0, proxy_buffer
 tcp_test() ->
 	ssl:start(),
 	{ok, Socket} = gen_tcp:connect("google.com", 443, [binary, {active, false}]),
-	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, gen_tcp),
+	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, gen_tcp, #{}),
 	send(ProxyPid1, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
 	receive {tls_proxy, ProxyPid1, <<"HTTP/1.1 ", _/bits>>} -> ok after 1000 -> error(timeout) end.
 
@@ -396,7 +408,7 @@ ssl_test() ->
 	_ = (catch ct_helper:make_certs_in_ets()),
 	{ok, _, Port} = do_proxy_start("google.com", 443),
 	{ok, Socket} = ssl:connect("localhost", Port, [binary, {active, false}]),
-	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, ssl),
+	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, ssl, #{}),
 	send(ProxyPid1, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
 	receive {tls_proxy, ProxyPid1, <<"HTTP/1.1 ", _/bits>>} -> ok after 1000 -> error(timeout) end.
 
@@ -406,8 +418,8 @@ ssl2_test() ->
 	{ok, _, Port1} = do_proxy_start("google.com", 443),
 	{ok, _, Port2} = do_proxy_start("localhost", Port1),
 	{ok, Socket} = ssl:connect("localhost", Port2, [binary, {active, false}]),
-	{ok, ProxyPid1} = start_link("localhost", Port1, [], 5000, Socket, ssl),
-	{ok, ProxyPid2} = start_link("google.com", 443, [], 5000, ProxyPid1, ?MODULE),
+	{ok, ProxyPid1} = start_link("localhost", Port1, [], 5000, Socket, ssl, #{}),
+	{ok, ProxyPid2} = start_link("google.com", 443, [], 5000, ProxyPid1, ?MODULE, #{}),
 	send(ProxyPid2, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
 	receive {tls_proxy, ProxyPid2, <<"HTTP/1.1 ", _/bits>>} -> ok after 1000 -> error(timeout) end.
 

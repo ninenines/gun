@@ -289,14 +289,22 @@ handle_head(Data, State=#http_state{socket=Socket, transport=Transport,
 				#{transport := tls} when Transport =:= gun_tls ->
 					TLSOpts = maps:get(tls_opts, Destination, []),
 					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
+					HandshakeEvent = #{
+						stream_ref => RealStreamRef,
+						reply_to => ReplyTo,
+						socket => Socket,
+						tls_opts => TLSOpts,
+						timeout => TLSTimeout
+					},
+					EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState1),
 					{ok, ProxyPid} = gun_tls_proxy:start_link(NewHost, NewPort,
-						TLSOpts, TLSTimeout, Socket, gun_tls),
+						TLSOpts, TLSTimeout, Socket, gun_tls, HandshakeEvent),
 					%% In this case the switch_protocol is delayed and is handled by
 					%% a message sent from gun_tls_proxy once the connection is established,
 					%% and handled by the gun module directly.
 					{[{state, State2#http_state{socket=ProxyPid, transport=gun_tls_proxy}},
 						{origin, <<"https">>, NewHost, NewPort, connect},
-						{switch_transport, gun_tls_proxy, ProxyPid}], EvHandlerState1};
+						{switch_transport, gun_tls_proxy, ProxyPid}], EvHandlerState};
 				#{transport := tls} ->
 					TLSOpts = maps:get(tls_opts, Destination, []),
 					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
