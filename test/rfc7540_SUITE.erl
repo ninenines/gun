@@ -128,7 +128,10 @@ lingering_data_counts_toward_connection_window(_) ->
 		% Make sure Gun send the RST_STREAM
 		timer:sleep(100),
 		%% Step 7
-		ok = Transport:send(Socket, [cow_http2:data(1, nofin, <<0:1000/unit:8>>)]),
+		ok = Transport:send(Socket, [
+			cow_http2:data(1, nofin, <<0:0/unit:8>>),
+			cow_http2:data(1, nofin, <<0:1000/unit:8>>)
+		]),
 		%% Skip RST_STREAM.
 		{ok, << 4:24, 3:8, 1:40, _:32 >>} = gen_tcp:recv(Socket, 13, 1000),
 		%% Received a WINDOW_UPDATE frame after we got RST_STREAM.
