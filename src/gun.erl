@@ -1076,8 +1076,6 @@ commands([Error={error, _}|_], State) ->
 	disconnect(State, Error);
 commands([{state, ProtoState}|Tail], State) ->
 	commands(Tail, State#state{protocol_state=ProtoState});
-%% @todo The scheme should probably not be ignored.
-%%
 %% Order is important: the origin must be changed before
 %% the transport and/or protocol in order to keep track
 %% of the intermediaries properly.
@@ -1094,9 +1092,14 @@ commands([{origin, Scheme, Host, Port, Type}|Tail],
 	},
 	commands(Tail, State#state{origin_scheme=Scheme,
 		origin_host=Host, origin_port=Port, intermediaries=[Info|Intermediaries]});
-commands([{switch_transport, Transport, Socket}|Tail], State) ->
+commands([{switch_transport, Transport, Socket}|Tail], State=#state{
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	EvHandlerState = EvHandler:transport_changed(#{
+		socket => Socket,
+		transport => Transport:name()
+	}, EvHandlerState0),
 	commands(Tail, active(State#state{socket=Socket, transport=Transport,
-		messages=Transport:messages()}));
+		messages=Transport:messages(), event_handler_state=EvHandlerState}));
 %% @todo The two loops should be reunified and this clause generalized.
 commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State=#state{
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->

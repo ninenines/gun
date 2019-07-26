@@ -33,12 +33,13 @@
 -export([response_trailers/2]).
 -export([response_end/2]).
 -export([ws_upgrade/2]).
--export([protocol_changed/2]).
 -export([ws_recv_frame_start/2]).
 -export([ws_recv_frame_header/2]).
 -export([ws_recv_frame_end/2]).
 -export([ws_send_frame_start/2]).
 -export([ws_send_frame_end/2]).
+-export([protocol_changed/2]).
+-export([transport_changed/2]).
 -export([cancel/2]).
 -export([disconnect/2]).
 -export([terminate/2]).
@@ -97,9 +98,6 @@ response_end(_EventData, State) ->
 ws_upgrade(_EventData, State) ->
 	State.
 
-protocol_changed(_EventData, State) ->
-	State.
-
 ws_recv_frame_start(_EventData, State) ->
 	State.
 
@@ -113,6 +111,12 @@ ws_send_frame_start(_EventData, State) ->
 	State.
 
 ws_send_frame_end(_EventData, State) ->
+	State.
+
+protocol_changed(_EventData, State) ->
+	State.
+
+transport_changed(_EventData, State) ->
 	State.
 
 cancel(_EventData, State) ->

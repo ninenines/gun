@@ -64,7 +64,7 @@
 -type tls_handshake_event() :: #{
 	stream_ref => reference(),
 	reply_to => pid(),
-	socket := inet:socket() | ssl:sslsocket(), %% The socket before/after will be different.
+	socket := inet:socket() | ssl:sslsocket() | pid(), %% The socket before/after will be different.
 	tls_opts := [ssl:connect_option()],
 	timeout := timeout(),
 	protocol => http | http2,
@@ -178,21 +178,6 @@
 
 -callback ws_upgrade(ws_upgrade_event(), State) -> State.
 
-%% protocol_changed.
-%%
-%% This event can occur either following a successful ws_upgrade
-%% event or following a successful CONNECT request.
-%%
-%% @todo Currently there is only a connection-wide variant of this
-%% event. In the future there will be a stream-wide variant to
-%% support CONNECT and Websocket over HTTP/2.
-
--type protocol_changed_event() :: #{
-	protocol := http2 | ws
-}.
-
--callback protocol_changed(protocol_changed_event(), State) -> State.
-
 %% ws_recv_frame_start.
 
 -type ws_recv_frame_start_event() :: #{
@@ -243,6 +228,36 @@
 -callback ws_send_frame_start(ws_send_frame_event(), State) -> State.
 -callback ws_send_frame_end(ws_send_frame_event(), State) -> State.
 
+%% protocol_changed.
+%%
+%% This event can occur either following a successful ws_upgrade
+%% event or following a successful CONNECT request.
+%%
+%% @todo Currently there is only a connection-wide variant of this
+%% event. In the future there will be a stream-wide variant to
+%% support CONNECT and Websocket over HTTP/2.
+
+-type protocol_changed_event() :: #{
+	protocol := http2 | ws
+}.
+
+-callback protocol_changed(protocol_changed_event(), State) -> State.
+
+%% transport_changed.
+%%
+%% This event can occur following a successful CONNECT request.
+%%
+%% @todo Currently there is only a connection-wide variant of this
+%% event. In the future there will be a stream-wide variant to
+%% support CONNECT through TLS proxies over HTTP/2.
+
+-type transport_changed_event() :: #{
+	socket := ssl:sslsocket() | pid(),
+	transport := tls | tls_proxy
+}.
+
+-callback transport_changed(transport_changed_event(), State) -> State.
+
 %% cancel.
 %%
 %% In the case of HTTP/1.1 we cannot actually cancel the stream,
@@ -280,4 +295,3 @@
 -callback terminate(terminate_event(), State) -> State.
 
 %% @todo origin_changed
-%% @todo transport_changed

@@ -38,7 +38,7 @@ groups() ->
 	WsTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 3) =:= "ws_"],
 	[
 		{http, [parallel], Tests -- [cancel_remote|PushTests]},
-		{http2, [parallel], (Tests -- [protocol_changed|WsTests]) -- HTTP1Tests}
+		{http2, [parallel], (Tests -- WsTests) -- HTTP1Tests}
 	].
 
 init_per_suite(Config) ->
@@ -734,20 +734,6 @@ ws_upgrade_all_events(Config) ->
 	} = do_receive_event(protocol_changed),
 	gun:close(Pid).
 
-protocol_changed(Config) ->
-	doc("Confirm that the protocol_changed event callback is called."),
-	do_protocol_changed_ws(Config, ?FUNCTION_NAME).
-	%% @todo do_protocol_changed_connect
-
-do_protocol_changed_ws(Config, EventName) ->
-	{ok, Pid, _} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
-	_ = gun:ws_upgrade(Pid, "/ws"),
-	#{
-		protocol := ws
-	} = do_receive_event(EventName),
-	gun:close(Pid).
-
 ws_recv_frame_start(Config) ->
 	doc("Confirm that the ws_recv_frame_start event callback is called."),
 	{ok, Pid, _} = do_gun_open(Config),
@@ -823,6 +809,101 @@ do_ws_send_frame(Config, EventName) ->
 		frame := {text, <<"Hello!">>}
 	} = do_receive_event(EventName),
 	gun:close(Pid).
+
+ws_protocol_changed(Config) ->
+	doc("Confirm that the protocol_changed event callback is called on Websocket upgrade success."),
+	{ok, Pid, _} = do_gun_open(Config),
+	{ok, _} = gun:await_up(Pid),
+	_ = gun:ws_upgrade(Pid, "/ws"),
+	#{
+		protocol := ws
+	} = do_receive_event(protocol_changed),
+	gun:close(Pid).
+
+http1_protocol_changed_connect(Config) ->
+	doc("Confirm that the protocol_changed event callback is called on CONNECT success "
+		"when connecting through a TLS server via a TCP proxy."),
+	OriginPort = config(tcp_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tcp
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [http2]
+	}),
+	#{protocol := http2} = do_receive_event(protocol_changed),
+	gun:close(ConnPid).
+
+http1_protocol_changed_connect_over_https_proxy(Config) ->
+	doc("Confirm that the protocol_changed event callback is called on CONNECT success "
+		"when connecting through a TLS server via a TLS proxy."),
+	OriginPort = config(tls_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tls),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tls
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls,
+		protocols => [http2]
+	}),
+	#{protocol := http2} = do_receive_event(protocol_changed),
+	gun:close(ConnPid).
+
+http1_transport_changed_connect(Config) ->
+	doc("Confirm that the transport_changed event callback is called on CONNECT success "
+		"when connecting through a TLS server via a TCP proxy."),
+	OriginPort = config(tls_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tcp
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	#{
+		socket := Socket,
+		transport := tls
+	} = do_receive_event(transport_changed),
+	true = is_tuple(Socket),
+	gun:close(ConnPid).
+
+http1_transport_changed_connect_over_https_proxy(Config) ->
+	doc("Confirm that the transport_changed event callback is called on CONNECT success "
+		"when connecting through a TLS server via a TLS proxy."),
+	OriginPort = config(tls_origin_port, Config),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tls),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		event_handler => {?MODULE, self()},
+		protocols => [config(name, config(tc_group_properties, Config))],
+		transport => tls
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls
+	}),
+	#{
+		socket := Socket,
+		transport := tls_proxy
+	} = do_receive_event(transport_changed),
+	true = is_pid(Socket),
+	gun:close(ConnPid).
 
 cancel(Config) ->
 	doc("Confirm that the cancel event callback is called when we cancel a stream."),
@@ -986,10 +1067,6 @@ ws_upgrade(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
-protocol_changed(EventData, Pid) ->
-	Pid ! {?FUNCTION_NAME, EventData},
-	Pid.
-
 ws_recv_frame_start(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
@@ -1007,6 +1084,14 @@ ws_send_frame_start(EventData, Pid) ->
 	Pid.
 
 ws_send_frame_end(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+protocol_changed(EventData, Pid) ->
+	Pid ! {?FUNCTION_NAME, EventData},
+	Pid.
+
+transport_changed(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 
