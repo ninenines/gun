@@ -776,16 +776,6 @@ not_connected(_, {retries, Retries, _}, State=#state{opts=Opts}) ->
 		{state_timeout, Timeout, {retries, Retries - 1, not_connected}}};
 not_connected({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
-not_connected(cast, Event, State) when is_tuple(Event) ->
-	EventType = element(1, Event),
-	IsRequest = lists:member(EventType, [request, headers, data]),
-	if
-		IsRequest ->
-			{keep_state, State,
-				{postpone, true}};
-		true ->
-			handle_common(cast, Event, ?FUNCTION_NAME, State)
-	end;
 not_connected(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
@@ -1057,6 +1047,9 @@ handle_common(cast, Any, _, #state{owner=Owner}) when element(2, Any) =/= Owner 
 	element(2, Any) ! {gun_error, self(), {notowner,
 		"Operations are restricted to the owner of the connection."}},
 	keep_state_and_data;
+%% We postpone all HTTP/Websocket operations until we are connected.
+handle_common(cast, _, StateName, _) when StateName =/= connected ->
+  {keep_state_and_data, postpone};
 handle_common(Type, Event, StateName, StateData) ->
 	error_logger:error_msg("Unexpected event in state ~p of type ~p:~n~w~n~p~n",
 		[StateName, Type, Event, StateData]),

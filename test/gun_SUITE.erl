@@ -416,6 +416,23 @@ retry_timeout(_) ->
 		error(shutdown_too_late)
 	end.
 
+retry_request(_) ->
+	doc("Ensure Gun doesn't raise error when requesting in retries"),
+	{ok, Pid} = gun:open("localhost", 12345, #{retry => 5, retry_timeout => 100}),
+	Ref = monitor(process, Pid),
+	After = case os:type() of
+		{win32, _} -> 2700;
+		_ -> 700
+	end,
+	gun:get(Pid, "/"),
+	receive
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
+			ok
+	after After ->
+		%% There's no error when sending requests
+		ok
+	end.
+
 shutdown_reason(_) ->
 	doc("The last connection failure must be propagated."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
