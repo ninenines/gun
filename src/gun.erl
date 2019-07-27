@@ -281,6 +281,8 @@ check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	check_options(Opts);
 check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
+check_options([{retry_timeout, F}|Opts]) when is_function(F) ->
+	check_options(Opts);
 check_options([{supervise, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);
 check_options([{tcp_opts, L}|Opts]) when is_list(L) ->
@@ -740,6 +742,7 @@ start_link(Owner, Host, Port, Opts) ->
 
 init({Owner, Host, Port, Opts}) ->
 	Retry = maps:get(retry, Opts, 5),
+	RetryTimeout = maps:get(retry_timeout, Opts, 5000),
 	OriginTransport = maps:get(transport, Opts, default_transport(Port)),
 	{OriginScheme, Transport} = case OriginTransport of
 		tcp -> {<<"http">>, gun_tcp};
@@ -762,24 +765,35 @@ init({Owner, Host, Port, Opts}) ->
 		transport=Transport, messages=Transport:messages(),
 		event_handler=EvHandler, event_handler_state=EvHandlerState},
 	{ok, domain_lookup, State,
-		{next_event, internal, {retries, Retry, not_connected}}}.
+		{next_event, internal, {retries, #{
+			left_retries => Retry,
+			curr_retry => 0,
+			retry_timeout => RetryTimeout
+		}, not_connected}}}.
 
 default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
 %% @todo This is where we would implement the backoff mechanism presumably.
-not_connected(_, {retries, 0, Reason}, State) ->
+not_connected(_, {retries, #{left_retries := 0}, Reason}, State) ->
 	{stop, {shutdown, Reason}, State};
-not_connected(_, {retries, Retries, _}, State=#state{opts=Opts}) ->
-	Timeout = maps:get(retry_timeout, Opts, 5000),
+not_connected(_, {retries, #{left_retries := LeftRetries, retry_timeout := RetryTimeoutFn} = RetryOptions, _},
+		State) when is_function(RetryTimeoutFn) ->
+	error_logger:error_msg("~p", [RetryOptions]),
+	RetryTimeout = RetryTimeoutFn(RetryOptions),
+	error_logger:error_msg("~p", [RetryTimeout]),
 	{next_state, domain_lookup, State,
-		{state_timeout, Timeout, {retries, Retries - 1, not_connected}}};
+		{state_timeout, RetryTimeout, {retries, RetryOptions#{left_retries => LeftRetries - 1}, not_connected}}};
+not_connected(_, {retries, #{left_retries := LeftRetries, retry_timeout := RetryTimeout} = RetryOptions, _}, State) ->
+	error_logger:error_msg("~p", [RetryTimeout]),
+	{next_state, domain_lookup, State,
+		{state_timeout, RetryTimeout, {retries, RetryOptions#{left_retries => LeftRetries - 1}, not_connected}}};
 not_connected({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
 not_connected(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
-domain_lookup(_, {retries, Retries, _}, State=#state{host=Host, port=Port, opts=Opts,
+domain_lookup(_, {retries, RetryOptions, _}, State=#state{host=Host, port=Port, opts=Opts,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	TransOpts = maps:get(tcp_opts, Opts, []),
 	DomainLookupTimeout = maps:get(domain_lookup_timeout, Opts, infinity),
@@ -796,20 +810,20 @@ domain_lookup(_, {retries, Retries, _}, State=#state{host=Host, port=Port, opts=
 				lookup_info => LookupInfo
 			}, EvHandlerState1),
 			{next_state, connecting, State#state{event_handler_state=EvHandlerState},
-				{next_event, internal, {retries, Retries, LookupInfo}}};
+				{next_event, internal, {retries, RetryOptions, LookupInfo}}};
 		{error, Reason} ->
 			EvHandlerState = EvHandler:domain_lookup_end(DomainLookupEvent#{
 				error => Reason
 			}, EvHandlerState1),
 			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
-				{next_event, internal, {retries, Retries, Reason}}}
+				{next_event, internal, {retries, RetryOptions, Reason}}}
 	end;
 domain_lookup({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
 domain_lookup(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
-connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
+connecting(_, {retries, RetryOptions, LookupInfo}, State=#state{opts=Opts,
 		transport=Transport, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	ConnectTimeout = maps:get(connect_timeout, Opts, infinity),
 	ConnectEvent = #{
@@ -834,20 +848,20 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 				socket => Socket
 			}, EvHandlerState1),
 			{next_state, tls_handshake, State#state{event_handler_state=EvHandlerState},
-				{next_event, internal, {retries, Retries, Socket}}};
+				{next_event, internal, {retries, RetryOptions, Socket}}};
 		{error, Reason} ->
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				error => Reason
 			}, EvHandlerState1),
 			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
-				{next_event, internal, {retries, Retries, Reason}}}
+				{next_event, internal, {retries, RetryOptions, Reason}}}
 	end;
 connecting({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
 connecting(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
-tls_handshake(_, {retries, Retries, Socket0}, State=#state{opts=Opts,
+tls_handshake(_, {retries, RetryOptions, Socket0}, State=#state{opts=Opts,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	TransOpts0 = maps:get(tls_opts, Opts, []),
 	TransOpts = ensure_alpn(maps:get(protocols, Opts, [http2, http]), TransOpts0),
@@ -875,7 +889,7 @@ tls_handshake(_, {retries, Retries, Socket0}, State=#state{opts=Opts,
 				error => Reason
 			}, EvHandlerState1),
 			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
-				{next_event, internal, {retries, Retries, Reason}}}
+				{next_event, internal, {retries, RetryOptions, Reason}}}
 	end;
 tls_handshake({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
@@ -1144,6 +1158,7 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 	},
 	EvHandlerState = EvHandler:disconnect(DisconnectEvent, EvHandlerState1),
 	Retry = maps:get(retry, Opts, 5),
+	RetryTimeout = maps:get(retry_timeout, Opts, 5000),
 	case Retry of
 		0 ->
 			{stop, {shutdown, Reason}, State#state{event_handler_state=EvHandlerState}};
@@ -1152,7 +1167,11 @@ disconnect(State=#state{owner=Owner, opts=Opts,
 				keepalive_cancel(State#state{socket=undefined,
 					protocol=undefined, protocol_state=undefined,
 					event_handler_state=EvHandlerState}),
-				{next_event, internal, {retries, Retry - 1, Reason}}}
+				{next_event, internal, {retries, #{
+					left_retries => Retry - 1,
+					curr_retry => 1,
+					retry_timeout => RetryTimeout
+				}, Reason}}}
 	end.
 
 disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
