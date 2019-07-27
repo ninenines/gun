@@ -289,7 +289,7 @@ postpone_request_while_not_connected(_) ->
 	end,
 	timer:sleep(Timeout),
 	%% Start the server so that next retry will result in the client connecting successfully.
-	{ok, ListenSocket} = gen_tcp:listen(23456, [binary, {active, false}]),
+	{ok, ListenSocket} = gen_tcp:listen(23456, [binary, {active, false}, {reuseaddr, true}]),
 	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
 	%% The client should now be up.
 	{ok, http} = gun:await_up(Pid),
@@ -393,6 +393,25 @@ retry_1(_) ->
 			ok
 	after After ->
 		error(timeout)
+	end.
+
+retry_fun(_) ->
+	doc("Ensure the retry_fun is used when provided."),
+	{ok, Pid} = gun:open("localhost", 12345, #{
+		retry => 5,
+		retry_fun => fun(_, _) -> #{retries => 0, timeout => 500} end,
+		retry_timeout => 5000
+	}),
+	Ref = monitor(process, Pid),
+	After = case os:type() of
+		{win32, _} -> 2800;
+		_ -> 800
+	end,
+	receive
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
+			ok
+	after After ->
+		error(shutdown_too_late)
 	end.
 
 retry_immediately(_) ->

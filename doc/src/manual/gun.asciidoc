@@ -208,6 +208,7 @@ opts() :: #{
     http2_opts            => http2_opts(),
     protocols             => [http | http2],
     retry                 => non_neg_integer(),
+    retry_fun             => fun(),
     retry_timeout         => pos_integer(),
     supervise             => boolean(),
     tcp_opts              => [gen_tcp:connect_option()],
@@ -252,6 +253,29 @@ transport is `tls`.
 retry (5)::
 
 Number of times Gun will try to reconnect on failure before giving up.
+
+retry_fun - see below::
+
+A fun that will be called before every reconnect attempt. It receives
+the current number of retries left and the Gun options. It returns the
+next number of retries left and the timeout to apply before reconnecting.
+
+The default fun will remove one to the number of retries and set the
+timeout to the `retry_timeout` value.
+
+The fun must be defined as follow:
+
+[source,erlang]
+----
+fun ((non_neg_integer(), opts()) -> #{
+    retries => non_neg_integer(),
+    timeout => pos_integer()
+})
+----
+
+The fun will never be called when the `retry` option is set to 0. When
+this function returns 0 in the `retries` value, Gun will do one last
+reconnect attempt before giving up.
 
 retry_timeout (5000)::
 
@@ -350,6 +374,8 @@ undocumented and must be set to `gun_ws_h`.
 * *2.0*: The `connect_timeout` option has been split into
          three options: `domain_lookup_timeout`, `connect_timeout`
          and when applicable `tls_handshake_timeout`.
+* *2.0*: The option `retry_fun` was added. It can be used to
+         implement different reconnect strategies.
 * *2.0*: The `transport_opts` option has been split into
          two options: `tcp_opts` and `tls_opts`.
 * *2.0*: Introduce the type `req_headers()` and extend the

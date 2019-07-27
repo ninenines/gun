@@ -116,6 +116,8 @@
 	http2_opts => http2_opts(),
 	protocols => [http | http2],
 	retry => non_neg_integer(),
+	retry_fun => fun((non_neg_integer(), opts())
+		-> #{retries => non_neg_integer(), timeout => pos_integer()}),
 	retry_timeout => pos_integer(),
 	supervise => boolean(),
 	tcp_opts => [gen_tcp:connect_option()],
@@ -278,6 +280,8 @@ check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 			{error, {options, Opt}}
 	end;
 check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
+	check_options(Opts);
+check_options([{retry_fun, F}|Opts]) when is_function(F, 2) ->
 	check_options(Opts);
 check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
@@ -770,14 +774,24 @@ default_transport(_) -> tcp.
 %% @todo This is where we would implement the backoff mechanism presumably.
 not_connected(_, {retries, 0, Reason}, State) ->
 	{stop, {shutdown, Reason}, State};
-not_connected(_, {retries, Retries, _}, State=#state{opts=Opts}) ->
-	Timeout = maps:get(retry_timeout, Opts, 5000),
+not_connected(_, {retries, Retries0, _}, State=#state{opts=Opts}) ->
+	Fun = maps:get(retry_fun, Opts, fun default_retry_fun/2),
+	#{
+		timeout := Timeout,
+		retries := Retries
+	} = Fun(Retries0, Opts),
 	{next_state, domain_lookup, State,
-		{state_timeout, Timeout, {retries, Retries - 1, not_connected}}};
+		{state_timeout, Timeout, {retries, Retries, not_connected}}};
 not_connected({call, From}, {stream_info, _}, _) ->
 	{keep_state_and_data, {reply, From, {error, not_connected}}};
 not_connected(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
+
+default_retry_fun(Retries, Opts) ->
+	#{
+		retries => Retries - 1,
+		timeout => maps:get(retry_timeout, Opts, 5000)
+	}.
 
 domain_lookup(_, {retries, Retries, _}, State=#state{host=Host, port=Port, opts=Opts,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
