@@ -65,7 +65,7 @@
 	stream_ref => reference(),
 	reply_to => pid(),
 	socket := inet:socket() | ssl:sslsocket() | pid(), %% The socket before/after will be different.
-	tls_opts := [ssl:connect_option()],
+	tls_opts := [ssl:tls_client_option()],
 	timeout := timeout(),
 	protocol => http | http2,
 	error => any()

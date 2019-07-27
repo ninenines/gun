@@ -98,7 +98,7 @@ connect_destination() :: #{
     protocols => [http | http2],
     transport => tcp | tls,
 
-    tls_opts              => [ssl:connect_option()],
+    tls_opts              => [ssl:tls_client_option()],
     tls_handshake_timeout => timeout()
 }
 ----
@@ -213,7 +213,7 @@ opts() :: #{
     supervise             => boolean(),
     tcp_opts              => [gen_tcp:connect_option()],
     tls_handshake_timeout => timeout(),
-    tls_opts              => [ssl:connect_option()],
+    tls_opts              => [ssl:tls_client_option()],
     trace                 => boolean(),
     transport             => tcp | tls,
     ws_opts               => ws_opts()

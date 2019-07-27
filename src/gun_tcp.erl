@@ -41,7 +41,7 @@ messages() -> {tcp, tcp_closed, tcp_error}.
 %% and the actual connect step.
 
 -spec domain_lookup(inet:ip_address() | inet:hostname(),
-	inet:port_number(), [gen_tcp:connect_option()] | [ssl:connect_option()], timeout())
+	inet:port_number(), [gen_tcp:connect_option()], timeout())
 	-> {ok, lookup_info()} | {error, atom()}.
 domain_lookup(Address, Port0, Opts0, Timeout) ->
 	{Mod, Opts} = inet:tcp_module(Opts0, Address),

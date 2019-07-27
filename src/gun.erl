@@ -104,9 +104,11 @@
 -export_type([req_headers/0]).
 
 -type ws_close_code() :: 1000..4999.
+
 -type ws_frame() :: close | ping | pong
 	| {text | binary | close | ping | pong, iodata()}
 	| {close, ws_close_code(), iodata()}.
+-export_type([ws_frame/0]).
 
 -type opts() :: #{
 	connect_timeout => timeout(),
@@ -122,7 +124,7 @@
 	supervise => boolean(),
 	tcp_opts => [gen_tcp:connect_option()],
 	tls_handshake_timeout => timeout(),
-	tls_opts => [ssl:connect_option()],
+	tls_opts => [ssl:tls_client_option()],
 	trace => boolean(),
 	transport => tcp | tls | ssl,
 	ws_opts => ws_opts()
@@ -138,7 +140,7 @@
 	protocol => http | http2, %% @todo Remove in Gun 2.0.
 	protocols => [http | http2],
 	transport => tcp | tls,
-	tls_opts => [ssl:connect_option()],
+	tls_opts => [ssl:tls_client_option()],
 	tls_handshake_timeout => timeout()
 }.
 -export_type([connect_destination/0]).
@@ -771,7 +773,6 @@ init({Owner, Host, Port, Opts}) ->
 default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
-%% @todo This is where we would implement the backoff mechanism presumably.
 not_connected(_, {retries, 0, Reason}, State) ->
 	{stop, {shutdown, Reason}, State};
 not_connected(_, {retries, Retries0, _}, State=#state{opts=Opts}) ->
