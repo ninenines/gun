@@ -28,7 +28,9 @@
 	cow_http:headers(), map()) -> {ok, any()} | disable.
 %% @todo Make fin | nofin its own type.
 -callback handle(fin | nofin, any(), State)
-	-> {ok, any(), State} | {done, State} when State::any().
+	-> {ok, any(), non_neg_integer(), State}
+	| {done, non_neg_integer(), State}
+	when State::any().
 
 -spec init(pid(), any(), cow_http:status(),
 	cow_http:headers(), State) -> State when State::state().
@@ -44,13 +46,18 @@ init(ReplyTo, StreamRef, Status, Headers, [Handler|Tail]) ->
 		disable -> init(ReplyTo, StreamRef, Status, Headers, Tail)
 	end.
 
--spec handle(fin | nofin, any(), State) -> State when State::state().
-handle(_, _, []) ->
-	[];
-handle(IsFin, Data0, [{Mod, State0}|Tail]) ->
+-spec handle(fin | nofin, any(), State) -> {ok, non_neg_integer(), State} when State::state().
+handle(IsFin, Data, State) ->
+	handle(IsFin, Data, State, 0, []).
+
+handle(_, _, [], Flow, Acc) ->
+	{ok, Flow, lists:reverse(Acc)};
+handle(IsFin, Data0, [{Mod, State0}|Tail], Flow, Acc) ->
 	case Mod:handle(IsFin, Data0, State0) of
-		{ok, Data, State} -> [{Mod, State}|handle(IsFin, Data, Tail)];
-		{done, State} -> [{Mod, State}|Tail]
+		{ok, Data, Inc, State} ->
+			handle(IsFin, Data, Tail, Flow + Inc, [{Mod, State}|Acc]);
+		{done, Inc, State} ->
+			{ok, Flow + Inc, lists:reverse([{Mod, State}|Acc], Tail)}
 	end.
 
 -spec check_option(list()) -> ok | error.

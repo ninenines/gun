@@ -24,15 +24,15 @@
 }).
 
 init(ReplyTo, StreamRef, _, _) ->
-	#state{reply_to=ReplyTo, stream_ref=StreamRef}.
+	{ok, #state{reply_to=ReplyTo, stream_ref=StreamRef}}.
 
 handle({fragment, nofin, _, Payload},
 		State=#state{frag_buffer=SoFar}) ->
-	State#state{frag_buffer= << SoFar/binary, Payload/binary >>};
+	{ok, 0, State#state{frag_buffer= << SoFar/binary, Payload/binary >>}};
 handle({fragment, fin, Type, Payload},
 		State=#state{reply_to=ReplyTo, stream_ref=StreamRef, frag_buffer=SoFar}) ->
 	ReplyTo ! {gun_ws, self(), StreamRef, {Type, << SoFar/binary, Payload/binary >>}},
-	State#state{frag_buffer= <<>>};
+	{ok, 1, State#state{frag_buffer= <<>>}};
 handle(Frame, State=#state{reply_to=ReplyTo, stream_ref=StreamRef}) ->
 	ReplyTo ! {gun_ws, self(), StreamRef, Frame},
-	State.
+	{ok, 1, State}.

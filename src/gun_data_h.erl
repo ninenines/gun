@@ -27,7 +27,7 @@
 init(ReplyTo, StreamRef, _, _, _) ->
 	{ok, #state{reply_to=ReplyTo, stream_ref=StreamRef}}.
 
--spec handle(fin | nofin, binary(), State) -> {done, State} when State::#state{}.
+-spec handle(fin | nofin, binary(), State) -> {done, 1, State} when State::#state{}.
 handle(IsFin, Data, State=#state{reply_to=ReplyTo, stream_ref=StreamRef}) ->
 	ReplyTo ! {gun_data, self(), StreamRef, IsFin, Data},
-	{done, State}.
+	{done, 1, State}.

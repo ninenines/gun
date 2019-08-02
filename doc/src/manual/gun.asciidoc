@@ -46,6 +46,7 @@ Messages:
 
 Streams:
 
+* link:man:gun:update_flow(3)[gun:update_flow(3)] - Update a stream's flow control value
 * link:man:gun:cancel(3)[gun:cancel(3)] - Cancel the given stream
 * link:man:gun:stream_info(3)[gun:stream_info(3)] - Obtain information about a stream
 
@@ -143,6 +144,7 @@ Handshake timeout for tunneled TLS connections.
 [source,erlang]
 ----
 http_opts() :: #{
+    flow                  => pos_integer(),
     keepalive             => timeout(),
     transform_header_name => fun((binary()) -> binary()),
     version               => 'HTTP/1.1' | 'HTTP/1.0'
@@ -154,6 +156,11 @@ Configuration for the HTTP protocol.
 The default value is given next to the option name:
 
 // @todo Document content_handlers and gun_sse_h.
+
+flow - see below::
+
+The initial flow control value for all HTTP/1.1 streams.
+By default flow control is disabled.
 
 keepalive (infinity)::
 
@@ -181,6 +188,7 @@ HTTP version to use.
 [source,erlang]
 ----
 http2_opts() :: #{
+    flow      => pos_integer(),
     keepalive => timeout()
 }
 ----
@@ -190,6 +198,11 @@ Configuration for the HTTP/2 protocol.
 The default value is given next to the option name:
 
 // @todo Document content_handlers and gun_sse_h.
+
+flow - see below::
+
+The initial flow control value for all HTTP/2 streams.
+By default flow control is disabled.
 
 keepalive (5000)::
 
@@ -328,6 +341,7 @@ Request headers.
 [source,erlang]
 ----
 req_opts() :: #{
+    flow     => pos_integer(),
     reply_to => pid()
 }
 ----
@@ -335,6 +349,11 @@ req_opts() :: #{
 Configuration for a particular request.
 
 The default value is given next to the option name:
+
+flow - see below::
+
+The initial flow control value for the stream. By default
+flow control is disabled.
 
 reply_to (`self()`)::
 
@@ -346,6 +365,7 @@ The pid of the process that will receive the response messages.
 ----
 ws_opts() :: #{
     compress  => boolean(),
+    flow      => pos_integer(),
     protocols => [{binary(), module()}]
 }
 ----
@@ -359,6 +379,11 @@ compress (false)::
 Whether to enable permessage-deflate compression. This does
 not guarantee that compression will be used as it is the
 server that ultimately decides. Defaults to false.
+
+flow - see below::
+
+The initial flow control value for the Websocket connection.
+By default flow control is disabled.
 
 protocols ([])::
 
@@ -378,6 +403,9 @@ undocumented and must be set to `gun_ws_h`.
          implement different reconnect strategies.
 * *2.0*: The `transport_opts` option has been split into
          two options: `tcp_opts` and `tls_opts`.
+* *2.0*: Function `gun:update_flow/3` introduced. The `flow`
+         option was added to request options and HTTP/1.1,
+         HTTP/2 and Websocket options as well.
 * *2.0*: Introduce the type `req_headers()` and extend the
          types accepted for header names for greater
          interoperability. Header names are automatically

@@ -38,18 +38,22 @@ init(ReplyTo, StreamRef, _, Headers, _) ->
 			disable
 	end.
 
--spec handle(_, binary(), State) -> {done, State} when State::#state{}.
-handle(IsFin, Data, State=#state{reply_to=ReplyTo, stream_ref=StreamRef, sse_state=SSE0}) ->
+-spec handle(_, binary(), State) -> {done, non_neg_integer(), State} when State::#state{}.
+handle(IsFin, Data, State) ->
+	handle(IsFin, Data, State, 0).
+
+handle(IsFin, Data, State=#state{reply_to=ReplyTo, stream_ref=StreamRef, sse_state=SSE0}, Flow) ->
 	case cow_sse:parse(Data, SSE0) of
 		{event, Event, SSE} ->
 			ReplyTo ! {gun_sse, self(), StreamRef, Event},
-			handle(IsFin, <<>>, State#state{sse_state=SSE});
+			handle(IsFin, <<>>, State#state{sse_state=SSE}, Flow + 1);
 		{more, SSE} ->
-			_ = case IsFin of
+			Inc = case IsFin of
 				fin ->
-					ReplyTo ! {gun_sse, self(), StreamRef, fin};
+					ReplyTo ! {gun_sse, self(), StreamRef, fin},
+					1;
 				_ ->
-					ok
+					0
 			end,
-			{done, State#state{sse_state=SSE}}
+			{done, Flow + Inc, State#state{sse_state=SSE}}
 	end.

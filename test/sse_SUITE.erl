@@ -31,7 +31,7 @@ end_per_suite(Config) ->
 
 init_routes() -> [
 	{"localhost", [
-		{"/clock", sse_clock_h, []},
+		{"/clock", sse_clock_h, date},
 		{"/lone_id", sse_lone_id_h, []}
 	]}
 ].

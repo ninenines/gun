@@ -1,0 +1,67 @@
+= gun:update_flow(3)
+
+== Name
+
+gun:update_flow - Update a stream's flow control value
+
+== Description
+
+[source,erlang]
+----
+update_flow(ConnPid, StreamRef, Flow) -> ok
+
+ConnPid   :: pid()
+StreamRef :: reference()
+Flow      :: pos_integer()
+----
+
+Update a stream's flow control value.
+
+The flow value can only ever be incremented.
+
+This function does nothing for streams that have flow
+control disabled (which is the default).
+
+== Arguments
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+StreamRef::
+
+Identifier of the stream for the original request.
+
+Flow::
+
+Flow control value increment.
+
+== Return value
+
+The atom `ok` is returned.
+
+== Changelog
+
+* *2.0*: Function introduced.
+
+== Examples
+
+.Update a stream's flow control value
+[source,erlang]
+----
+gun:update_flow(ConnPid, StreamRef, 10).
+----
+
+== See also
+
+link:man:gun(3)[gun(3)],
+link:man:gun:get(3)[gun:get(3)],
+link:man:gun:head(3)[gun:head(3)],
+link:man:gun:options(3)[gun:options(3)],
+link:man:gun:patch(3)[gun:patch(3)],
+link:man:gun:post(3)[gun:post(3)],
+link:man:gun:put(3)[gun:put(3)],
+link:man:gun:delete(3)[gun:delete(3)],
+link:man:gun:headers(3)[gun:headers(3)],
+link:man:gun:request(3)[gun:request(3)],
+link:man:gun:ws_upgrade(3)[gun:ws_upgrade(3)]
