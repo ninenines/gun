@@ -112,11 +112,19 @@ do_proxy_loop(Transport, ClientSocket, OriginSocket) ->
 	{OK, _, _} = Transport:messages(),
 	receive
 		{OK, ClientSocket, Data} ->
-			ok = gen_tcp:send(OriginSocket, Data),
-			do_proxy_loop(Transport, ClientSocket, OriginSocket);
+			case gen_tcp:send(OriginSocket, Data) of
+				ok ->
+					do_proxy_loop(Transport, ClientSocket, OriginSocket);
+				{error, _} ->
+					ok
+			end;
 		{tcp, OriginSocket, Data} ->
-			ok = Transport:send(ClientSocket, Data),
-			do_proxy_loop(Transport, ClientSocket, OriginSocket);
+			case Transport:send(ClientSocket, Data) of
+				ok ->
+					do_proxy_loop(Transport, ClientSocket, OriginSocket);
+				{error, _} ->
+					ok
+			end;
 		{tcp_closed, _} ->
 			ok;
 		{ssl_closed, _} ->
