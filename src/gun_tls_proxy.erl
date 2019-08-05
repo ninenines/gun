@@ -252,7 +252,7 @@ not_connected(cast, Msg={connect_proc, Error}, State=#state{owner_pid=OwnerPid, 
 	OwnerPid ! {?MODULE, self(), Error, Extra},
 	%% We unlink from the owner process to avoid taking it down with us.
 	unlink(OwnerPid),
-	{stop, Error, State};
+	{stop, {shutdown, Error}, State};
 not_connected(Type, Event, State) ->
 	handle_common(Type, Event, State).
 
@@ -312,8 +312,6 @@ handle_common(cast, Msg={set_owner, OwnerPid}, State) ->
 	{keep_state, State#state{owner_pid=OwnerPid}};
 handle_common(cast, Msg={cb_controlling_process, ProxyPid}, State) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
-	%% We link so that the ssl process terminates when we do.
-	link(ProxyPid),
 	{keep_state, State#state{proxy_pid=ProxyPid}};
 handle_common(cast, Msg={setopts, Opts}, State) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
