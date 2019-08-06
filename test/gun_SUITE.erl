@@ -24,7 +24,16 @@
 -import(gun_test, [receive_all_from/2]).
 
 all() ->
-	ct_helper:all(?MODULE).
+	[{group, gun}].
+
+groups() ->
+	%% On Windows we sometimes have timeout related failures due to
+	%% some operations taking longer on Windows. Best retry a few times.
+	Props = case os:type() of
+		{win32, _} -> [{repeat_until_all_ok, 100}];
+		_ -> []
+	end,
+	[{gun, [parallel|Props], ct_helper:all(?MODULE)}].
 
 %% Tests.
 
