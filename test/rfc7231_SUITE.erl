@@ -62,10 +62,10 @@ do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
 	Parent ! {self(), Port},
 	{ok, ClientSocket} = case Transport of
 		gun_tcp ->
-			gen_tcp:accept(ListenSocket, 1000);
+			gen_tcp:accept(ListenSocket, 5000);
 		gun_tls ->
-			{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 1000),
-			ssl:ssl_accept(ClientSocket0, 1000),
+			{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 5000),
+			ssl:ssl_accept(ClientSocket0, 5000),
 			{ok, ClientSocket0}
 	end,
 	{ok, Data} = case Transport of
