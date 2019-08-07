@@ -83,8 +83,11 @@ do_timeout(Opt, Timeout) ->
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
 			ok
-	after 5000 ->
-		error(timeout)
+	after 2000 ->
+		%% This is not an error, the timeout was accepted but
+		%% the connect or domain lookup is just taking too long,
+		%% for example when it was set to infinity.
+		gun:close(Pid)
 	end.
 
 detect_owner_down(_) ->
