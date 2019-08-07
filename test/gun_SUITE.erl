@@ -315,7 +315,7 @@ reply_to(_) ->
 	do_reply_to(http2).
 
 do_reply_to(Protocol) ->
-	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}, {nodelay, true}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Self = self(),
 	{ok, Pid} = gun:open("localhost", Port, #{protocols => [Protocol]}),
