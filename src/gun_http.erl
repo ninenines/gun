@@ -19,6 +19,7 @@
 -export([init/4]).
 -export([handle/4]).
 -export([update_flow/4]).
+-export([closing/4]).
 -export([close/4]).
 -export([keepalive/1]).
 -export([headers/11]).
@@ -71,6 +72,10 @@ check_options(Opts) ->
 
 do_check_options([]) ->
 	ok;
+do_check_options([{closing_timeout, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{closing_timeout, T}|Opts]) when is_integer(T), T > 0 ->
+	do_check_options(Opts);
 do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
 	case gun_content_handler:check_option(Handlers) of
 		ok -> do_check_options(Opts);
@@ -460,26 +465,47 @@ update_flow(State=#http_state{streams=Streams0}, _ReplyTo, StreamRef, Inc) ->
 	end || Tuple = #stream{ref=Ref, flow=Flow} <- Streams0],
 	{state, State#http_state{streams=Streams}}.
 
-%% @todo Use Reason.
-close(_, State=#http_state{in=body_close, streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|Tail]},
-		EvHandler, EvHandlerState0) ->
+%% We can immediately close the connection when there's no streams.
+closing(_, #http_state{streams=[]}, _, EvHandlerState) ->
+	{close, EvHandlerState};
+%% Otherwise we set connection: close (even if the header was not sent)
+%% and close any pipelined streams, only keeping the active stream.
+closing(Reason, State=#http_state{streams=[LastStream|Tail]}, _, EvHandlerState) ->
+	close_streams(Tail, {closing, Reason}),
+	{[
+		{state, State#http_state{connection=close, streams=[LastStream]}},
+		closing(State)
+	], EvHandlerState}.
+
+closing(#http_state{opts=Opts}) ->
+	Timeout = maps:get(closing_timeout, Opts, 15000),
+	{closing, Timeout}.
+
+close(Reason, State=#http_state{in=body_close,
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|Tail]},
+		EvHandler, EvHandlerState) ->
+	%% We may have more than one stream in case we somehow close abruptly.
+	close_streams(Tail, close_reason(Reason)),
 	_ = send_data(<<>>, State, fin),
-	EvHandlerState = EvHandler:response_end(#{
+	EvHandler:response_end(#{
 		stream_ref => StreamRef,
 		reply_to => ReplyTo
-	}, EvHandlerState0),
-	{close_streams(Tail), EvHandlerState};
-close(_, #http_state{streams=Streams}, _, EvHandlerState) ->
-	{close_streams(Streams), EvHandlerState}.
+	}, EvHandlerState);
+close(Reason, #http_state{streams=Streams}, _, EvHandlerState) ->
+	close_streams(Streams, close_reason(Reason)),
+	EvHandlerState.
 
-close_streams([]) ->
+close_reason(closed) -> closed;
+close_reason(Reason) -> {closed, Reason}.
+
+%% @todo Do we want an event for this?
+close_streams([], _) ->
 	ok;
-close_streams([#stream{is_alive=false}|Tail]) ->
-	close_streams(Tail);
-close_streams([#stream{ref=StreamRef, reply_to=ReplyTo}|Tail]) ->
-	ReplyTo ! {gun_error, self(), StreamRef, {closed,
-		"The connection was lost."}},
-	close_streams(Tail).
+close_streams([#stream{is_alive=false}|Tail], Reason) ->
+	close_streams(Tail, Reason);
+close_streams([#stream{ref=StreamRef, reply_to=ReplyTo}|Tail], Reason) ->
+	ReplyTo ! {gun_error, self(), StreamRef, Reason},
+	close_streams(Tail, Reason).
 
 %% We don't send a keep-alive when a CONNECT request was initiated.
 keepalive(State=#http_state{streams=[#stream{ref={connect, _, _}}]}) ->

@@ -1,0 +1,67 @@
+= gun:shutdown(3)
+
+== Name
+
+gun:shutdown - Gracefully close the connection
+
+== Description
+
+[source,erlang]
+----
+shutdown(ConnPid) -> ok
+
+ConnPid :: pid()
+----
+
+Gracefully close the connection.
+
+Gun will wait for up to `closing_timeout` milliseconds
+before brutally closing the connection. The graceful
+shutdown mechanism varies between the different protocols:
+
+* For HTTP/1.1 there is no such mechanism and Gun will
+  close the connection once the current response is
+  received. Any pipelined requests are immediately
+  terminated.
+
+* For HTTP/2 Gun will send a GOAWAY frame and wait for
+  the existing streams to terminate.
+
+* For Websocket Gun will send a close frame and wait
+  for the server's close frame before closing the
+  connection.
+
+The function returns immediately. The connection may
+therefore still be up for some time after this call.
+
+Gun will not attempt to reconnect once graceful
+shutdown has been initiated.
+
+== Arguments
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+== Return value
+
+The atom `ok` is returned.
+
+== Changelog
+
+* *2.0*: Function introduced.
+
+== Examples
+
+.Gracefully shutdown the connection
+[source,erlang]
+----
+ok = gun:shutdown(ConnPid).
+----
+
+== See also
+
+link:man:gun(3)[gun(3)],
+link:man:gun:open(3)[gun:open(3)],
+link:man:gun:open_unix(3)[gun:open_unix(3)],
+link:man:gun:close(3)[gun:close(3)]

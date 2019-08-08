@@ -68,3 +68,30 @@ reject_upgrade(Config) ->
 	after 1000 ->
 		error(timeout)
 	end.
+
+send_many(Config) ->
+	doc("Ensure we can send a list of frames in one gun:ws_send call."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	Frame1 = {text, <<"Hello!">>},
+	Frame2 = {binary, <<"World!">>},
+	gun:ws_send(ConnPid, [Frame1, Frame2]),
+	{ws, Frame1} = gun:await(ConnPid, StreamRef),
+	{ws, Frame2} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+send_many_close(Config) ->
+	doc("Ensure we can send a list of frames in one gun:ws_send call, including a close frame."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	Frame1 = {text, <<"Hello!">>},
+	Frame2 = {binary, <<"World!">>},
+	gun:ws_send(ConnPid, [Frame1, Frame2, close]),
+	{ws, Frame1} = gun:await(ConnPid, StreamRef),
+	{ws, Frame2} = gun:await(ConnPid, StreamRef),
+	{ws, close} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).

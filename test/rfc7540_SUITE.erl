@@ -81,11 +81,11 @@ lingering_data_counts_toward_connection_window(_) ->
 		{ok, _} = gen_tcp:recv(Socket, SkipLen, 1000),
 		%% Skip the data.
 		{ok, <<_:24, 0:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+		%% Step 3.
 		%% Send a HEADERS frame.
 		{HeadersBlock, _} = cow_hpack:encode([
 			{<<":status">>, <<"200">>}
 		]),
-		%% Step 3.
 		ok = Transport:send(Socket, [
 			cow_http2:headers(1, nofin, HeadersBlock)
 		]),

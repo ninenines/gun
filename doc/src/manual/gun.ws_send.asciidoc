@@ -30,8 +30,7 @@ The pid of the Gun connection process.
 
 Frames::
 
-A Websocket frame.
-// @todo One or more Websocket frame(s).
+One or more Websocket frame(s).
 
 == Return value
 
@@ -49,14 +48,14 @@ The atom `ok` is returned.
 gun:ws_send(ConnPid, {text, <<"Hello world!">>}).
 ----
 
-//.Send many frames including a close frame
-//[source,erlang]
-//----
-//gun:ws_send(ConnPid, [
-//    {text, <<"See you later, world!">>},
-//    close
-//]).
-//----
+.Send many frames including a close frame
+[source,erlang]
+----
+gun:ws_send(ConnPid, [
+    {text, <<"See you later, world!">>},
+    close
+]).
+----
 
 == See also
 

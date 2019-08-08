@@ -113,7 +113,10 @@
 -type push_promise_end_event() :: #{
 	stream_ref := reference(),
 	reply_to := pid(),
-	promised_stream_ref := reference(),
+	%% No stream is created if we receive the push_promise while
+	%% in the process of gracefully shutting down the connection.
+	%% The promised stream is canceled immediately.
+	promised_stream_ref => reference(),
 	method := binary(),
 	uri := binary(),
 	headers := [{binary(), iodata()}]

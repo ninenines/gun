@@ -41,4 +41,5 @@ ok = gun:close(ConnPid).
 
 link:man:gun(3)[gun(3)],
 link:man:gun:open(3)[gun:open(3)],
-link:man:gun:open_unix(3)[gun:open_unix(3)]
+link:man:gun:open_unix(3)[gun:open_unix(3)],
+link:man:gun:shutdown(3)[gun:shutdown(3)]
