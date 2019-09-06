@@ -497,7 +497,7 @@ headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	{State#http2_state{http2_machine=HTTP2Machine, streams=[Stream|Streams]},
 		EvHandlerState}.
 
-request(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
+request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0, streams=Streams},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers0, Body,
 		InitialFlow0, EvHandler, EvHandlerState0) ->
@@ -505,7 +505,7 @@ request(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
 	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(
 		iolist_to_binary(Method), HTTP2Machine0),
-	{ok, PseudoHeaders, Headers} = prepare_headers(State, Method, Host, Port, Path, Headers1),
+	{ok, PseudoHeaders, Headers} = prepare_headers(State0, Method, Host, Port, Path, Headers1),
 	RequestEvent = #{
 		stream_ref => StreamRef,
 		reply_to => ReplyTo,
@@ -516,16 +516,21 @@ request(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		headers => Headers
 	},
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
-	%% @todo We should not send an empty DATA frame on empty bodies.
+	IsFin0 = case iolist_size(Body) of
+		0 -> fin;
+		_ -> nofin
+	end,
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
-		StreamID, HTTP2Machine1, nofin, PseudoHeaders, Headers),
+		StreamID, HTTP2Machine1, IsFin0, PseudoHeaders, Headers),
 	Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)),
 	EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
 	InitialFlow = initial_flow(InitialFlow0, Opts),
 	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow},
-	maybe_send_data(State#http2_state{http2_machine=HTTP2Machine,
-		streams=[Stream|Streams]}, StreamID, fin, Body,
-		EvHandler, EvHandlerState).
+	State = State0#http2_state{http2_machine=HTTP2Machine, streams=[Stream|Streams]},
+	case IsFin of
+		fin -> {State, EvHandlerState};
+		nofin -> maybe_send_data(State, StreamID, fin, Body, EvHandler, EvHandlerState)
+	end.
 
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;
 initial_flow(InitialFlow, _) -> InitialFlow.
