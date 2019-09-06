@@ -528,8 +528,14 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow},
 	State = State0#http2_state{http2_machine=HTTP2Machine, streams=[Stream|Streams]},
 	case IsFin of
-		fin -> {State, EvHandlerState};
-		nofin -> maybe_send_data(State, StreamID, fin, Body, EvHandler, EvHandlerState)
+		fin ->
+			RequestEndEvent = #{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo
+			},
+			{State, EvHandler:request_end(RequestEndEvent, EvHandlerState)};
+		nofin ->
+			maybe_send_data(State, StreamID, fin, Body, EvHandler, EvHandlerState)
 	end.
 
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;

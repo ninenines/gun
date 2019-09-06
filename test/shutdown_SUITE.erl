@@ -382,8 +382,6 @@ http2_server_goaway_one_stream(_) ->
 		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Skip the header.
 		{ok, _} = gen_tcp:recv(Socket, SkipLen, 1000),
-		%% Skip the data.
-		{ok, <<_:24, 0:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Send a GOAWAY frame.
 		Transport:send(Socket, cow_http2:goaway(1, no_error, <<>>)),
 		%% Wait before sending the response back and closing the connection.
@@ -419,22 +417,16 @@ http2_server_goaway_many_streams(_) ->
 		{ok, <<SkipLen1:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Skip the header.
 		{ok, _} = gen_tcp:recv(Socket, SkipLen1, 1000),
-		%% Skip the data.
-		{ok, <<_:24, 0:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Stream 2.
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen2:24, 1:8, _:8, 3:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Skip the header.
 		{ok, _} = gen_tcp:recv(Socket, SkipLen2, 1000),
-		%% Skip the data.
-		{ok, <<_:24, 0:8, _:8, 3:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Stream 3.
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen3:24, 1:8, _:8, 5:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Skip the header.
 		{ok, _} = gen_tcp:recv(Socket, SkipLen3, 1000),
-		%% Skip the data.
-		{ok, <<_:24, 0:8, _:8, 5:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Send a GOAWAY frame.
 		Transport:send(Socket, cow_http2:goaway(5, no_error, <<>>)),
 		%% Wait before sending the responses back and closing the connection.
