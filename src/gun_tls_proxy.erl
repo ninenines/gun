@@ -237,6 +237,7 @@ not_connected(cast, Msg={setopts, _}, State) ->
 	{keep_state_and_data, postpone};
 not_connected(cast, Msg={connect_proc, {ok, Socket}}, State=#state{owner_pid=OwnerPid, extra=Extra}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	%% @todo We should distinguish case when no protocol was negotiated (for socks).
 	Protocol = case ssl:negotiated_protocol(Socket) of
 		{ok, <<"h2">>} -> gun_http2;
 		_ -> gun_http

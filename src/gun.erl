@@ -97,6 +97,7 @@
 -export([domain_lookup/3]).
 -export([connecting/3]).
 -export([tls_handshake/3]).
+-export([not_fully_connected/3]).
 -export([connected/3]).
 -export([closing/3]).
 -export([terminate/3]).
@@ -118,11 +119,13 @@
 	event_handler => {module(), any()},
 	http_opts => http_opts(),
 	http2_opts => http2_opts(),
-	protocols => [http | http2],
+	protocols => [http | http2 | {socks, socks_opts()}],
 	retry => non_neg_integer(),
 	retry_fun => fun((non_neg_integer(), opts())
 		-> #{retries => non_neg_integer(), timeout => pos_integer()}),
 	retry_timeout => pos_integer(),
+	%% @todo Not sure this should be allowed, there could be loops.
+%	socks_opts => socks_opts(),
 	supervise => boolean(),
 	tcp_opts => [gen_tcp:connect_option()],
 	tls_handshake_timeout => timeout(),
@@ -140,7 +143,9 @@
 	username => iodata(),
 	password => iodata(),
 	protocol => http | http2, %% @todo Remove in Gun 2.0.
-	protocols => [http | http2],
+	%% @todo It could be interesting to accept {http, http_opts()}
+	%% as well since we may want different options for proxy and origin.
+	protocols => [http | http2 | {socks, socks_opts()}],
 	transport => tcp | tls,
 	tls_opts => [ssl:tls_client_option()],
 	tls_handshake_timeout => timeout()
@@ -148,11 +153,11 @@
 -export_type([connect_destination/0]).
 
 -type intermediary() :: #{
-	type := connect,
+	type := connect | socks5,
 	host := inet:hostname() | inet:ip_address(),
 	port := inet:port_number(),
 	transport := tcp | tls,
-	protocol := http | http2
+	protocol := http | http2 | socks
 }.
 
 %% @todo When/if HTTP/2 CONNECT gets implemented, we will want an option here
@@ -180,6 +185,18 @@
 	keepalive => timeout()
 }.
 -export_type([http2_opts/0]).
+
+-type socks_opts() :: #{
+	version => 5,
+	auth => [{username_password, binary(), binary()} | none],
+	host := inet:hostname() | inet:ip_address(),
+	port := inet:port_number(),
+	protocols => [http | http2 | {socks, socks_opts()}],
+	transport => tcp | tls,
+	tls_opts => [ssl:tls_client_option()],
+	tls_handshake_timeout => timeout()
+}.
+-export_type([socks_opts/0]).
 
 %% @todo keepalive
 -type ws_opts() :: #{
@@ -278,18 +295,9 @@ check_options([{http2_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 			Error
 	end;
 check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
-	Len = length(L),
-	case length(lists:usort(L)) of
-		Len when Len > 0 ->
-			Check = lists:usort([(P =:= http) orelse (P =:= http2) || P <- L]),
-			case Check of
-				[true] ->
-					check_options(Opts);
-				_ ->
-					{error, {options, Opt}}
-			end;
-		_ ->
-			{error, {options, Opt}}
+	case check_protocols_opt(L) of
+		ok -> check_options(Opts);
+		error -> {error, {options, Opt}}
 	end;
 check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	check_options(Opts);
@@ -321,11 +329,33 @@ check_options([{ws_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 check_options([Opt|_]) ->
 	{error, {options, Opt}}.
 
+check_protocols_opt(Protocols) ->
+	%% Protocols must not appear more than once, and they
+	%% must be one of http, http2 or socks.
+	ProtoNames0 = lists:usort([case P0 of {P, _} -> P; P -> P end || P0 <- Protocols]),
+	ProtoNames = [P || P <- ProtoNames0, lists:member(P, [http, http2, socks])],
+	case length(Protocols) =:= length(ProtoNames) of
+		false -> error;
+		true ->
+			%% When options are given alongside a protocol, they
+			%% must be checked as well.
+			%% @todo It may be interesting to allow more than just socks here.
+			TupleCheck = [case P of
+				{socks, Opts} -> gun_socks:check_options(Opts)
+			end || P <- Protocols, is_tuple(P)],
+			case lists:usort(TupleCheck) of
+				[] -> ok;
+				[ok] -> ok;
+				_ -> error
+			end
+	end.
+
 consider_tracing(ServerPid, #{trace := true}) ->
 	dbg:tracer(),
 	dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
+	dbg:tpl(gun_socks, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
 	dbg:p(ServerPid, all);
 consider_tracing(_, _) ->
@@ -652,6 +682,8 @@ await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
 			{ok, Protocol};
+		{gun_socks_connected, ServerPid, Protocol} ->
+			{ok, Protocol};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
 			{error, {down, Reason}}
 	after Timeout ->
@@ -861,7 +893,8 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 		{ok, Socket} when Transport =:= gun_tcp ->
 			Protocol = case maps:get(protocols, Opts, [http]) of
 				[http] -> gun_http;
-				[http2] -> gun_http2
+				[http2] -> gun_http2;
+				[{socks, _}] -> gun_socks
 			end,
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				socket => Socket,
@@ -885,8 +918,9 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 
 tls_handshake(_, {retries, Retries, Socket0}, State=#state{opts=Opts,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	Protocols = maps:get(protocols, Opts, [http2, http]),
 	TransOpts0 = maps:get(tls_opts, Opts, []),
-	TransOpts = ensure_alpn(maps:get(protocols, Opts, [http2, http]), TransOpts0),
+	TransOpts = ensure_alpn(Protocols, TransOpts0),
 	HandshakeTimeout = maps:get(tls_handshake_timeout, Opts, infinity),
 	HandshakeEvent = #{
 		socket => Socket0,
@@ -898,7 +932,12 @@ tls_handshake(_, {retries, Retries, Socket0}, State=#state{opts=Opts,
 		{ok, Socket} ->
 			Protocol = case ssl:negotiated_protocol(Socket) of
 				{ok, <<"h2">>} -> gun_http2;
-				_ -> gun_http
+				{ok, <<"http/1.1">>} -> gun_http;
+				{error, protocol_not_negotiated} ->
+					case Protocols of
+						[{socks, _}] -> gun_socks;
+						_ -> gun_http
+					end
 			end,
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 				socket => Socket,
@@ -918,12 +957,22 @@ ensure_alpn(Protocols0, TransOpts) ->
 	Protocols = [case P of
 		http -> <<"http/1.1">>;
 		http2 -> <<"h2">>
-	end || P <- Protocols0],
+	end || P <- Protocols0, is_atom(P)],
 	[
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 	|TransOpts].
 
+not_fully_connected(Type, Event, State) ->
+	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
+
+connected(internal, {connected, Socket, Protocol=gun_socks},
+		State=#state{owner=Owner, opts=Opts, transport=Transport}) ->
+	[{socks, ProtoOpts}] = [Proto || Proto = {socks, _} <- maps:get(protocols, Opts)],
+	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
+	Owner ! {gun_up, self(), Protocol:name()},
+	{next_state, not_fully_connected, active(State#state{socket=Socket,
+		protocol=Protocol, protocol_state=ProtoState})};
 connected(internal, {connected, Socket, Protocol},
 		State=#state{owner=Owner, opts=Opts, transport=Transport}) ->
 	ProtoOptsKey = case Protocol of
@@ -1211,6 +1260,7 @@ commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State=#state{
 	{keep_state, keepalive_cancel(State#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler_state=EvHandlerState})};
 %% @todo And this state should probably not be ignored.
+%% @todo Socks is switching to *http* and we don't seem to support it properly yet.
 commands([{switch_protocol, Protocol, _ProtoState0}|Tail], State=#state{
 		owner=Owner, opts=Opts, socket=Socket, transport=Transport,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
@@ -1218,7 +1268,10 @@ commands([{switch_protocol, Protocol, _ProtoState0}|Tail], State=#state{
 	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 	commands(Tail, keepalive_timeout(State#state{protocol=Protocol, protocol_state=ProtoState,
-		event_handler_state=EvHandlerState})).
+		event_handler_state=EvHandlerState}));
+%% Switch from not_fully_connected to connected.
+commands([{mode, http}], State) ->
+	{next_state, connected, State}.
 
 disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 		socket=Socket, transport=Transport,

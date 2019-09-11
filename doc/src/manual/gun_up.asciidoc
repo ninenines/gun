@@ -25,6 +25,10 @@ then this may not be desirable for all requests. Those requests
 should be cancelled when the connection goes down, and any
 subsequent messages ignored.
 
+// @todo Gun doesn't process messages immediately if it
+// is using the socks protocol, there are gun_socks_connected
+// messages coming up before reaching HTTP.
+
 == Elements
 
 ConnPid::
