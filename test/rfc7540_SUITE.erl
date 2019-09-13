@@ -98,9 +98,17 @@ lingering_data_counts_toward_connection_window(_) ->
 		%% Skip RST_STREAM.
 		{ok, << 4:24, 3:8, 1:40, _:32 >>} = gen_tcp:recv(Socket, 13, 1000),
 		%% Received a WINDOW_UPDATE frame after we got RST_STREAM.
-		{ok, << 4:24, 8:8, 0:40, 1000:32 >>} = gen_tcp:recv(Socket, 13, 1000)
+		{ok, << 4:24, 8:8, 0:40, Increment:32 >>} = gen_tcp:recv(Socket, 13, 1000),
+		true = Increment > 0
 	end),
-	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		protocols => [http2],
+		http2_opts => #{
+			%% We don't set 65535 because we still want to have an initial WINDOW_UPDATE.
+			initial_connection_window_size => 65536,
+			initial_stream_window_size => 65535
+		}
+	}),
 	{ok, http2} = gun:await_up(ConnPid),
 	timer:sleep(100), %% Give enough time for the handshake to fully complete.
 	%% Step 1.

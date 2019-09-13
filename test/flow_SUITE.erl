@@ -71,6 +71,8 @@ default_flow_http2(_) ->
 				flow => 1,
 				%% We set the max frame size to the same as the initial
 				%% window size in order to reduce the number of data messages.
+				initial_connection_window_size => 65535,
+				initial_stream_window_size => 65535,
 				max_frame_size_received => 65535
 			},
 			protocols => [http2]
@@ -86,8 +88,11 @@ default_flow_http2(_) ->
 		%% Then we confirm that we can override it per request.
 		StreamRef2 = gun:get(ConnPid, "/", [], #{flow => 2}),
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef2),
-		%% We set the flow to 2 therefore we will receive *3* data messages
-		%% and then nothing because two windows have been fully consumed.
+		%% We set the flow to 2 but due to the ensure_window algorithm
+		%% we end up receiving *5* data messages before flow control kicks in,
+		%% equivalent to 3 SSE events.
+		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
+		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
@@ -132,7 +137,11 @@ flow_http2(_) ->
 		{ok, ConnPid} = gun:open("localhost", Port, #{
 			%% We set the max frame size to the same as the initial
 			%% window size in order to reduce the number of data messages.
-			http2_opts => #{max_frame_size_received => 65535},
+			http2_opts => #{
+				initial_connection_window_size => 65535,
+				initial_stream_window_size => 65535,
+				max_frame_size_received => 65535
+			},
 			protocols => [http2]
 		}),
 		{ok, http2} = gun:await_up(ConnPid),
@@ -145,14 +154,16 @@ flow_http2(_) ->
 		%% We consumed all the window available.
 		65535 = byte_size(D1) + byte_size(D2),
 		{error, timeout} = gun:await(ConnPid, StreamRef, 3000),
-		%% We then update the flow and get *3* more data messages but no more.
+		%% We then update the flow and get *5* more data messages but no more.
 		gun:update_flow(ConnPid, StreamRef, 2),
 		{data, nofin, D3} = gun:await(ConnPid, StreamRef),
 		{data, nofin, D4} = gun:await(ConnPid, StreamRef),
 		{data, nofin, D5} = gun:await(ConnPid, StreamRef),
+		{data, nofin, D6} = gun:await(ConnPid, StreamRef),
+		{data, nofin, D7} = gun:await(ConnPid, StreamRef),
 		%% We consumed all the window available again.
-		%% D3 is the end of the truncated D2, D4 is full and D5 truncated.
-		65535 = byte_size(D3) + byte_size(D4) + byte_size(D5),
+		%% D3 is the end of the truncated D2, D4, D5 and D6 are full and D7 truncated.
+		131070 = byte_size(D3) + byte_size(D4) + byte_size(D5) + byte_size(D6) + byte_size(D7),
 		{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
 		gun:close(ConnPid)
 	after
@@ -302,6 +313,8 @@ sse_flow_http2(_) ->
 			%% window size in order to reduce the number of data messages.
 			http2_opts => #{
 				content_handlers => [gun_sse_h, gun_data_h],
+				initial_connection_window_size => 65535,
+				initial_stream_window_size => 65535,
 				max_frame_size_received => 65535
 			},
 			protocols => [http2]
@@ -314,8 +327,10 @@ sse_flow_http2(_) ->
 		%% the second event was fully received.
 		{sse, _} = gun:await(ConnPid, StreamRef),
 		{error, timeout} = gun:await(ConnPid, StreamRef, 3000),
-		%% We then update the flow and get 2 more event messages but no more.
+		%% We then update the flow and get 3 more event messages but no more.
+		%% We get an extra message because of the ensure_window algorithm.
 		gun:update_flow(ConnPid, StreamRef, 2),
+		{sse, _} = gun:await(ConnPid, StreamRef),
 		{sse, _} = gun:await(ConnPid, StreamRef),
 		{sse, _} = gun:await(ConnPid, StreamRef),
 		{error, timeout} = gun:await(ConnPid, StreamRef, 1000),

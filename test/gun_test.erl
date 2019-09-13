@@ -79,6 +79,8 @@ http2_handshake(Socket, Transport) ->
 	%% Receive the SETTINGS from the preface.
 	{ok, <<Len:24>>} = Transport:recv(Socket, 3, 5000),
 	{ok, <<4:8, 0:40, _:Len/binary>>} = Transport:recv(Socket, 6 + Len, 5000),
+	%% Receive the WINDOW_UPDATE sent with the preface.
+	{ok, <<4:24, 8:8, 0:40, _:32>>} = Transport:recv(Socket, 13, 5000),
 	%% Send the SETTINGS ack.
 	ok = Transport:send(Socket, cow_http2:settings_ack()),
 	%% Receive the SETTINGS ack.
