@@ -96,6 +96,7 @@
 -export([not_connected/3]).
 -export([domain_lookup/3]).
 -export([connecting/3]).
+-export([initial_tls_handshake/3]).
 -export([tls_handshake/3]).
 -export([not_fully_connected/3]).
 -export([connected/3]).
@@ -906,7 +907,7 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				socket => Socket
 			}, EvHandlerState1),
-			{next_state, tls_handshake, State#state{event_handler_state=EvHandlerState},
+			{next_state, initial_tls_handshake, State#state{event_handler_state=EvHandlerState},
 				{next_event, internal, {retries, Retries, Socket}}};
 		{error, Reason} ->
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
@@ -916,40 +917,22 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 				{next_event, internal, {retries, Retries, Reason}}}
 	end.
 
-tls_handshake(_, {retries, Retries, Socket0}, State=#state{opts=Opts,
-		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts}) ->
 	Protocols = maps:get(protocols, Opts, [http2, http]),
 	TransOpts0 = maps:get(tls_opts, Opts, []),
 	TransOpts = ensure_alpn(Protocols, TransOpts0),
 	HandshakeTimeout = maps:get(tls_handshake_timeout, Opts, infinity),
 	HandshakeEvent = #{
-		socket => Socket0,
+		socket => Socket,
 		tls_opts => TransOpts,
 		timeout => HandshakeTimeout
 	},
-	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
-	case gun_tls:connect(Socket0, TransOpts, HandshakeTimeout) of
-		{ok, Socket} ->
-			Protocol = case ssl:negotiated_protocol(Socket) of
-				{ok, <<"h2">>} -> gun_http2;
-				{ok, <<"http/1.1">>} -> gun_http;
-				{error, protocol_not_negotiated} ->
-					case Protocols of
-						[{socks, _}] -> gun_socks;
-						_ -> gun_http
-					end
-			end,
-			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-				socket => Socket,
-				protocol => Protocol:name()
-			}, EvHandlerState1),
-			{next_state, connected, State#state{event_handler_state=EvHandlerState},
-				{next_event, internal, {connected, Socket, Protocol}}};
-		{error, Reason} ->
-			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-				error => Reason
-			}, EvHandlerState1),
-			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
+	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
+		{ok, TLSSocket, Protocol, State} ->
+			{next_state, connected, State,
+				{next_event, internal, {connected, TLSSocket, Protocol}}};
+		{error, Reason, State} ->
+			{next_state, not_connected, State,
 				{next_event, internal, {retries, Retries, Reason}}}
 	end.
 
@@ -962,6 +945,104 @@ ensure_alpn(Protocols0, TransOpts) ->
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 	|TransOpts].
+
+%% Normal TLS handshake.
+tls_handshake(internal, {tls_handshake, StreamRef, ReplyTo, TLSOpts, TLSTimeout, Protocols},
+		State0=#state{socket=Socket, transport=gun_tcp, protocol=CurrentProtocol}) ->
+	HandshakeEvent = #{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo,
+		socket => Socket,
+		tls_opts => TLSOpts,
+		timeout => TLSTimeout
+	},
+	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
+		{ok, TLSSocket, CurrentProtocol, State1} ->
+			%% We only need to switch the transport when the protocol remains the same.
+			%% The transport is given in Proto:init/4 in the other case.
+			{keep_state, State} = commands([{switch_transport, gun_tls, TLSSocket}], State1),
+			{next_state, connected, State};
+		{ok, TLSSocket, NewProtocol, State1=#state{protocol_state=ProtoState}} ->
+			{keep_state, State} = commands([
+				{switch_transport, gun_tls, TLSSocket},
+				{switch_protocol, NewProtocol, ProtoState}
+			], State1),
+			{next_state, connected, State};
+		{error, Reason, State} ->
+			commands({error, Reason}, State)
+	end;
+%% TLS over TLS.
+%% @todo Protocols
+tls_handshake(internal, {tls_handshake, StreamRef, ReplyTo, TLSOpts, TLSTimeout, _Protocols}, State=#state{
+		socket=Socket, transport=gun_tls, origin_host=OriginHost, origin_port=OriginPort,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	HandshakeEvent = #{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo,
+		socket => Socket,
+		tls_opts => TLSOpts,
+		timeout => TLSTimeout
+	},
+	EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
+	{ok, ProxyPid} = gun_tls_proxy:start_link(OriginHost, OriginPort,
+		TLSOpts, TLSTimeout, Socket, gun_tls, HandshakeEvent),
+	commands([{switch_transport, gun_tls_proxy, ProxyPid}], State#state{
+		socket=ProxyPid, transport=gun_tls_proxy, event_handler_state=EvHandlerState});
+%% When using gun_tls_proxy we need a separate message to know whether
+%% the handshake succeeded and whether we need to switch to a different protocol.
+tls_handshake(info, {gun_tls_proxy, Socket, {ok, NewProtocol}, HandshakeEvent},
+		State0=#state{socket=Socket, transport=Transport,
+			protocol=CurrentProtocol, protocol_state=ProtoState0,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+		socket => Socket,
+		protocol => NewProtocol:name()
+	}, EvHandlerState0),
+	State1 = State0#state{event_handler_state=EvHandlerState},
+	{keep_state, State} = case NewProtocol of
+		CurrentProtocol ->
+			%% We only need to switch the transport when the protocol remains the same.
+			%% The transport is given in Proto:init/4 in the other case.
+			ProtoState = CurrentProtocol:switch_transport(Transport, Socket, ProtoState0),
+			{keep_state, State1#state{protocol_state=ProtoState}};
+		_ ->
+			commands([{switch_protocol, NewProtocol, ProtoState0}], State1)
+	end,
+	{next_state, connected, State};
+tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, HandshakeEvent},
+		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+		error => Reason
+	}, EvHandlerState0),
+	commands([Error], State#state{event_handler_state=EvHandlerState});
+tls_handshake(Type, Event, State) ->
+	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
+
+normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler_state=EvHandlerState0},
+		HandshakeEvent=#{tls_opts := TLSOpts, timeout := TLSTimeout}, Protocols) ->
+	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
+	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
+		{ok, TLSSocket} ->
+			Protocol = case ssl:negotiated_protocol(TLSSocket) of
+				{ok, <<"h2">>} -> gun_http2;
+				{ok, <<"http/1.1">>} -> gun_http;
+				{error, protocol_not_negotiated} ->
+					case Protocols of
+						[{socks, _}] -> gun_socks;
+						_ -> gun_http
+					end
+			end,
+			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+				socket => TLSSocket,
+				protocol => Protocol:name()
+			}, EvHandlerState1),
+			{ok, TLSSocket, Protocol, State#state{event_handler_state=EvHandlerState}};
+		{error, Reason} ->
+			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+				error => Reason
+			}, EvHandlerState1),
+			{error, Reason, State#state{event_handler_state=EvHandlerState}}
+	end.
 
 not_fully_connected(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
@@ -1105,26 +1186,6 @@ handle_common_connected(info, {Error, Socket, Reason}, _, State=#state{socket=So
 handle_common_connected(info, keepalive, _, State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	ProtoState2 = Protocol:keepalive(ProtoState),
 	{keep_state, keepalive_timeout(State#state{protocol_state=ProtoState2})};
-%% When using gun_tls_proxy we need a separate message to know whether
-%% the handshake succeeded and whether we need to switch to a different protocol.
-handle_common_connected(info, {gun_tls_proxy, Socket, {ok, NewProtocol}, HandshakeEvent}, _,
-		State0=#state{socket=Socket, protocol=CurrentProtocol, protocol_state=ProtoState,
-			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-		socket => Socket,
-		protocol => NewProtocol:name()
-	}, EvHandlerState0),
-	State = State0#state{event_handler_state=EvHandlerState},
-	case NewProtocol of
-		CurrentProtocol -> {keep_state, State};
-		_ -> commands([{switch_protocol, NewProtocol, ProtoState}], State)
-	end;
-handle_common_connected(info, {gun_tls_proxy, Socket, Error = {error, Reason}, HandshakeEvent}, _,
-		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-		error => Reason
-	}, EvHandlerState0),
-	commands([Error], State#state{event_handler_state=EvHandlerState});
 %% @todo Do we want to reject ReplyTo if it's not the process
 %% who initiated the connection? For both data and cancel.
 handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
@@ -1246,13 +1307,16 @@ commands([{origin, Scheme, Host, Port, Type}|Tail],
 		origin_host=Host, origin_port=Port, intermediaries=[Info|Intermediaries],
 		event_handler_state=EvHandlerState});
 commands([{switch_transport, Transport, Socket}|Tail], State=#state{
+		protocol=Protocol, protocol_state=ProtoState0,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	ProtoState = Protocol:switch_transport(Transport, Socket, ProtoState0),
 	EvHandlerState = EvHandler:transport_changed(#{
 		socket => Socket,
 		transport => Transport:name()
 	}, EvHandlerState0),
 	commands(Tail, active(State#state{socket=Socket, transport=Transport,
-		messages=Transport:messages(), event_handler_state=EvHandlerState}));
+		messages=Transport:messages(), protocol_state=ProtoState,
+		event_handler_state=EvHandlerState}));
 %% @todo The two loops should be reunified and this clause generalized.
 commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State=#state{
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
@@ -1269,6 +1333,10 @@ commands([{switch_protocol, Protocol, _ProtoState0}|Tail], State=#state{
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 	commands(Tail, keepalive_timeout(State#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler_state=EvHandlerState}));
+%% Perform a TLS handshake.
+commands([TLSHandshake={tls_handshake, _, _, _, _, _}], State) ->
+	{next_state, tls_handshake, State,
+		{next_event, internal, TLSHandshake}};
 %% Switch from not_fully_connected to connected.
 commands([{mode, http}], State) ->
 	{next_state, connected, State}.

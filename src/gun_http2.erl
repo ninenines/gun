@@ -17,6 +17,7 @@
 -export([check_options/1]).
 -export([name/0]).
 -export([init/4]).
+-export([switch_transport/3]).
 -export([handle/4]).
 -export([update_flow/4]).
 -export([closing/4]).
@@ -112,6 +113,9 @@ init(Owner, Socket, Transport, Opts0) ->
 		http2_machine=HTTP2Machine},
 	Transport:send(Socket, Preface),
 	State.
+
+switch_transport(Transport, Socket, State) ->
+	State#http2_state{socket=Socket, transport=Transport}.
 
 handle(Data, State=#http2_state{buffer=Buffer}, EvHandler, EvHandlerState) ->
 	parse(<< Buffer/binary, Data/binary >>, State#http2_state{buffer= <<>>},

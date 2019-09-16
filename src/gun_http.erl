@@ -17,6 +17,7 @@
 -export([check_options/1]).
 -export([name/0]).
 -export([init/4]).
+-export([switch_transport/3]).
 -export([handle/4]).
 -export([update_flow/4]).
 -export([closing/4]).
@@ -103,6 +104,9 @@ init(Owner, Socket, Transport, Opts) ->
 	TransformHeaderName = maps:get(transform_header_name, Opts, fun (N) -> N end),
 	#http_state{owner=Owner, socket=Socket, transport=Transport, opts=Opts, version=Version,
 		content_handlers=Handlers, transform_header_name=TransformHeaderName}.
+
+switch_transport(Transport, Socket, State) ->
+	State#http_state{socket=Socket, transport=Transport}.
 
 %% Stop looping when we got no more data.
 handle(<<>>, State, _, EvHandlerState) ->
@@ -253,9 +257,8 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 			end
 	end.
 
-handle_head(Data, State=#http_state{socket=Socket, transport=Transport,
-		version=ClientVersion, content_handlers=Handlers0, connection=Conn,
-		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
+handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Handlers0,
+		connection=Conn, streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
 			method=Method, is_alive=IsAlive}|Tail]},
 		EvHandler, EvHandlerState0) ->
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
@@ -292,65 +295,17 @@ handle_head(Data, State=#http_state{socket=Socket, transport=Transport,
 			State2 = end_stream(State#http_state{streams=[Stream|Tail]}),
 			NewHost = maps:get(host, Destination),
 			NewPort = maps:get(port, Destination),
+			Protocols = maps:get(protocols, Destination, [http]),
 			case Destination of
-				#{transport := tls} when Transport =:= gun_tls ->
-					TLSOpts = maps:get(tls_opts, Destination, []),
-					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
-					HandshakeEvent = #{
-						stream_ref => RealStreamRef,
-						reply_to => ReplyTo,
-						socket => Socket,
-						tls_opts => TLSOpts,
-						timeout => TLSTimeout
-					},
-					EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState1),
-					{ok, ProxyPid} = gun_tls_proxy:start_link(NewHost, NewPort,
-						TLSOpts, TLSTimeout, Socket, gun_tls, HandshakeEvent),
-					%% In this case the switch_protocol is delayed and is handled by
-					%% a message sent from gun_tls_proxy once the connection is established,
-					%% and handled by the gun module directly.
-					{[{state, State2#http_state{socket=ProxyPid, transport=gun_tls_proxy}},
-						{origin, <<"https">>, NewHost, NewPort, connect},
-						{switch_transport, gun_tls_proxy, ProxyPid}], EvHandlerState};
 				#{transport := tls} ->
 					TLSOpts = maps:get(tls_opts, Destination, []),
 					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
-					HandshakeEvent = #{
-						stream_ref => RealStreamRef,
-						reply_to => ReplyTo,
-						socket => Socket,
-						tls_opts => TLSOpts,
-						timeout => TLSTimeout
-					},
-					EvHandlerState2 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState1),
-					case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
-						{ok, TLSSocket} ->
-							Protocol = case ssl:negotiated_protocol(TLSSocket) of
-								{ok, <<"h2">>} -> gun_http2;
-								_ -> gun_http
-							end,
-							EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-								socket => TLSSocket,
-								protocol => Protocol:name()
-							}, EvHandlerState2),
-							case Protocol of
-								gun_http2 ->
-									{[{origin, <<"https">>, NewHost, NewPort, connect},
-										{switch_transport, gun_tls, TLSSocket},
-										{switch_protocol, gun_http2, State2}], EvHandlerState};
-								gun_http ->
-									{[{state, State2#http_state{socket=TLSSocket, transport=gun_tls}},
-										{origin, <<"https">>, NewHost, NewPort, connect},
-										{switch_transport, gun_tls, TLSSocket}], EvHandlerState}
-							end;
-						Error = {error, Reason} ->
-							EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-								error => Reason
-							}, EvHandlerState2),
-							{Error, EvHandlerState}
-					end;
+					{[
+						{origin, <<"https">>, NewHost, NewPort, connect},
+						{tls_handshake, RealStreamRef, ReplyTo, TLSOpts, TLSTimeout, Protocols}
+					], EvHandlerState1};
 				_ ->
-					case maps:get(protocols, Destination, [http]) of
+					case Protocols of
 						[http] ->
 							{[{state, State2},
 								{origin, <<"http">>, NewHost, NewPort, connect}], EvHandlerState1};
