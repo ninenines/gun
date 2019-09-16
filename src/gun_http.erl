@@ -298,12 +298,14 @@ handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Hand
 			Protocols = maps:get(protocols, Destination, [http]),
 			case Destination of
 				#{transport := tls} ->
-					TLSOpts = maps:get(tls_opts, Destination, []),
-					TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
-					{[
-						{origin, <<"https">>, NewHost, NewPort, connect},
-						{tls_handshake, RealStreamRef, ReplyTo, TLSOpts, TLSTimeout, Protocols}
-					], EvHandlerState1};
+					HandshakeEvent = #{
+						stream_ref => RealStreamRef,
+						reply_to => ReplyTo,
+						tls_opts => maps:get(tls_opts, Destination, []),
+						timeout => maps:get(tls_handshake_timeout, Destination, infinity)
+					},
+					{[{origin, <<"https">>, NewHost, NewPort, connect},
+						{tls_handshake, HandshakeEvent, Protocols}], EvHandlerState1};
 				_ ->
 					case Protocols of
 						[http] ->

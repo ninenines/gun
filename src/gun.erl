@@ -919,13 +919,9 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 
 initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts}) ->
 	Protocols = maps:get(protocols, Opts, [http2, http]),
-	TransOpts0 = maps:get(tls_opts, Opts, []),
-	TransOpts = ensure_alpn(Protocols, TransOpts0),
-	HandshakeTimeout = maps:get(tls_handshake_timeout, Opts, infinity),
 	HandshakeEvent = #{
-		socket => Socket,
-		tls_opts => TransOpts,
-		timeout => HandshakeTimeout
+		tls_opts => ensure_alpn(Protocols, maps:get(tls_opts, Opts, [])),
+		timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 	},
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
 		{ok, TLSSocket, Protocol, State} ->
@@ -947,15 +943,8 @@ ensure_alpn(Protocols0, TransOpts) ->
 	|TransOpts].
 
 %% Normal TLS handshake.
-tls_handshake(internal, {tls_handshake, StreamRef, ReplyTo, TLSOpts, TLSTimeout, Protocols},
+tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
 		State0=#state{socket=Socket, transport=gun_tcp, protocol=CurrentProtocol}) ->
-	HandshakeEvent = #{
-		stream_ref => StreamRef,
-		reply_to => ReplyTo,
-		socket => Socket,
-		tls_opts => TLSOpts,
-		timeout => TLSTimeout
-	},
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
 		{ok, TLSSocket, CurrentProtocol, State1} ->
 			%% We only need to switch the transport when the protocol remains the same.
@@ -973,16 +962,11 @@ tls_handshake(internal, {tls_handshake, StreamRef, ReplyTo, TLSOpts, TLSTimeout,
 	end;
 %% TLS over TLS.
 %% @todo Protocols
-tls_handshake(internal, {tls_handshake, StreamRef, ReplyTo, TLSOpts, TLSTimeout, _Protocols}, State=#state{
-		socket=Socket, transport=gun_tls, origin_host=OriginHost, origin_port=OriginPort,
+tls_handshake(internal, {tls_handshake,
+		HandshakeEvent0=#{tls_opts := TLSOpts, timeout := TLSTimeout}, _Protocols},
+		State=#state{socket=Socket, transport=gun_tls, origin_host=OriginHost, origin_port=OriginPort,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	HandshakeEvent = #{
-		stream_ref => StreamRef,
-		reply_to => ReplyTo,
-		socket => Socket,
-		tls_opts => TLSOpts,
-		timeout => TLSTimeout
-	},
+	HandshakeEvent = HandshakeEvent0#{socket => Socket},
 	EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	{ok, ProxyPid} = gun_tls_proxy:start_link(OriginHost, OriginPort,
 		TLSOpts, TLSTimeout, Socket, gun_tls, HandshakeEvent),
@@ -1019,7 +1003,8 @@ tls_handshake(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
 
 normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler_state=EvHandlerState0},
-		HandshakeEvent=#{tls_opts := TLSOpts, timeout := TLSTimeout}, Protocols) ->
+		HandshakeEvent0=#{tls_opts := TLSOpts, timeout := TLSTimeout}, Protocols) ->
+	HandshakeEvent = HandshakeEvent0#{socket => Socket},
 	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 		{ok, TLSSocket} ->
@@ -1334,7 +1319,7 @@ commands([{switch_protocol, Protocol, _ProtoState0}|Tail], State=#state{
 	commands(Tail, keepalive_timeout(State#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler_state=EvHandlerState}));
 %% Perform a TLS handshake.
-commands([TLSHandshake={tls_handshake, _, _, _, _, _}], State) ->
+commands([TLSHandshake={tls_handshake, _, _}], State) ->
 	{next_state, tls_handshake, State,
 		{next_event, internal, TLSHandshake}};
 %% Switch from not_fully_connected to connected.
