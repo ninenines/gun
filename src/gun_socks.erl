@@ -97,9 +97,9 @@ handle(<<5, 0>>, State=#socks_state{version=5, status=auth_method_select}) ->
 	send_socks5_connect(State),
 	{state, State#socks_state{status=connect}};
 %% Username/password authentication.
-handle(<<5, 2>>, State=#socks_state{socket=Socket, transport=Transport, opts=Opts,
+handle(<<5, 2>>, State=#socks_state{socket=Socket, transport=Transport, opts=#{auth := AuthMethods},
 		version=5, status=auth_method_select}) ->
-	#{auth := {username_password, Username, Password}} = Opts,
+	[{username_password, Username, Password}] = [Method || Method <- AuthMethods],
 	ULen = byte_size(Username),
 	PLen = byte_size(Password),
 	Transport:send(Socket, <<1, ULen, Username/binary, PLen, Password/binary>>),

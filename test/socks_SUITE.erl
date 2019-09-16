@@ -73,12 +73,16 @@ do_proxy_init(Parent, Transport, Auth) ->
 		2 -> username_password
 	end || <<A>> <= Auths0],
 	Parent ! {self(), {auth_methods, NumAuths, Auths}},
-	ok = case {Auth, lists:member(Auth, Auths)} of
+	AuthMethod = do_auth_method(Auth),
+	ok = case {AuthMethod, lists:member(AuthMethod, Auths)} of
 		{none, true} ->
 			Transport:send(ClientSocket, <<5, 0>>);
 		{username_password, true} ->
-			%% @todo
-			ok;
+			Transport:send(ClientSocket, <<5, 2>>),
+			{ok, <<1, ULen, User:ULen/binary, PLen, Pass:PLen/binary>>} = Recv(ClientSocket, 0, 1000),
+			Parent ! {self(), {username_password, User, Pass}},
+			%% @todo Test errors too (byte 2).
+			Transport:send(ClientSocket, <<1, 0>>);
 		{_, false} ->
 			%% @todo
 			not_ok
@@ -135,11 +139,18 @@ do_proxy_loop(Transport, ClientSocket, OriginSocket) ->
 			error(Msg)
 	end.
 
+do_auth_method(none) -> none;
+do_auth_method({username_password, _, _}) -> username_password.
+
 %% Tests.
 
 socks5_tcp_http_none(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
 	do_socks5_tcp_http(<<"http">>, tcp, tcp, none).
+
+socks5_tcp_http_username_password(_) ->
+	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
+	do_socks5_tcp_http(<<"http">>, tcp, tcp, {username_password, <<"user">>, <<"password">>}).
 
 do_socks5_tcp_http(OriginScheme, OriginTransport, ProxyTransport, SocksAuth) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
@@ -157,7 +168,12 @@ do_socks5_tcp_http(OriginScheme, OriginTransport, ProxyTransport, SocksAuth) ->
 	{ok, socks} = gun:await_up(ConnPid),
 	{ok, http} = gun:await_up(ConnPid),
 	%% The proxy received two packets.
-	{auth_methods, 1, [SocksAuth]} = receive_from(ProxyPid),
+	AuthMethod = do_auth_method(SocksAuth),
+	{auth_methods, 1, [AuthMethod]} = receive_from(ProxyPid),
+	_ = case AuthMethod of
+		none -> ok;
+		username_password -> SocksAuth = receive_from(ProxyPid)
+	end,
 	{connect, <<"localhost">>, OriginPort} = receive_from(ProxyPid),
 	_ = gun:get(ConnPid, "/proxied"),
 	Data = receive_from(OriginPid),
