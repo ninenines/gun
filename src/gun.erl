@@ -961,23 +961,23 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
 			commands({error, Reason}, State)
 	end;
 %% TLS over TLS.
-%% @todo Protocols
 tls_handshake(internal, {tls_handshake,
-		HandshakeEvent0=#{tls_opts := TLSOpts, timeout := TLSTimeout}, _Protocols},
+		HandshakeEvent0=#{tls_opts := TLSOpts, timeout := TLSTimeout}, Protocols},
 		State=#state{socket=Socket, transport=gun_tls, origin_host=OriginHost, origin_port=OriginPort,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	HandshakeEvent = HandshakeEvent0#{socket => Socket},
 	EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	{ok, ProxyPid} = gun_tls_proxy:start_link(OriginHost, OriginPort,
-		TLSOpts, TLSTimeout, Socket, gun_tls, HandshakeEvent),
+		TLSOpts, TLSTimeout, Socket, gun_tls, {HandshakeEvent, Protocols}),
 	commands([{switch_transport, gun_tls_proxy, ProxyPid}], State#state{
 		socket=ProxyPid, transport=gun_tls_proxy, event_handler_state=EvHandlerState});
 %% When using gun_tls_proxy we need a separate message to know whether
 %% the handshake succeeded and whether we need to switch to a different protocol.
-tls_handshake(info, {gun_tls_proxy, Socket, {ok, NewProtocol}, HandshakeEvent},
+tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, Protocols}},
 		State0=#state{socket=Socket, transport=Transport,
 			protocol=CurrentProtocol, protocol_state=ProtoState0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	NewProtocol = protocol_negotiated(Negotiated, Protocols),
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		socket => Socket,
 		protocol => NewProtocol:name()
@@ -993,7 +993,7 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, NewProtocol}, HandshakeEvent},
 			commands([{switch_protocol, NewProtocol, ProtoState0}], State1)
 	end,
 	{next_state, connected, State};
-tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, HandshakeEvent},
+tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeEvent, _}},
 		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		error => Reason
@@ -1008,15 +1008,7 @@ normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler
 	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 		{ok, TLSSocket} ->
-			Protocol = case ssl:negotiated_protocol(TLSSocket) of
-				{ok, <<"h2">>} -> gun_http2;
-				{ok, <<"http/1.1">>} -> gun_http;
-				{error, protocol_not_negotiated} ->
-					case Protocols of
-						[{socks, _}] -> gun_socks;
-						_ -> gun_http
-					end
-			end,
+			Protocol = protocol_negotiated(ssl:negotiated_protocol(TLSSocket), Protocols),
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 				socket => TLSSocket,
 				protocol => Protocol:name()
@@ -1028,6 +1020,11 @@ normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler
 			}, EvHandlerState1),
 			{error, Reason, State#state{event_handler_state=EvHandlerState}}
 	end.
+
+protocol_negotiated({ok, <<"h2">>}, _) -> gun_http2;
+protocol_negotiated({ok, <<"http/1.1">>}, _) -> gun_http;
+protocol_negotiated({error, protocol_not_negotiated}, [{socks, _}]) -> gun_socks;
+protocol_negotiated({error, protocol_not_negotiated}, _) -> gun_http.
 
 not_fully_connected(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
