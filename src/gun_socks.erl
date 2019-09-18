@@ -17,6 +17,7 @@
 -export([check_options/1]).
 -export([name/0]).
 -export([init/4]).
+-export([switch_transport/3]).
 -export([handle/4]).
 -export([closing/4]).
 -export([close/4]).
@@ -89,6 +90,9 @@ init(Owner, Socket, Transport, Opts) ->
 	#socks_state{owner=Owner, socket=Socket, transport=Transport, opts=Opts,
 		version=Version, status=auth_method_select}.
 
+switch_transport(Transport, Socket, State) ->
+	State#socks_state{socket=Socket, transport=Transport}.
+
 handle(Data, State, _, EvHandlerState) ->
 	{handle(Data, State), EvHandlerState}.
 
@@ -128,22 +132,21 @@ handle(<<5, 0, 0, Rest0/bits>>, State=#socks_state{owner=Owner, socket=Socket, t
 	%% @todo Maybe an event indicating success.
 	#{host := NewHost, port := NewPort} = Opts,
 	case Opts of
-		%% @todo TLS over TLS here as well.
-%		#{protocols := Protocols, transport := tls} ->
-%			TLSOpts = maps:get(tls_opts, Destination, []),
-%			TLSTimeout = maps:get(tls_handshake_timeout, Destination, infinity),
-			%%
+		#{transport := tls} ->
+			HandshakeEvent = #{
+				tls_opts => maps:get(tls_opts, Opts, []),
+				timeout => maps:get(tls_handshake_timeout, Opts, infinity)
+			},
+			[{origin, <<"https">>, NewHost, NewPort, socks5},
+				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http])}];
 		#{protocols := [{socks, SockOpts}]} ->
-			Owner ! {gun_socks_connected, self(), name()},
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
 				{switch_protocol, ?MODULE, init(Owner, Socket, Transport, SockOpts)}];
 		#{protocols := [http2]} ->
-			Owner ! {gun_socks_connected, self(), gun_http2:name()},
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
 				{switch_protocol, gun_http2, State},
 				{mode, http}];
 		_ ->
-			Owner ! {gun_socks_connected, self(), gun_http:name()},
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
 				{switch_protocol, gun_http, State},
 				{mode, http}]

@@ -1306,10 +1306,15 @@ commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State=#state{
 	{keep_state, keepalive_cancel(State#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler_state=EvHandlerState})};
 %% @todo And this state should probably not be ignored.
-%% @todo Socks is switching to *http* and we don't seem to support it properly yet.
+%% @todo Socks can be switching to *http* and we don't seem to support it properly yet.
 commands([{switch_protocol, Protocol, _ProtoState0}|Tail], State=#state{
-		owner=Owner, opts=Opts, socket=Socket, transport=Transport,
+		owner=Owner, opts=Opts, socket=Socket, transport=Transport, protocol=CurrentProtocol,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	%% When we switch_protocol from socks we must send a gun_socks_connected message.
+	_ = case CurrentProtocol of
+		gun_socks -> Owner ! {gun_socks_connected, self(), Protocol:name()};
+		_ -> ok
+	end,
 	ProtoOpts = maps:get(http2_opts, Opts, #{}),
 	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),

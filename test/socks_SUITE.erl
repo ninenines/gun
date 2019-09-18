@@ -152,6 +152,14 @@ socks5_tcp_http_username_password(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
 	do_socks5_tcp_http(<<"http">>, tcp, tcp, {username_password, <<"user">>, <<"password">>}).
 
+socks5_tcp_https_none(_) ->
+	doc("Use Socks5 over TCP and without authentication to connect to an HTTPS server."),
+	do_socks5_tcp_http(<<"https">>, tls, tcp, none).
+
+socks5_tcp_https_username_password(_) ->
+	doc("Use Socks5 over TCP and without authentication to connect to an HTTPS server."),
+	do_socks5_tcp_http(<<"https">>, tls, tcp, {username_password, <<"user">>, <<"password">>}).
+
 do_socks5_tcp_http(OriginScheme, OriginTransport, ProxyTransport, SocksAuth) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport, SocksAuth),
@@ -161,7 +169,8 @@ do_socks5_tcp_http(OriginScheme, OriginTransport, ProxyTransport, SocksAuth) ->
 		protocols => [{socks, #{
 			auth => [SocksAuth],
 			host => "localhost",
-			port => OriginPort
+			port => OriginPort,
+			transport => OriginTransport
 		}}]
 	}),
 	%% We receive a gun_up and a gun_socks_connected.
