@@ -49,6 +49,7 @@ init_origin(Parent, tcp, Protocol, Fun) ->
 		http2 -> http2_handshake(ClientSocket, gen_tcp);
 		_ -> ok
 	end,
+	Parent ! {self(), handshake_completed},
 	Fun(Parent, ClientSocket, gen_tcp);
 init_origin(Parent, tls, Protocol, Fun) ->
 	Opts0 = ct_helper:get_certs_from_ets(),
@@ -68,6 +69,7 @@ init_origin(Parent, tls, Protocol, Fun) ->
 		_ ->
 			ok
 	end,
+	Parent ! {self(), handshake_completed},
 	Fun(Parent, ClientSocket, ssl).
 
 http2_handshake(Socket, Transport) ->

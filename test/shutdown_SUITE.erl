@@ -19,6 +19,7 @@
 -import(ct_helper, [doc/1]).
 -import(ct_helper, [config/2]).
 -import(gun_test, [init_origin/3]).
+-import(gun_test, [receive_from/1]).
 
 all() ->
 	[{group, shutdown}].
@@ -377,7 +378,7 @@ http2_server_goaway_one_stream(_) ->
 	doc("HTTP/2: Confirm that the Gun process shuts down gracefully "
 		"when receiving a GOAWAY frame with one active stream and "
 		"retry is disabled."),
-	{ok, _, OriginPort} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Skip the header.
@@ -401,7 +402,7 @@ http2_server_goaway_one_stream(_) ->
 		retry => 0
 	}),
 	{ok, Protocol} = gun:await_up(ConnPid),
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	handshake_completed = receive_from(OriginPid),
 	StreamRef = gun:get(ConnPid, "/"),
 	ConnRef = monitor(process, ConnPid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
@@ -411,7 +412,7 @@ http2_server_goaway_many_streams(_) ->
 	doc("HTTP/2: Confirm that the Gun process shuts down gracefully "
 		"when receiving a GOAWAY frame with many active streams and "
 		"retry is disabled."),
-	{ok, _, OriginPort} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
 		%% Stream 1.
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen1:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
@@ -458,7 +459,7 @@ http2_server_goaway_many_streams(_) ->
 		retry => 0
 	}),
 	{ok, Protocol} = gun:await_up(ConnPid),
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	handshake_completed = receive_from(OriginPid),
 	StreamRef1 = gun:get(ConnPid, "/"),
 	StreamRef2 = gun:get(ConnPid, "/"),
 	StreamRef3 = gun:get(ConnPid, "/"),

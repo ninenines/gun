@@ -962,10 +962,14 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
 	end;
 %% TLS over TLS.
 tls_handshake(internal, {tls_handshake,
-		HandshakeEvent0=#{tls_opts := TLSOpts, timeout := TLSTimeout}, Protocols},
+		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols},
 		State=#state{socket=Socket, transport=gun_tls, origin_host=OriginHost, origin_port=OriginPort,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	HandshakeEvent = HandshakeEvent0#{socket => Socket},
+	TLSOpts = ensure_alpn(Protocols, TLSOpts0),
+	HandshakeEvent = HandshakeEvent0#{
+		tls_opts => TLSOpts,
+		socket => Socket
+	},
 	EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	{ok, ProxyPid} = gun_tls_proxy:start_link(OriginHost, OriginPort,
 		TLSOpts, TLSTimeout, Socket, gun_tls, {HandshakeEvent, Protocols}),
@@ -1003,8 +1007,12 @@ tls_handshake(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
 
 normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler_state=EvHandlerState0},
-		HandshakeEvent0=#{tls_opts := TLSOpts, timeout := TLSTimeout}, Protocols) ->
-	HandshakeEvent = HandshakeEvent0#{socket => Socket},
+		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols) ->
+	TLSOpts = ensure_alpn(Protocols, TLSOpts0),
+	HandshakeEvent = HandshakeEvent0#{
+		tls_opts => TLSOpts,
+		socket => Socket
+	},
 	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 		{ok, TLSSocket} ->
@@ -1068,21 +1076,13 @@ connected(cast, {connect, ReplyTo, StreamRef, Destination0, Headers, InitialFlow
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	%% The protocol option has been deprecated in favor of the protocols option.
 	%% Nobody probably ended up using it, but let's not break the interface.
-	Destination1 = case Destination0 of
+	Destination = case Destination0 of
 		#{protocols := _} ->
 			Destination0;
 		#{protocol := DestProto} ->
 			Destination0#{protocols => [DestProto]};
 		_ ->
 			Destination0
-	end,
-	Destination = case Destination1 of
-		#{transport := tls} ->
-			Destination1#{tls_opts => ensure_alpn(
-				maps:get(protocols, Destination1, [http]),
-				maps:get(tls_opts, Destination1, []))};
-		_ ->
-			Destination1
 	end,
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers, InitialFlow),
 	{keep_state, State#state{protocol_state=ProtoState2}};
@@ -1326,7 +1326,7 @@ commands([TLSHandshake={tls_handshake, _, _}], State) ->
 		{next_event, internal, TLSHandshake}};
 %% Switch from not_fully_connected to connected.
 commands([{mode, http}], State) ->
-	{next_state, connected, State}.
+	{next_state, connected, active(State)}.
 
 disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 		socket=Socket, transport=Transport,

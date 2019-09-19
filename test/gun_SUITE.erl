@@ -42,6 +42,7 @@ atom_header_name(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
 	{ok, Pid} = gun:open("localhost", OriginPort),
 	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
 	_ = gun:get(Pid, "/", [
 		{'User-Agent', "Gun/atom-headers"}
 	]),
@@ -55,6 +56,7 @@ atom_hostname(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
 	{ok, Pid} = gun:open('localhost', OriginPort),
 	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
 	_ = gun:get(Pid, "/"),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
@@ -95,6 +97,7 @@ ignore_empty_data_http(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
 	{ok, Pid} = gun:open("localhost", OriginPort),
 	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
 	Ref = gun:put(Pid, "/", []),
 	gun:data(Pid, Ref, nofin, "hello "),
 	gun:data(Pid, Ref, nofin, ["", <<>>]),
@@ -110,7 +113,7 @@ ignore_empty_data_http2(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{protocols => [http2]}),
 	{ok, http2} = gun:await_up(Pid),
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	handshake_completed = receive_from(OriginPid),
 	Ref = gun:put(Pid, "/", []),
 	gun:data(Pid, Ref, nofin, "hello "),
 	gun:data(Pid, Ref, nofin, ["", <<>>]),
@@ -180,6 +183,7 @@ list_header_name(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
 	{ok, Pid} = gun:open("localhost", OriginPort),
 	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
 	_ = gun:get(Pid, "/", [
 		{"User-Agent", "Gun/list-headers"}
 	]),
@@ -193,6 +197,7 @@ map_headers(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
 	{ok, Pid} = gun:open("localhost", OriginPort),
 	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
 	_ = gun:get(Pid, "/", #{
 		<<"USER-agent">> => "Gun/map-headers"
 	}),
@@ -434,13 +439,13 @@ stream_info_http(_) ->
 
 stream_info_http2(_) ->
 	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/2."),
-	{ok, _, OriginPort} = init_origin(tcp, http2,
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2,
 		fun(_, _, _) -> timer:sleep(200) end),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{
 		protocols => [http2]
 	}),
 	{ok, http2} = gun:await_up(Pid),
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	handshake_completed = receive_from(OriginPid),
 	{ok, undefined} = gun:stream_info(Pid, make_ref()),
 	StreamRef = gun:get(Pid, "/"),
 	Self = self(),
@@ -535,6 +540,7 @@ uppercase_header_name(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
 	{ok, Pid} = gun:open("localhost", OriginPort),
 	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
 	_ = gun:get(Pid, "/", [
 		{<<"USER-agent">>, "Gun/uppercase-headers"}
 	]),

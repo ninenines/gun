@@ -58,12 +58,12 @@ do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
 		protocols => [http2]
 	}),
 	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
 	%% Change the origin's port in the state to trigger the default port behavior.
 	_ = sys:replace_state(ConnPid, fun({StateName, StateData}) ->
 		{StateName, setelement(8, StateData, DefaultPort)}
 	end, 5000),
 	%% Confirm the default port is not sent in the request.
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
 	_ = gun:get(ConnPid, "/"),
 	ReqHeaders = receive_from(OriginPid),
 	{_, <<"localhost", Rest/bits>>} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
@@ -73,7 +73,7 @@ do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
 lingering_data_counts_toward_connection_window(_) ->
 	doc("DATA frames received after sending RST_STREAM must be counted "
 		"toward the connection flow-control window. (RFC7540 5.1)"),
-	{ok, _, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
 		%% Step 2.
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
@@ -110,7 +110,7 @@ lingering_data_counts_toward_connection_window(_) ->
 		}
 	}),
 	{ok, http2} = gun:await_up(ConnPid),
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	handshake_completed = receive_from(OriginPid),
 	%% Step 1.
 	StreamRef = gun:get(ConnPid, "/"),
 	%% Step 4.
@@ -124,7 +124,7 @@ lingering_data_counts_toward_connection_window(_) ->
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "
 		"that stream dependency information is attached. (RFC7540 6.2)"),
-	{ok, _, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
 		%% Receive a HEADERS frame.
 		{ok, <<_:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Send a HEADERS frame with PRIORITY back.
@@ -151,7 +151,7 @@ headers_priority_flag(_) ->
 	end),
 	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
 	{ok, http2} = gun:await_up(ConnPid),
-	timer:sleep(100), %% Give enough time for the handshake to fully complete.
+	handshake_completed = receive_from(OriginPid),
 	StreamRef = gun:get(ConnPid, "/"),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).

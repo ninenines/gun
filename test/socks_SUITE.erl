@@ -146,38 +146,70 @@ do_auth_method({username_password, _, _}) -> username_password.
 
 socks5_tcp_http_none(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
-	do_socks5_http(<<"http">>, tcp, tcp, none).
+	do_socks5(<<"http">>, tcp, http, tcp, none).
 
 socks5_tcp_http_username_password(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
-	do_socks5_http(<<"http">>, tcp, tcp, {username_password, <<"user">>, <<"password">>}).
+	do_socks5(<<"http">>, tcp, http, tcp, {username_password, <<"user">>, <<"password">>}).
 
 socks5_tcp_https_none(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTPS server."),
-	do_socks5_http(<<"https">>, tls, tcp, none).
+	do_socks5(<<"https">>, tls, http, tcp, none).
 
 socks5_tcp_https_username_password(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTPS server."),
-	do_socks5_http(<<"https">>, tls, tcp, {username_password, <<"user">>, <<"password">>}).
+	do_socks5(<<"https">>, tls, http, tcp, {username_password, <<"user">>, <<"password">>}).
 
 socks5_tls_http_none(_) ->
 	doc("Use Socks5 over TLS and without authentication to connect to an HTTP server."),
-	do_socks5_http(<<"http">>, tcp, tls, none).
+	do_socks5(<<"http">>, tcp, http, tls, none).
 
 socks5_tls_http_username_password(_) ->
 	doc("Use Socks5 over TLS and without authentication to connect to an HTTP server."),
-	do_socks5_http(<<"http">>, tcp, tls, {username_password, <<"user">>, <<"password">>}).
+	do_socks5(<<"http">>, tcp, http, tls, {username_password, <<"user">>, <<"password">>}).
 
 socks5_tls_https_none(_) ->
-	doc("Use Socks5 over TLS and without authentication to connect to an HTTP server."),
-	do_socks5_http(<<"https">>, tls, tls, none).
+	doc("Use Socks5 over TLS and without authentication to connect to an HTTPS server."),
+	do_socks5(<<"https">>, tls, http, tls, none).
 
 socks5_tls_https_username_password(_) ->
-	doc("Use Socks5 over TLS and without authentication to connect to an HTTP server."),
-	do_socks5_http(<<"https">>, tls, tls, {username_password, <<"user">>, <<"password">>}).
+	doc("Use Socks5 over TLS and without authentication to connect to an HTTPS server."),
+	do_socks5(<<"https">>, tls, http, tls, {username_password, <<"user">>, <<"password">>}).
 
-do_socks5_http(OriginScheme, OriginTransport, ProxyTransport, SocksAuth) ->
-	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
+socks5_tcp_h2c_none(_) ->
+	doc("Use Socks5 over TCP and without authentication to connect to an HTTP/2 server over TCP."),
+	do_socks5(<<"http">>, tcp, http2, tcp, none).
+
+socks5_tcp_h2c_username_password(_) ->
+	doc("Use Socks5 over TCP and without authentication to connect to an HTTP/2 server over TCP."),
+	do_socks5(<<"http">>, tcp, http2, tcp, {username_password, <<"user">>, <<"password">>}).
+
+socks5_tcp_h2_none(_) ->
+	doc("Use Socks5 over TCP and without authentication to connect to an HTTP/2 server over TLS."),
+	do_socks5(<<"https">>, tls, http2, tcp, none).
+
+socks5_tcp_h2_username_password(_) ->
+	doc("Use Socks5 over TCP and without authentication to connect to an HTTP/2 server over TLS."),
+	do_socks5(<<"https">>, tls, http2, tcp, {username_password, <<"user">>, <<"password">>}).
+
+socks5_tls_h2c_none(_) ->
+	doc("Use Socks5 over TLS and without authentication to connect to an HTTP/2 server over TCP."),
+	do_socks5(<<"http">>, tcp, http2, tls, none).
+
+socks5_tls_h2c_username_password(_) ->
+	doc("Use Socks5 over TLS and without authentication to connect to an HTTP/2 server over TCP."),
+	do_socks5(<<"http">>, tcp, http2, tls, {username_password, <<"user">>, <<"password">>}).
+
+socks5_tls_h2_none(_) ->
+	doc("Use Socks5 over TLS and without authentication to connect to an HTTP/2 server over TLS."),
+	do_socks5(<<"https">>, tls, http2, tls, none).
+
+socks5_tls_h2_username_password(_) ->
+	doc("Use Socks5 over TLS and without authentication to connect to an HTTP/2 server over TLS."),
+	do_socks5(<<"https">>, tls, http2, tls, {username_password, <<"user">>, <<"password">>}).
+
+do_socks5(OriginScheme, OriginTransport, OriginProtocol, ProxyTransport, SocksAuth) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, OriginProtocol),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport, SocksAuth),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
@@ -186,12 +218,13 @@ do_socks5_http(OriginScheme, OriginTransport, ProxyTransport, SocksAuth) ->
 			auth => [SocksAuth],
 			host => "localhost",
 			port => OriginPort,
-			transport => OriginTransport
+			transport => OriginTransport,
+			protocols => [OriginProtocol]
 		}}]
 	}),
 	%% We receive a gun_up and a gun_socks_connected.
 	{ok, socks} = gun:await_up(ConnPid),
-	{ok, http} = gun:await_up(ConnPid),
+	{ok, OriginProtocol} = gun:await_up(ConnPid),
 	%% The proxy received two packets.
 	AuthMethod = do_auth_method(SocksAuth),
 	{auth_methods, 1, [AuthMethod]} = receive_from(ProxyPid),
@@ -200,13 +233,19 @@ do_socks5_http(OriginScheme, OriginTransport, ProxyTransport, SocksAuth) ->
 		username_password -> SocksAuth = receive_from(ProxyPid)
 	end,
 	{connect, <<"localhost">>, OriginPort} = receive_from(ProxyPid),
+	handshake_completed = receive_from(OriginPid),
 	_ = gun:get(ConnPid, "/proxied"),
-	Data = receive_from(OriginPid),
-	Lines = binary:split(Data, <<"\r\n">>, [global]),
-	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	_ = case OriginProtocol of
+		http ->
+			Data = receive_from(OriginPid),
+			Lines = binary:split(Data, <<"\r\n">>, [global]),
+			[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines];
+		http2 ->
+			<<_:24, 1:8, _/bits>> = receive_from(OriginPid)
+	end,
 	#{
 		transport := OriginTransport,
-		protocol := http,
+		protocol := OriginProtocol,
 		origin_scheme := OriginScheme,
 		origin_host := "localhost",
 		origin_port := OriginPort,

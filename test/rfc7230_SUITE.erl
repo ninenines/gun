@@ -52,6 +52,7 @@ do_host_port(Transport, DefaultPort, HostHeaderPort) ->
 	end, 5000),
 	%% Confirm the default port is not sent in the request.
 	_ = gun:get(ConnPid, "/"),
+	handshake_completed = receive_from(OriginPid),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: localhost", Rest/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
