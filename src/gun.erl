@@ -1389,12 +1389,8 @@ status(State, NewStatus) ->
 	State#state{status=NewStatus}.
 
 keepalive_timeout(State=#state{opts=Opts, protocol=Protocol}) ->
-	{ProtoOptsKey, Default} = case Protocol of
-		gun_http -> {http_opts, infinity};
-		gun_http2 -> {http2_opts, 5000}
-	end,
-	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
-	Keepalive = maps:get(keepalive, ProtoOpts, Default),
+	ProtoOpts = maps:get(Protocols:opts_name(), Opts, #{}),
+	Keepalive = maps:get(keepalive, ProtoOpts, Protocol:default_keepalive()),
 	KeepaliveRef = case Keepalive of
 		infinity -> undefined;
 		%% @todo Maybe change that to a start_timer.

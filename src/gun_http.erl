@@ -18,6 +18,7 @@
 -export([name/0]).
 -export([opts_name/0]).
 -export([has_keepalive/0]).
+-export([default_keepalive/0]).
 -export([init/4]).
 -export([switch_transport/3]).
 -export([handle/4]).
@@ -100,6 +101,7 @@ do_check_options([Opt|_]) ->
 name() -> http.
 opts_name() -> http_opts.
 has_keepalive() -> true.
+default_keepalive() -> infinity.
 
 init(Owner, Socket, Transport, Opts) ->
 	%% @todo If we keep the opts we don't need to add these to the state.
