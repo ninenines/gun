@@ -893,13 +893,12 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 	case gun_tcp:connect(LookupInfo, ConnectTimeout) of
 		{ok, Socket} when Transport =:= gun_tcp ->
 			Protocol = case maps:get(protocols, Opts, [http]) of
-				[http] -> gun_http;
-				[http2] -> gun_http2;
-				[{socks, _}] -> gun_socks
+				[{P, _}] -> P;
+				[P] -> P
 			end,
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				socket => Socket,
-				protocol => Protocol:name()
+				protocol => Protocol
 			}, EvHandlerState1),
 			{next_state, connected, State#state{event_handler_state=EvHandlerState},
 				{next_event, internal, {connected, Socket, Protocol}}};
@@ -951,10 +950,10 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
 			%% The transport is given in Proto:init/4 in the other case.
 			{keep_state, State} = commands([{switch_transport, gun_tls, TLSSocket}], State1),
 			{next_state, connected, State};
-		{ok, TLSSocket, NewProtocol, State1=#state{protocol_state=ProtoState}} ->
+		{ok, TLSSocket, NewProtocol, State1} ->
 			{keep_state, State} = commands([
 				{switch_transport, gun_tls, TLSSocket},
-				{switch_protocol, NewProtocol, ProtoState}
+				{switch_protocol, NewProtocol}
 			], State1),
 			{next_state, connected, State};
 		{error, Reason, State} ->
@@ -984,7 +983,7 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, P
 	NewProtocol = protocol_negotiated(Negotiated, Protocols),
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		socket => Socket,
-		protocol => NewProtocol:name()
+		protocol => NewProtocol
 	}, EvHandlerState0),
 	State1 = State0#state{event_handler_state=EvHandlerState},
 	{keep_state, State} = case NewProtocol of
@@ -994,7 +993,7 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, P
 			ProtoState = CurrentProtocol:switch_transport(Transport, Socket, ProtoState0),
 			{keep_state, State1#state{protocol_state=ProtoState}};
 		_ ->
-			commands([{switch_protocol, NewProtocol, ProtoState0}], State1)
+			commands([{switch_protocol, NewProtocol}], State1)
 	end,
 	{next_state, connected, State};
 tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeEvent, _}},
@@ -1019,7 +1018,7 @@ normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler
 			Protocol = protocol_negotiated(ssl:negotiated_protocol(TLSSocket), Protocols),
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 				socket => TLSSocket,
-				protocol => Protocol:name()
+				protocol => Protocol
 			}, EvHandlerState1),
 			{ok, TLSSocket, Protocol, State#state{event_handler_state=EvHandlerState}};
 		{error, Reason} ->
@@ -1029,32 +1028,33 @@ normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler
 			{error, Reason, State#state{event_handler_state=EvHandlerState}}
 	end.
 
-protocol_negotiated({ok, <<"h2">>}, _) -> gun_http2;
-protocol_negotiated({ok, <<"http/1.1">>}, _) -> gun_http;
-protocol_negotiated({error, protocol_not_negotiated}, [{socks, _}]) -> gun_socks;
-protocol_negotiated({error, protocol_not_negotiated}, _) -> gun_http.
+protocol_negotiated({ok, <<"h2">>}, _) -> http2;
+protocol_negotiated({ok, <<"http/1.1">>}, _) -> http;
+protocol_negotiated({error, protocol_not_negotiated}, [{socks, _}]) -> socks;
+protocol_negotiated({error, protocol_not_negotiated}, _) -> http.
 
 not_fully_connected(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
 
-connected(internal, {connected, Socket, Protocol=gun_socks},
+connected(internal, {connected, Socket, socks},
 		State=#state{owner=Owner, opts=Opts, transport=Transport}) ->
-	[{socks, ProtoOpts}] = [Proto || Proto = {socks, _} <- maps:get(protocols, Opts)],
+	Protocol = gun_socks,
+	[{socks, ProtoOpts}] = maps:get(protocols, Opts),
 	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	Owner ! {gun_up, self(), Protocol:name()},
 	{next_state, not_fully_connected, active(State#state{socket=Socket,
 		protocol=Protocol, protocol_state=ProtoState})};
-connected(internal, {connected, Socket, Protocol},
-		State=#state{owner=Owner, opts=Opts, transport=Transport}) ->
-	ProtoOptsKey = case Protocol of
-		gun_http -> http_opts;
-		gun_http2 -> http2_opts
-	end,
-	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
+connected(internal, {connected, Socket, Protocol0},
+		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
+	Protocol = protocol_handler(Protocol0),
+	ProtoOpts = maps:get(Protocol:opts_name(), Opts, #{}),
 	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	Owner ! {gun_up, self(), Protocol:name()},
-	{keep_state, keepalive_timeout(active(State#state{socket=Socket,
-		protocol=Protocol, protocol_state=ProtoState}))};
+	State = active(State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState}),
+	case Protocol:has_keepalive() of
+		true -> {keep_state, keepalive_timeout(State)};
+		false -> {keep_state, State}
+	end;
 %% Public HTTP interface.
 connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
@@ -1299,32 +1299,33 @@ commands([{switch_transport, Transport, Socket}|Tail], State=#state{
 	commands(Tail, active(State#state{socket=Socket, transport=Transport,
 		messages=Transport:messages(), protocol_state=ProtoState,
 		event_handler_state=EvHandlerState}));
-%% @todo The two loops should be reunified and this clause generalized.
-commands([{switch_protocol, Protocol=gun_ws, ProtoState}], State=#state{
-		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
-	{keep_state, keepalive_cancel(State#state{protocol=Protocol, protocol_state=ProtoState,
-		event_handler_state=EvHandlerState})};
-%% @todo And this state should probably not be ignored.
-%% @todo Socks can be switching to *http* and we don't seem to support it properly yet.
-commands([{switch_protocol, Protocol, _ProtoState0}|Tail], State=#state{
+commands([{switch_protocol, Protocol0}|Tail], State0=#state{
 		owner=Owner, opts=Opts, socket=Socket, transport=Transport, protocol=CurrentProtocol,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Protocol, ProtoOpts} = case Protocol0 of
+		{P, PO} -> {protocol_handler(P), PO};
+		P ->
+			Protocol1 = protocol_handler(P),
+			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
+	end,
 	%% When we switch_protocol from socks we must send a gun_socks_connected message.
 	_ = case CurrentProtocol of
 		gun_socks -> Owner ! {gun_socks_connected, self(), Protocol:name()};
 		_ -> ok
 	end,
-	ProtoOpts = maps:get(http2_opts, Opts, #{}),
 	ProtoState = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
-	commands(Tail, keepalive_timeout(State#state{protocol=Protocol, protocol_state=ProtoState,
-		event_handler_state=EvHandlerState}));
+	State = State0#state{protocol=Protocol, protocol_state=ProtoState, event_handler_state=EvHandlerState},
+	case Protocol:has_keepalive() of
+		true -> commands(Tail, keepalive_timeout(State));
+		false -> commands(Tail, keepalive_cancel(State))
+	end;
 %% Perform a TLS handshake.
 commands([TLSHandshake={tls_handshake, _, _}], State) ->
 	{next_state, tls_handshake, State,
 		{next_event, internal, TLSHandshake}};
 %% Switch from not_fully_connected to connected.
+%% @todo Do this in switch_protocol.
 commands([{mode, http}], State) ->
 	{next_state, connected, active(State)}.
 
@@ -1369,6 +1370,11 @@ disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
 	after 0 ->
 		ok
 	end.
+
+protocol_handler(http) -> gun_http;
+protocol_handler(http2) -> gun_http2;
+protocol_handler(ws) -> gun_ws;
+protocol_handler(socks) -> gun_socks.
 
 active(State=#state{active=false}) ->
 	State;

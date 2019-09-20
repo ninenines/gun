@@ -257,3 +257,57 @@ do_socks5(OriginScheme, OriginTransport, OriginProtocol, ProxyTransport, SocksAu
 			protocol := socks
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
+
+socks5_through_multiple_proxies(_) ->
+	doc("Gun can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"two separate Socks5 proxies."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(tcp, none),
+	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(tcp, none),
+	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
+		protocols => [{socks, #{
+			host => "localhost",
+			port => Proxy2Port,
+			protocols => [{socks, #{
+				host => "localhost",
+				port => OriginPort
+			}}]
+		}}]
+	}),
+	%% We receive a gun_up and two gun_socks_connected.
+	{ok, socks} = gun:await_up(ConnPid),
+	{ok, socks} = gun:await_up(ConnPid),
+	{ok, http} = gun:await_up(ConnPid),
+	%% The first proxy received two packets.
+	{auth_methods, 1, [none]} = receive_from(Proxy1Pid),
+	{connect, <<"localhost">>, Proxy2Port} = receive_from(Proxy1Pid),
+	%% So did the second proxy.
+	{auth_methods, 1, [none]} = receive_from(Proxy2Pid),
+	{connect, <<"localhost">>, OriginPort} = receive_from(Proxy2Pid),
+	handshake_completed = receive_from(OriginPid),
+	_ = gun:get(ConnPid, "/proxied"),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	#{
+		transport := tcp,
+		protocol := http,
+		origin_scheme := <<"http">>,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := socks5,
+			host := "localhost",
+			port := Proxy1Port,
+			transport := tcp,
+			protocol := socks
+		}, #{
+			type := socks5,
+			host := "localhost",
+			port := Proxy2Port,
+			transport := tcp,
+			protocol := socks
+	}]} = gun:info(ConnPid),
+	gun:close(ConnPid).

@@ -16,7 +16,9 @@
 
 -export([check_options/1]).
 -export([name/0]).
--export([init/9]).
+-export([opts_name/0]).
+-export([has_keepalive/0]).
+-export([init/4]).
 -export([handle/4]).
 -export([update_flow/4]).
 -export([closing/4]).
@@ -77,13 +79,15 @@ do_check_options([Opt|_]) ->
 	{error, {options, {ws, Opt}}}.
 
 name() -> ws.
+opts_name() -> ws_opts.
+has_keepalive() -> false.
 
-init(Owner, Socket, Transport, StreamRef, Headers, Extensions, InitialFlow, Handler, Opts) ->
-	Owner ! {gun_upgrade, self(), StreamRef, [<<"websocket">>], Headers},
+init(Owner, Socket, Transport, #{stream_ref := StreamRef, headers := Headers,
+		extensions := Extensions, flow := InitialFlow, handler := Handler, opts := Opts}) ->
 	{ok, HandlerState} = Handler:init(Owner, StreamRef, Headers, Opts),
-	{switch_protocol, ?MODULE, #ws_state{owner=Owner, stream_ref=StreamRef,
+	#ws_state{owner=Owner, stream_ref=StreamRef,
 		socket=Socket, transport=Transport, opts=Opts, extensions=Extensions,
-		flow=InitialFlow, handler=Handler, handler_state=HandlerState}}.
+		flow=InitialFlow, handler=Handler, handler_state=HandlerState}.
 
 %% Do not handle anything if we received a close frame.
 %% Initiate or terminate the closing state depending on whether we sent a close yet.

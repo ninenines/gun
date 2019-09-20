@@ -16,6 +16,8 @@
 
 -export([check_options/1]).
 -export([name/0]).
+-export([opts_name/0]).
+-export([has_keepalive/0]).
 -export([init/4]).
 -export([switch_transport/3]).
 -export([handle/4]).
@@ -96,6 +98,8 @@ do_check_options([Opt|_]) ->
 	{error, {options, {http, Opt}}}.
 
 name() -> http.
+opts_name() -> http_opts.
+has_keepalive() -> true.
 
 init(Owner, Socket, Transport, Opts) ->
 	%% @todo If we keep the opts we don't need to add these to the state.
@@ -313,7 +317,7 @@ handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Hand
 								{origin, <<"http">>, NewHost, NewPort, connect}], EvHandlerState1};
 						[http2] ->
 							{[{origin, <<"http">>, NewHost, NewPort, connect},
-								{switch_protocol, gun_http2, State2}], EvHandlerState1}
+								{switch_protocol, http2}], EvHandlerState1}
 					end
 			end;
 		{_, _} when Status >= 100, Status =< 199 ->
@@ -885,4 +889,13 @@ ws_handshake_end(Buffer, #http_state{owner=Owner, socket=Socket, transport=Trans
 			{OK, _, _} = Transport:messages(),
 			self() ! {OK, Socket, Buffer}
 	end,
-	gun_ws:init(Owner, Socket, Transport, StreamRef, Headers, Extensions, InitialFlow, Handler, Opts).
+	%% Inform the user that the upgrade was successful and switch the protocol.
+	Owner ! {gun_upgrade, self(), StreamRef, [<<"websocket">>], Headers},
+	{switch_protocol, {ws, #{
+		stream_ref => StreamRef,
+		headers => Headers,
+		extensions => Extensions,
+		flow => InitialFlow,
+		handler => Handler,
+		opts => Opts
+	}}}.

@@ -16,6 +16,8 @@
 
 -export([check_options/1]).
 -export([name/0]).
+-export([opts_name/0]).
+-export([has_keepalive/0]).
 -export([init/4]).
 -export([switch_transport/3]).
 -export([handle/4]).
@@ -97,6 +99,8 @@ do_check_options([Opt|_]) ->
 	{error, {options, {http2, Opt}}}.
 
 name() -> http2.
+opts_name() -> http2_opts.
+has_keepalive() -> true.
 
 init(Owner, Socket, Transport, Opts0) ->
 	%% We have different defaults than the protocol in order

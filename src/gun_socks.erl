@@ -16,6 +16,8 @@
 
 -export([check_options/1]).
 -export([name/0]).
+-export([opts_name/0]).
+-export([has_keepalive/0]).
 -export([init/4]).
 -export([switch_transport/3]).
 -export([handle/4]).
@@ -78,6 +80,8 @@ check_auth_opt(Methods) ->
 	end.
 
 name() -> socks.
+opts_name() -> socks_opts.
+has_keepalive() -> false.
 
 init(Owner, Socket, Transport, Opts) ->
 	5 = Version = maps:get(version, Opts, 5),
@@ -116,8 +120,7 @@ handle(<<1, 0>>, State=#socks_state{version=5, status=auth_username_password}) -
 handle(<<1, _>>, #socks_state{version=5, status=auth_username_password}) ->
 	{error, {socks5, username_password_auth_failure}};
 %% Connect reply.
-handle(<<5, 0, 0, Rest0/bits>>, State=#socks_state{owner=Owner, socket=Socket, transport=Transport, opts=Opts,
-		version=5, status=connect}) ->
+handle(<<5, 0, 0, Rest0/bits>>, #socks_state{opts=Opts, version=5, status=connect}) ->
 	%% @todo What to do with BoundAddr and BoundPort? Add as metadata to origin info?
 	{_BoundAddr, _BoundPort} = case Rest0 of
 		%% @todo Seen a server with <<1, 0:48>>.
@@ -139,16 +142,13 @@ handle(<<5, 0, 0, Rest0/bits>>, State=#socks_state{owner=Owner, socket=Socket, t
 			},
 			[{origin, <<"https">>, NewHost, NewPort, socks5},
 				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http])}];
-		#{protocols := [{socks, SockOpts}]} ->
+		#{protocols := [Protocol={socks, _}]} ->
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, ?MODULE, init(Owner, Socket, Transport, SockOpts)}];
-		#{protocols := [http2]} ->
-			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, gun_http2, State},
-				{mode, http}];
+				{switch_protocol, Protocol}];
 		_ ->
+			[Protocol] = maps:get(protocols, Opts, [http]),
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, gun_http, State},
+				{switch_protocol, Protocol},
 				{mode, http}]
 	end;
 handle(<<5, Error, _/bits>>, #socks_state{version=5, status=connect}) ->
