@@ -945,16 +945,11 @@ ensure_alpn(Protocols0, TransOpts) ->
 tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
 		State0=#state{socket=Socket, transport=gun_tcp, protocol=CurrentProtocol}) ->
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
-		{ok, TLSSocket, CurrentProtocol, State1} ->
-			%% We only need to switch the transport when the protocol remains the same.
-			%% The transport is given in Proto:init/4 in the other case.
-			{keep_state, State} = commands([{switch_transport, gun_tls, TLSSocket}], State1),
-			{next_state, connected, State};
-		{ok, TLSSocket, NewProtocol, State1} ->
+		{ok, TLSSocket, NewProtocol, State} ->
 			commands([
 				{switch_transport, gun_tls, TLSSocket},
 				{switch_protocol, NewProtocol}
-			], State1);
+			], State);
 		{error, Reason, State} ->
 			commands({error, Reason}, State)
 	end;
@@ -984,16 +979,7 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, P
 		socket => Socket,
 		protocol => NewProtocol
 	}, EvHandlerState0),
-	State = State0#state{event_handler_state=EvHandlerState},
-	case NewProtocol of
-		CurrentProtocol ->
-			%% We only need to switch the transport when the protocol remains the same.
-			%% The transport is given in Proto:init/4 in the other case.
-			ProtoState = CurrentProtocol:switch_transport(Transport, Socket, ProtoState0),
-			{keep_state, State#state{protocol_state=ProtoState}};
-		_ ->
-			commands([{switch_protocol, NewProtocol}], State)
-	end;
+	commands([{switch_protocol, NewProtocol}], State0#state{event_handler_state=EvHandlerState});
 tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeEvent, _}},
 		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{

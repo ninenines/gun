@@ -313,14 +313,9 @@ handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Hand
 					{[{origin, <<"https">>, NewHost, NewPort, connect},
 						{tls_handshake, HandshakeEvent, Protocols}], EvHandlerState1};
 				_ ->
-					case Protocols of
-						[http] ->
-							{[{state, State2},
-								{origin, <<"http">>, NewHost, NewPort, connect}], EvHandlerState1};
-						[http2] ->
-							{[{origin, <<"http">>, NewHost, NewPort, connect},
-								{switch_protocol, http2}], EvHandlerState1}
-					end
+					[Protocol] = Protocols,
+					{[{origin, <<"http">>, NewHost, NewPort, connect},
+						{switch_protocol, Protocol}], EvHandlerState1}
 			end;
 		{_, _} when Status >= 100, Status =< 199 ->
 			ReplyTo ! {gun_inform, self(), stream_ref(StreamRef), Status, Headers},
