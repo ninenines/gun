@@ -258,21 +258,45 @@ do_socks5(OriginScheme, OriginTransport, OriginProtocol, ProxyTransport, SocksAu
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
-socks5_through_multiple_proxies(_) ->
+socks5_tcp_through_multiple_tcp_proxies(_) ->
 	doc("Gun can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through "
-		"two separate Socks5 proxies."),
-	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
-	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(tcp, none),
-	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(tcp, none),
+		"two separate TCP Socks5 proxies."),
+	do_socks5_through_multiple_proxies(tcp, tcp).
+
+socks5_tcp_through_multiple_tls_proxies(_) ->
+	doc("Gun can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"two separate TLS Socks5 proxies."),
+	do_socks5_through_multiple_proxies(tcp, tls).
+
+socks5_tls_through_multiple_tcp_proxies(_) ->
+	doc("Gun can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"two separate TCP Socks5 proxies."),
+	do_socks5_through_multiple_proxies(tcp, tcp).
+
+socks5_tls_through_multiple_tls_proxies(_) ->
+	doc("Gun can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"two separate TLS Socks5 proxies."),
+	do_socks5_through_multiple_proxies(tcp, tls).
+
+do_socks5_through_multiple_proxies(OriginTransport, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
+	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(ProxyTransport, none),
+	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(ProxyTransport, none),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
+		transport => ProxyTransport,
 		protocols => [{socks, #{
 			host => "localhost",
 			port => Proxy2Port,
+			transport => ProxyTransport,
 			protocols => [{socks, #{
 				host => "localhost",
-				port => OriginPort
+				port => OriginPort,
+				transport => OriginTransport
 			}}]
 		}}]
 	}),
@@ -291,8 +315,12 @@ socks5_through_multiple_proxies(_) ->
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	Proxy2Transport = case ProxyTransport of
+		tcp -> tcp;
+		tls -> tls_proxy
+	end,
 	#{
-		transport := tcp,
+		transport := OriginTransport,
 		protocol := http,
 		origin_scheme := <<"http">>,
 		origin_host := "localhost",
@@ -301,13 +329,13 @@ socks5_through_multiple_proxies(_) ->
 			type := socks5,
 			host := "localhost",
 			port := Proxy1Port,
-			transport := tcp,
+			transport := ProxyTransport,
 			protocol := socks
 		}, #{
 			type := socks5,
 			host := "localhost",
 			port := Proxy2Port,
-			transport := tcp,
+			transport := Proxy2Transport,
 			protocol := socks
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).

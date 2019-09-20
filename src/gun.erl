@@ -892,13 +892,14 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 	EvHandlerState1 = EvHandler:connect_start(ConnectEvent, EvHandlerState0),
 	case gun_tcp:connect(LookupInfo, ConnectTimeout) of
 		{ok, Socket} when Transport =:= gun_tcp ->
-			Protocol = case maps:get(protocols, Opts, [http]) of
-				[{P, _}] -> P;
-				[P] -> P
+			[Protocol] = maps:get(protocols, Opts, [http]),
+			ProtocolName = case Protocol of
+				{P, _} -> P;
+				P -> P
 			end,
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				socket => Socket,
-				protocol => Protocol
+				protocol => ProtocolName
 			}, EvHandlerState1),
 			{next_state, connected, State#state{event_handler_state=EvHandlerState},
 				{next_event, internal, {connected, Socket, Protocol}}};
@@ -943,7 +944,7 @@ ensure_alpn(Protocols0, TransOpts) ->
 
 %% Normal TLS handshake.
 tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
-		State0=#state{socket=Socket, transport=gun_tcp, protocol=CurrentProtocol}) ->
+		State0=#state{socket=Socket, transport=gun_tcp}) ->
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
 		{ok, TLSSocket, NewProtocol, State} ->
 			commands([
@@ -971,9 +972,7 @@ tls_handshake(internal, {tls_handshake,
 %% When using gun_tls_proxy we need a separate message to know whether
 %% the handshake succeeded and whether we need to switch to a different protocol.
 tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, Protocols}},
-		State0=#state{socket=Socket, transport=Transport,
-			protocol=CurrentProtocol, protocol_state=ProtoState0,
-			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+		State0=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	NewProtocol = protocol_negotiated(Negotiated, Protocols),
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		socket => Socket,
@@ -1014,7 +1013,7 @@ normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler
 
 protocol_negotiated({ok, <<"h2">>}, _) -> http2;
 protocol_negotiated({ok, <<"http/1.1">>}, _) -> http;
-protocol_negotiated({error, protocol_not_negotiated}, [{socks, _}]) -> socks;
+protocol_negotiated({error, protocol_not_negotiated}, [Protocol]) -> Protocol;
 protocol_negotiated({error, protocol_not_negotiated}, _) -> http.
 
 connected_no_input(Type, Event, State) ->
@@ -1022,11 +1021,13 @@ connected_no_input(Type, Event, State) ->
 
 connected(internal, {connected, Socket, Protocol0},
 		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
-	Protocol = protocol_handler(Protocol0),
 	%% Protocol options may have been given along the protocol name.
-	ProtoOpts = case lists:keyfind(Protocol0, 1, maps:get(protocols, Opts, [http])) of
-		{_, PO} -> PO;
-		false -> maps:get(Protocol:opts_name(), Opts, #{})
+	{Protocol, ProtoOpts} = case Protocol0 of
+		{P, PO} ->
+			{protocol_handler(P), PO};
+		_ ->
+			P = protocol_handler(Protocol0),
+			{P, maps:get(P:opts_name(), Opts, #{})}
 	end,
 	{StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	Owner ! {gun_up, self(), Protocol:name()},

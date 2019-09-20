@@ -298,7 +298,7 @@ handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Hand
 			}, EvHandlerState0),
 			%% We expect there to be no additional data after the CONNECT response.
 			<<>> = Rest2,
-			State2 = end_stream(State#http_state{streams=[Stream|Tail]}),
+			_ = end_stream(State#http_state{streams=[Stream|Tail]}),
 			NewHost = maps:get(host, Destination),
 			NewPort = maps:get(port, Destination),
 			Protocols = maps:get(protocols, Destination, [http]),
