@@ -85,9 +85,9 @@ has_keepalive() -> false.
 init(Owner, Socket, Transport, #{stream_ref := StreamRef, headers := Headers,
 		extensions := Extensions, flow := InitialFlow, handler := Handler, opts := Opts}) ->
 	{ok, HandlerState} = Handler:init(Owner, StreamRef, Headers, Opts),
-	#ws_state{owner=Owner, stream_ref=StreamRef,
+	{connected, #ws_state{owner=Owner, stream_ref=StreamRef,
 		socket=Socket, transport=Transport, opts=Opts, extensions=Extensions,
-		flow=InitialFlow, handler=Handler, handler_state=HandlerState}.
+		flow=InitialFlow, handler=Handler, handler_state=HandlerState}}.
 
 %% Do not handle anything if we received a close frame.
 %% Initiate or terminate the closing state depending on whether we sent a close yet.

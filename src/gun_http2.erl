@@ -118,7 +118,7 @@ init(Owner, Socket, Transport, Opts0) ->
 		transport=Transport, opts=Opts, content_handlers=Handlers,
 		http2_machine=HTTP2Machine},
 	Transport:send(Socket, Preface),
-	State.
+	{connected, State}.
 
 switch_transport(Transport, Socket, State) ->
 	State#http2_state{socket=Socket, transport=Transport}.

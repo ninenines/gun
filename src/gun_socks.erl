@@ -91,8 +91,8 @@ init(Owner, Socket, Transport, Opts) ->
 		none -> <<0>>
 	end || A <- Auth>>,
 	Transport:send(Socket, [<<5, (length(Auth))>>, Methods]),
-	#socks_state{owner=Owner, socket=Socket, transport=Transport, opts=Opts,
-		version=Version, status=auth_method_select}.
+	{connected_no_input, #socks_state{owner=Owner, socket=Socket, transport=Transport,
+		opts=Opts, version=Version, status=auth_method_select}}.
 
 switch_transport(Transport, Socket, State) ->
 	State#socks_state{socket=Socket, transport=Transport}.
@@ -142,14 +142,10 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{opts=Opts, version=5, status=connec
 			},
 			[{origin, <<"https">>, NewHost, NewPort, socks5},
 				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http])}];
-		#{protocols := [Protocol={socks, _}]} ->
-			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, Protocol}];
 		_ ->
 			[Protocol] = maps:get(protocols, Opts, [http]),
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, Protocol},
-				{mode, http}]
+				{switch_protocol, Protocol}]
 	end;
 handle(<<5, Error, _/bits>>, #socks_state{version=5, status=connect}) ->
 	Reason = case Error of

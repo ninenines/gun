@@ -108,8 +108,8 @@ init(Owner, Socket, Transport, Opts) ->
 	Version = maps:get(version, Opts, 'HTTP/1.1'),
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	TransformHeaderName = maps:get(transform_header_name, Opts, fun (N) -> N end),
-	#http_state{owner=Owner, socket=Socket, transport=Transport, opts=Opts, version=Version,
-		content_handlers=Handlers, transform_header_name=TransformHeaderName}.
+	{connected, #http_state{owner=Owner, socket=Socket, transport=Transport, opts=Opts,
+		version=Version, content_handlers=Handlers, transform_header_name=TransformHeaderName}}.
 
 switch_transport(Transport, Socket, State) ->
 	State#http_state{socket=Socket, transport=Transport}.
