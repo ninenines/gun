@@ -957,7 +957,7 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
 %% TLS over TLS.
 tls_handshake(internal, {tls_handshake,
 		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols},
-		State=#state{socket=Socket, transport=gun_tls, origin_host=OriginHost, origin_port=OriginPort,
+		State=#state{socket=Socket, transport=Transport, origin_host=OriginHost, origin_port=OriginPort,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	TLSOpts = ensure_alpn(Protocols, TLSOpts0),
 	HandshakeEvent = HandshakeEvent0#{
@@ -966,7 +966,7 @@ tls_handshake(internal, {tls_handshake,
 	},
 	EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	{ok, ProxyPid} = gun_tls_proxy:start_link(OriginHost, OriginPort,
-		TLSOpts, TLSTimeout, Socket, gun_tls, {HandshakeEvent, Protocols}),
+		TLSOpts, TLSTimeout, Socket, Transport, {HandshakeEvent, Protocols}),
 	commands([{switch_transport, gun_tls_proxy, ProxyPid}], State#state{
 		socket=ProxyPid, transport=gun_tls_proxy, event_handler_state=EvHandlerState});
 %% When using gun_tls_proxy we need a separate message to know whether

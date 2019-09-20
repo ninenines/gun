@@ -262,27 +262,27 @@ socks5_tcp_through_multiple_tcp_proxies(_) ->
 	doc("Gun can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through "
 		"two separate TCP Socks5 proxies."),
-	do_socks5_through_multiple_proxies(tcp, tcp).
+	do_socks5_through_multiple_proxies(<<"http">>, tcp, tcp).
 
 socks5_tcp_through_multiple_tls_proxies(_) ->
 	doc("Gun can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through "
 		"two separate TLS Socks5 proxies."),
-	do_socks5_through_multiple_proxies(tcp, tls).
+	do_socks5_through_multiple_proxies(<<"http">>, tcp, tls).
 
 socks5_tls_through_multiple_tcp_proxies(_) ->
 	doc("Gun can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via a tunnel going through "
 		"two separate TCP Socks5 proxies."),
-	do_socks5_through_multiple_proxies(tcp, tcp).
+	do_socks5_through_multiple_proxies(<<"https">>, tls, tcp).
 
 socks5_tls_through_multiple_tls_proxies(_) ->
 	doc("Gun can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via a tunnel going through "
 		"two separate TLS Socks5 proxies."),
-	do_socks5_through_multiple_proxies(tcp, tls).
+	do_socks5_through_multiple_proxies(<<"https">>, tls, tls).
 
-do_socks5_through_multiple_proxies(OriginTransport, ProxyTransport) ->
+do_socks5_through_multiple_proxies(OriginScheme, OriginTransport, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
 	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(ProxyTransport, none),
 	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(ProxyTransport, none),
@@ -322,7 +322,7 @@ do_socks5_through_multiple_proxies(OriginTransport, ProxyTransport) ->
 	#{
 		transport := OriginTransport,
 		protocol := http,
-		origin_scheme := <<"http">>,
+		origin_scheme := OriginScheme,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -331,6 +331,88 @@ do_socks5_through_multiple_proxies(OriginTransport, ProxyTransport) ->
 			port := Proxy1Port,
 			transport := ProxyTransport,
 			protocol := socks
+		}, #{
+			type := socks5,
+			host := "localhost",
+			port := Proxy2Port,
+			transport := Proxy2Transport,
+			protocol := socks
+	}]} = gun:info(ConnPid),
+	gun:close(ConnPid).
+
+socks5_tcp_through_connect_tcp_to_tcp_origin(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"an HTTP proxy followed by a Socks5 proxy."),
+	do_socks5_through_connect_proxy(<<"http">>, tcp, tcp).
+
+socks5_tls_through_connect_tls_to_tcp_origin(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"an HTTPS proxy followed by a TLS Socks5 proxy."),
+	do_socks5_through_connect_proxy(<<"http">>, tcp, tls).
+
+socks5_tcp_through_connect_tcp_to_tls_origin(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"an HTTP proxy followed by a Socks5 proxy."),
+	do_socks5_through_connect_proxy(<<"https">>, tls, tcp).
+
+socks5_tls_through_connect_tls_to_tls_origin(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"an HTTPS proxy followed by a TLS Socks5 proxy."),
+	do_socks5_through_connect_proxy(<<"https">>, tls, tls).
+
+do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
+	{ok, Proxy1Pid, Proxy1Port} = rfc7231_SUITE:do_proxy_start(ProxyTransport),
+	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(ProxyTransport, none),
+	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
+		transport => ProxyTransport
+	}),
+	%% We receive a gun_up first. This is the HTTP proxy.
+	{ok, http} = gun:await_up(ConnPid),
+	Authority1 = iolist_to_binary(["localhost:", integer_to_binary(Proxy2Port)]),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => Proxy2Port,
+		transport => ProxyTransport,
+		protocols => [{socks, #{
+			host => "localhost",
+			port => OriginPort,
+			transport => OriginTransport
+		}}]
+	}),
+	{request, <<"CONNECT">>, Authority1, 'HTTP/1.1', _} = receive_from(Proxy1Pid),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	%% We receive a gun_socks_connected afterwards. This is the origin HTTP server.
+	{ok, http} = gun:await_up(ConnPid),
+	%% The second proxy receives a Socks5 auth/connect request.
+	{auth_methods, 1, [none]} = receive_from(Proxy2Pid),
+	{connect, <<"localhost">>, OriginPort} = receive_from(Proxy2Pid),
+	handshake_completed = receive_from(OriginPid),
+	Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	_ = gun:get(ConnPid, "/proxied"),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority2/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	Proxy2Transport = case ProxyTransport of
+		tcp -> tcp;
+		tls -> tls_proxy
+	end,
+	#{
+		transport := OriginTransport,
+		protocol := http,
+		origin_scheme := OriginScheme,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := Proxy1Port,
+			transport := ProxyTransport,
+			protocol := http
 		}, #{
 			type := socks5,
 			host := "localhost",
