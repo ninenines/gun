@@ -1305,10 +1305,13 @@ commands([{switch_protocol, Protocol0}], State0=#state{
 	end,
 	{StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
-	State = State0#state{protocol=Protocol, protocol_state=ProtoState, event_handler_state=EvHandlerState},
+	%% We cancel the existing keepalive and, depending on the protocol,
+	%% we enable keepalive again, effectively resetting the timer.
+	State = keepalive_cancel(active(State0#state{protocol=Protocol, protocol_state=ProtoState,
+		event_handler_state=EvHandlerState})),
 	case Protocol:has_keepalive() of
-		true -> {next_state, StateName, keepalive_timeout(active(State))};
-		false -> {next_state, StateName, keepalive_cancel(active(State))}
+		true -> {next_state, StateName, keepalive_timeout(State)};
+		false -> {next_state, StateName, State}
 	end;
 %% Perform a TLS handshake.
 commands([TLSHandshake={tls_handshake, _, _}], State) ->
