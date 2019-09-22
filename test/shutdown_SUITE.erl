@@ -60,7 +60,11 @@ not_connected_gun_shutdown(_) ->
 	{ok, ConnPid} = gun:open("localhost", 12345),
 	ConnRef = monitor(process, ConnPid),
 	gun:shutdown(ConnPid),
-	gun_is_down(ConnPid, ConnRef, shutdown).
+	Timeout = case os:type() of
+		{win32, _} -> 2000;
+		_ -> 1000
+	end,
+	gun_is_down(ConnPid, ConnRef, shutdown, Timeout).
 
 not_connected_owner_down(_) ->
 	doc("Confirm that the Gun process shuts down when the owner exits normally "
@@ -82,7 +86,11 @@ do_not_connected_owner_down(ExitReason, DownReason) ->
 	end),
 	ConnPid = receive {conn, C} -> C after 1000 -> error(timeout) end,
 	ConnRef = monitor(process, ConnPid),
-	gun_is_down(ConnPid, ConnRef, DownReason).
+	Timeout = case os:type() of
+		{win32, _} -> 2000;
+		_ -> 1000
+	end,
+	gun_is_down(ConnPid, ConnRef, DownReason, Timeout).
 
 http1_gun_shutdown_no_streams(Config) ->
 	doc("HTTP/1.1: Confirm that the Gun process shuts down gracefully "
@@ -592,11 +600,14 @@ do_closing_owner_down(Config, ExitReason, DownReason) ->
 %% Internal.
 
 gun_is_down(ConnPid, ConnRef, Expected) ->
+	gun_is_down(ConnPid, ConnRef, Expected, 1000).
+
+gun_is_down(ConnPid, ConnRef, Expected, Timeout) ->
 	receive
 		{'DOWN', ConnRef, process, ConnPid, Reason} ->
 			Expected = Reason,
 			ok
-	after 1000 ->
+	after Timeout ->
 		true = erlang:is_process_alive(ConnPid),
 		error(timeout)
 	end.
