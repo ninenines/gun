@@ -153,7 +153,7 @@ flow_http2(_) ->
 		{data, nofin, D2} = gun:await(ConnPid, StreamRef),
 		%% We consumed all the window available.
 		65535 = byte_size(D1) + byte_size(D2),
-		{error, timeout} = gun:await(ConnPid, StreamRef, 3000),
+		{error, timeout} = gun:await(ConnPid, StreamRef, 3500),
 		%% We then update the flow and get *5* more data messages but no more.
 		gun:update_flow(ConnPid, StreamRef, 2),
 		{data, nofin, D3} = gun:await(ConnPid, StreamRef),
