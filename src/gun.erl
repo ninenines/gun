@@ -114,19 +114,22 @@
 	| {close, ws_close_code(), iodata()}.
 -export_type([ws_frame/0]).
 
+-type protocols() :: [http | http2 | socks
+	| {http, http_opts()} | {http2, http2_opts()} | {socks, socks_opts()}].
+-export_type([protocols/0]).
+
 -type opts() :: #{
 	connect_timeout => timeout(),
 	domain_lookup_timeout => timeout(),
 	event_handler => {module(), any()},
 	http_opts => http_opts(),
 	http2_opts => http2_opts(),
-	protocols => [http | http2 | {socks, socks_opts()}],
+	protocols => protocols(),
 	retry => non_neg_integer(),
 	retry_fun => fun((non_neg_integer(), opts())
 		-> #{retries => non_neg_integer(), timeout => pos_integer()}),
 	retry_timeout => pos_integer(),
-	%% @todo Not sure this should be allowed, there could be loops.
-%	socks_opts => socks_opts(),
+	socks_opts => socks_opts(),
 	supervise => boolean(),
 	tcp_opts => [gen_tcp:connect_option()],
 	tls_handshake_timeout => timeout(),
@@ -144,9 +147,7 @@
 	username => iodata(),
 	password => iodata(),
 	protocol => http | http2, %% @todo Remove in Gun 2.0.
-	%% @todo It could be interesting to accept {http, http_opts()}
-	%% as well since we may want different options for proxy and origin.
-	protocols => [http | http2 | {socks, socks_opts()}],
+	protocols => protocols(),
 	transport => tcp | tls,
 	tls_opts => [ssl:tls_client_option()],
 	tls_handshake_timeout => timeout()
@@ -192,7 +193,7 @@
 	auth => [{username_password, binary(), binary()} | none],
 	host := inet:hostname() | inet:ip_address(),
 	port := inet:port_number(),
-	protocols => [http | http2 | {socks, socks_opts()}],
+	protocols => protocols(),
 	transport => tcp | tls,
 	tls_opts => [ssl:tls_client_option()],
 	tls_handshake_timeout => timeout()
@@ -306,6 +307,13 @@ check_options([{retry_fun, F}|Opts]) when is_function(F, 2) ->
 	check_options(Opts);
 check_options([{retry_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
+check_options([{socks_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
+	case gun_socks:check_options(ProtoOpts) of
+		ok ->
+			check_options(Opts);
+		Error ->
+			Error
+	end;
 check_options([{supervise, B}|Opts]) when B =:= true; B =:= false ->
 	check_options(Opts);
 check_options([{tcp_opts, L}|Opts]) when is_list(L) ->
@@ -340,8 +348,9 @@ check_protocols_opt(Protocols) ->
 		true ->
 			%% When options are given alongside a protocol, they
 			%% must be checked as well.
-			%% @todo It may be interesting to allow more than just socks here.
 			TupleCheck = [case P of
+				{http, Opts} -> gun_http:check_options(Opts);
+				{http2, Opts} -> gun_http2:check_options(Opts);
 				{socks, Opts} -> gun_socks:check_options(Opts)
 			end || P <- Protocols, is_tuple(P)],
 			case lists:usort(TupleCheck) of
@@ -683,7 +692,7 @@ await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
 			{ok, Protocol};
-		{gun_socks_connected, ServerPid, Protocol} ->
+		{gun_socks_up, ServerPid, Protocol} ->
 			{ok, Protocol};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
 			{error, {down, Reason}}
@@ -1289,9 +1298,9 @@ commands([{switch_protocol, Protocol0}], State0=#state{
 			Protocol1 = protocol_handler(P),
 			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
 	end,
-	%% When we switch_protocol from socks we must send a gun_socks_connected message.
+	%% When we switch_protocol from socks we must send a gun_socks_up message.
 	_ = case CurrentProtocol of
-		gun_socks -> Owner ! {gun_socks_connected, self(), Protocol:name()};
+		gun_socks -> Owner ! {gun_socks_up, self(), Protocol:name()};
 		_ -> ok
 	end,
 	{StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),

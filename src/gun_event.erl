@@ -47,7 +47,7 @@
 	lookup_info := gun_tcp:lookup_info(),
 	timeout := timeout(),
 	socket => inet:socket(),
-	protocol => http | http2, %% Only when transport is tcp.
+	protocol => http | http2 | socks, %% Only when transport is tcp.
 	error => any()
 }.
 
@@ -67,7 +67,7 @@
 	socket := inet:socket() | ssl:sslsocket() | pid(), %% The socket before/after will be different.
 	tls_opts := [ssl:tls_client_option()],
 	timeout := timeout(),
-	protocol => http | http2,
+	protocol => http | http2 | socks,
 	error => any()
 }.
 
@@ -241,7 +241,7 @@
 %% support CONNECT and Websocket over HTTP/2.
 
 -type protocol_changed_event() :: #{
-	protocol := http2 | ws
+	protocol := http | http2 | socks | ws
 }.
 
 -callback protocol_changed(protocol_changed_event(), State) -> State.

@@ -315,7 +315,7 @@ http1_tls_handshake_end_ok_connect(Config) ->
 		socket := Socket,
 		tls_opts := _,
 		timeout := _,
-		protocol := http
+		protocol := http2
 	} = do_receive_event(tls_handshake_end),
 	true = is_tuple(Socket),
 	gun:close(ConnPid).
@@ -405,7 +405,7 @@ http1_tls_handshake_end_ok_connect_over_https_proxy(Config) ->
 		socket := Socket,
 		tls_opts := _,
 		timeout := _,
-		protocol := http
+		protocol := http2
 	} = do_receive_event(tls_handshake_end),
 	true = is_pid(Socket),
 	gun:close(ConnPid).

@@ -301,7 +301,6 @@ handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Hand
 			_ = end_stream(State#http_state{streams=[Stream|Tail]}),
 			NewHost = maps:get(host, Destination),
 			NewPort = maps:get(port, Destination),
-			Protocols = maps:get(protocols, Destination, [http]),
 			case Destination of
 				#{transport := tls} ->
 					HandshakeEvent = #{
@@ -310,10 +309,11 @@ handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Hand
 						tls_opts => maps:get(tls_opts, Destination, []),
 						timeout => maps:get(tls_handshake_timeout, Destination, infinity)
 					},
+					Protocols = maps:get(protocols, Destination, [http2, http]),
 					{[{origin, <<"https">>, NewHost, NewPort, connect},
 						{tls_handshake, HandshakeEvent, Protocols}], EvHandlerState1};
 				_ ->
-					[Protocol] = Protocols,
+					[Protocol] = maps:get(protocols, Destination, [http]),
 					{[{origin, <<"http">>, NewHost, NewPort, connect},
 						{switch_protocol, Protocol}], EvHandlerState1}
 			end;

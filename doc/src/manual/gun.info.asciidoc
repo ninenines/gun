@@ -14,7 +14,7 @@ ConnPid :: pid()
 Info :: #{
     socket         => inet:socket() | ssl:sslsocket(),
     transport      => tcp | tls,
-    protocol       => http | http2 | ws,
+    protocol       => http | http2 | socks | ws,
     sock_ip        => inet:ip_address(),
     sock_port      => inet:port_number(),
     origin_host    => inet:hostname() | inet:ip_address(),
@@ -22,11 +22,11 @@ Info :: #{
     intermediaries => [Intermediary]
 }
 Intermediary :: #{
-    type      => connect,
+    type      => connect | socks5,
     host      => inet:hostname() | inet:ip_address(),
     port      => inet:port_number(),
     transport => tcp | tls,
-    protocol  => http | http2
+    protocol  => http | http2 | socks
 }
 ----
 

@@ -63,6 +63,7 @@ by sending any of the following messages:
 Connection:
 
 * link:man:gun_up(3)[gun_up(3)] - The connection is up
+* link:man:gun_socks_up(3)[gun_socks_up(3)] - The Socks connection is up
 * link:man:gun_down(3)[gun_down(3)] - The connection is down
 * link:man:gun_upgrade(3)[gun_upgrade(3)] - Successful protocol upgrade
 * link:man:gun_error(3)[gun_error(3)] - Stream or connection-wide error
@@ -96,7 +97,7 @@ connect_destination() :: #{
 
     username  => iodata(),
     password  => iodata(),
-    protocols => [http | http2],
+    protocols => protocols(),
     transport => tcp | tls,
 
     tls_opts              => [ssl:tls_client_option()],
@@ -121,15 +122,17 @@ username, password::
 Proxy authorization credentials. They are only sent when
 both options are provided.
 
-protocol (http)::
+protocols - see below::
 
-Protocol that will be used for tunneled requests.
+Ordered list of preferred protocols. Please refer to the
+`protocols()` type documentation for details.
++
+Defaults to `[http]` when the transport is `tcp`,
+and `[http2, http]` when the transport is `tls`.
 
 transport (tcp)::
 
-Transport that will be used for tunneled requests. Note that
-due to Erlang/OTP limitations it is not possible to tunnel
-a TLS connection inside a TLS tunnel.
+Transport that will be used for tunneled requests.
 
 tls_opts ([])::
 
@@ -233,7 +236,7 @@ opts() :: #{
     domain_lookup_timeout => timeout(),
     http_opts             => http_opts(),
     http2_opts            => http2_opts(),
-    protocols             => [http | http2],
+    protocols             => protocols(),
     retry                 => non_neg_integer(),
     retry_fun             => fun(),
     retry_timeout         => pos_integer(),
@@ -269,13 +272,11 @@ Options specific to the HTTP/2 protocol.
 
 protocols - see below::
 
-Ordered list of preferred protocols. When the transport is `tcp`,
-this list must contain exactly one protocol. When the transport
-is `tls`, this list must contain at least one protocol and will be
-used to negotiate a protocol via ALPN. When the server does not
-support ALPN then `http` will always be used. Defaults to
-`[http]` when the transport is `tcp`, and `[http2, http]` when the
-transport is `tls`.
+Ordered list of preferred protocols. Please refer to the
+`protocols()` type documentation for details.
++
+Defaults to `[http]` when the transport is `tcp`,
+and `[http2, http]` when the transport is `tls`.
 
 retry (5)::
 
@@ -340,6 +341,25 @@ ws_opts (#{})::
 
 Options specific to the Websocket protocol.
 
+=== protocols()
+
+[source,erlang]
+----
+protocols() :: http | {http, http_opts()}
+             | http2 | {http2, http2_opts()}
+             | socks | {socks, socks_opts()}
+----
+
+Ordered list of preferred protocols. When the transport is `tcp`,
+this list must contain exactly one protocol. When the transport
+is `tls`, this list must contain at least one protocol and will be
+used to negotiate a protocol via ALPN. When the server does not
+support ALPN then `http` will be used, except when the list of
+preferred protocols is set to only accept `socks`.
+
+Defaults to `[http]` when the transport is `tcp`,
+and `[http2, http]` when the transport is `tls`.
+
 === req_headers()
 
 [source,erlang]
@@ -372,6 +392,64 @@ flow control is disabled.
 reply_to (`self()`)::
 
 The pid of the process that will receive the response messages.
+
+=== socks_opts()
+
+[source,erlang]
+----
+socks_opts() :: #{
+    host := inet:hostname() | inet:ip_address(),
+    port := inet:port_number(),
+
+    auth      => [{username_password, binary(), binary()} | none],
+    protocols => protocols(),
+    transport => tcp | tls,
+    version   => 5,
+
+    tls_opts              => [ssl:tls_client_option()],
+    tls_handshake_timeout => timeout()
+}
+----
+
+Configuration for the Socks protocol.
+
+The default value, if any, is given next to the option name:
+
+host, port::
+
+Destination hostname and port number. Mandatory.
++
+Upon successful completion of the Socks connection, Gun will
+begin using these as the host and port of the origin server
+for subsequent requests.
+
+auth ([none])::
+
+Authentication methods Gun advertises to the Socks proxy.
+
+protocols - see below::
+
+Ordered list of preferred protocols. Please refer to the
+`protocols()` type documentation for details.
++
+Defaults to `[http]` when the transport is `tcp`,
+and `[http2, http]` when the transport is `tls`.
+
+transport (tcp)::
+
+Transport that will be used for tunneled requests.
+
+tls_opts ([])::
+
+Options to use for tunneled TLS connections.
+
+tls_handshake_timeout (infinity)::
+
+Handshake timeout for tunneled TLS connections.
+
+version (5)::
+
+Version of the Socks protocol to use.
 
 === ws_opts()
 
@@ -417,6 +495,11 @@ undocumented and must be set to `gun_ws_h`.
 
 == Changelog
 
+* *2.0*: The types `protocols()` and `socks_opts()` have been
+         added. Support for the Socks protocol has been added
+         in every places where protocol selection is available.
+         In addition it is now possible to specify separate
+         HTTP options for the CONNECT proxy and the origin server.
 * *2.0*: The `connect_timeout` option has been split into
          three options: `domain_lookup_timeout`, `connect_timeout`
          and when applicable `tls_handshake_timeout`.

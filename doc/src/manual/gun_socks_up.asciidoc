@@ -1,25 +1,25 @@
-= gun_up(3)
+= gun_socks_up(3)
 
 == Name
 
-gun_up - The connection is up
+gun_socks_up - The Socks connection is up
 
 == Description
 
 [source,erlang]
 ----
-{gun_up, ConnPid, Protocol}
+{gun_socks_up, ConnPid, Protocol}
 
 ConnPid  :: pid()
 Protocol :: http | http2 | socks
 ----
 
-The connection is up.
+The Socks connection is up.
 
-This message informs the owner process that the connection or
-reconnection completed.
+This message informs the owner process that the connection
+completed through the configured Socks proxy.
 
-If Gun is configured to connect to a Socks server, then the
+If Gun is configured to connect to another Socks server, then the
 connection is not usable yet. One or more
 link:man:gun_socks_up(3)[gun_socks_up(3)] messages will follow.
 
@@ -42,14 +42,14 @@ to determine the capabilities of the server.
 
 == Changelog
 
-* *1.0*: Message introduced.
+* *2.0*: Message introduced.
 
 == Examples
 
-.Receive a gun_up message in a gen_server
+.Receive a gun_socks_up message in a gen_server
 [source,erlang]
 ----
-handle_info({gun_up, ConnPid, _Protocol},
+handle_info({gun_socks_up, ConnPid, _Protocol},
             State=#state{conn_pid=ConnPid}) ->
     %% Do something.
     {noreply, State}.
@@ -61,6 +61,6 @@ link:man:gun(3)[gun(3)],
 link:man:gun:open(3)[gun:open(3)],
 link:man:gun:open_unix(3)[gun:open_unix(3)],
 link:man:gun:await_up(3)[gun:await_up(3)],
-link:man:gun_socks_up(3)[gun_socks_up(3)],
+link:man:gun_up(3)[gun_up(3)],
 link:man:gun_down(3)[gun_down(3)],
 link:man:gun_error(3)[gun_error(3)]

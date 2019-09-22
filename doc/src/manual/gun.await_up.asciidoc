@@ -23,7 +23,7 @@ await_up(ConnPid, Timeout, MonitorRef)
 ConnPid    :: pid()
 MonitorRef :: reference()
 Timeout    :: timeout()
-Protocol   :: http | http2
+Protocol   :: http | http2 | socks
 Reason     :: {down, any()} | timeout
 ----
 
@@ -71,4 +71,5 @@ may also be returned when a timeout or an error occur.
 link:man:gun(3)[gun(3)],
 link:man:gun:open(3)[gun:open(3)],
 link:man:gun:open_unix(3)[gun:open_unix(3)],
+link:man:gun_socks_up(3)[gun_socks_up(3)],
 link:man:gun_up(3)[gun_up(3)]
