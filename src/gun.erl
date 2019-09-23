@@ -146,7 +146,6 @@
 	port := inet:port_number(),
 	username => iodata(),
 	password => iodata(),
-	protocol => http | http2, %% @todo Remove in Gun 2.0.
 	protocols => protocols(),
 	transport => tcp | tls,
 	tls_opts => [ssl:tls_client_option()],
@@ -1062,18 +1061,8 @@ connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body, Initi
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
 		InitialFlow, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
-connected(cast, {connect, ReplyTo, StreamRef, Destination0, Headers, InitialFlow},
+connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	%% The protocol option has been deprecated in favor of the protocols option.
-	%% Nobody probably ended up using it, but let's not break the interface.
-	Destination = case Destination0 of
-		#{protocols := _} ->
-			Destination0;
-		#{protocol := DestProto} ->
-			Destination0#{protocols => [DestProto]};
-		_ ->
-			Destination0
-	end,
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers, InitialFlow),
 	{keep_state, State#state{protocol_state=ProtoState2}};
 %% Public Websocket interface.
