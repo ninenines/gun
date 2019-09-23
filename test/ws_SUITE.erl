@@ -54,6 +54,22 @@ await(Config) ->
 	{ws, Frame} = gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+error_http10_upgrade(Config) ->
+	doc("Attempting to upgrade HTTP/1.0 to Websocket produces an error."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
+		http_opts => #{version => 'HTTP/1.0'}
+	}),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+	receive
+		{gun_error, ConnPid, StreamRef, {badstate, _}} ->
+			gun:close(ConnPid);
+		Msg ->
+			error({fail, Msg})
+	after 1000 ->
+		error(timeout)
+	end.
+
 reject_upgrade(Config) ->
 	doc("Ensure Websocket connections can be rejected."),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config)),

@@ -777,9 +777,10 @@ end_stream(State=#http_state{streams=[_|Tail]}) ->
 
 %% Websocket upgrade.
 
-%% Ensure version is 1.1.
-ws_upgrade(#http_state{version='HTTP/1.0'}, _, _, _, _, _, _, _, _) ->
-	error; %% @todo Probably don't error out here, have a protocol function/command.
+ws_upgrade(#http_state{owner=ReplyTo, version='HTTP/1.0'}, StreamRef, _, _, _, _, _, _, EvHandlerState) ->
+	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
+		"Websocket cannot be used over an HTTP/1.0 connection."}},
+	{[], EvHandlerState};
 ws_upgrade(State=#http_state{owner=ReplyTo, out=head},
 		StreamRef, Host, Port, Path, Headers0, WsOpts,
 		EvHandler, EvHandlerState0) ->
