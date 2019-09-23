@@ -946,7 +946,7 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts}) ->
 	Protocols = maps:get(protocols, Opts, [http2, http]),
 	HandshakeEvent = #{
-		tls_opts => ensure_alpn(Protocols, maps:get(tls_opts, Opts, [])),
+		tls_opts => ensure_alpn_sni(Protocols, maps:get(tls_opts, Opts, []), State0),
 		timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 	},
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
@@ -958,15 +958,25 @@ initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts}) -
 				{next_event, internal, {retries, Retries, Reason}}}
 	end.
 
-ensure_alpn(Protocols0, TransOpts) ->
+ensure_alpn_sni(Protocols0, TransOpts0, #state{origin_host=OriginHost}) ->
+	%% ALPN.
 	Protocols = [case P of
 		http -> <<"http/1.1">>;
 		http2 -> <<"h2">>
 	end || P <- Protocols0, is_atom(P)],
-	[
+	TransOpts = [
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
-	|TransOpts].
+	|TransOpts0],
+	%% SNI.
+	%%
+	%% Normally only DNS hostnames are supported for SNI. However, the ssl
+	%% application itself allows any string through so we do the same.
+	if
+		is_list(OriginHost) -> [{server_name_indication, OriginHost}|TransOpts];
+		is_atom(OriginHost) -> [{server_name_indication, atom_to_list(OriginHost)}|TransOpts];
+		true -> TransOpts
+	end.
 
 %% Normal TLS handshake.
 tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols},
@@ -985,7 +995,7 @@ tls_handshake(internal, {tls_handshake,
 		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols},
 		State=#state{socket=Socket, transport=Transport, origin_host=OriginHost, origin_port=OriginPort,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	TLSOpts = ensure_alpn(Protocols, TLSOpts0),
+	TLSOpts = ensure_alpn_sni(Protocols, TLSOpts0, State),
 	HandshakeEvent = HandshakeEvent0#{
 		tls_opts => TLSOpts,
 		socket => Socket
@@ -1016,7 +1026,7 @@ tls_handshake(Type, Event, State) ->
 
 normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler_state=EvHandlerState0},
 		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols) ->
-	TLSOpts = ensure_alpn(Protocols, TLSOpts0),
+	TLSOpts = ensure_alpn_sni(Protocols, TLSOpts0, State),
 	HandshakeEvent = HandshakeEvent0#{
 		tls_opts => TLSOpts,
 		socket => Socket
