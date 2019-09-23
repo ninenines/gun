@@ -29,7 +29,7 @@
 	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
-	opts = #{} :: map(), %% @todo
+	opts = #{} :: gun:socks_opts(),
 	%% We only support version 5 at the moment.
 	version :: 5,
 	status :: auth_method_select | auth_username_password | connect

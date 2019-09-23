@@ -41,7 +41,7 @@
 	stream_ref :: reference(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
-	opts = #{} :: map(), %% @todo
+	opts = #{} :: gun:ws_opts(),
 	buffer = <<>> :: binary(),
 	in = head :: head | #payload{} | close,
 	out = head :: head | close,
