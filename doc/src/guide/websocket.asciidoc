@@ -96,20 +96,19 @@ Use `gun:ws_send/2` to send messages to the server.
 gun:ws_send(ConnPid, {text, "Hello!"}).
 ----
 
-// @todo Implement sending of N frames
-//
-//.Send a text frame, a binary frame and then close the connection
-//[source,erlang]
-//----
-//gun:ws_send(ConnPid, [
-//    {text, "Hello!"},
-//    {binary, BinaryValue},
-//    close
-//]).
-//----
+.Send a text frame, a binary frame and then close the connection
+[source,erlang]
+----
+gun:ws_send(ConnPid, [
+    {text, "Hello!"},
+    {binary, BinaryValue},
+    close
+]).
+----
 
 Note that if you send a close frame, Gun will close the connection
-cleanly but will attempt to reconnect afterwards.
+cleanly but may attempt to reconnect afterwards depending on the
+`retry` configuration.
 
 === Receiving data
 
