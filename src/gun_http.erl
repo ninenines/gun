@@ -59,16 +59,14 @@
 	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
-	opts = #{} :: map(), %% @todo
+	opts = #{} :: gun:http_opts(),
 	version = 'HTTP/1.1' :: cow_http:version(),
-	content_handlers :: gun_content_handler:opt(),
 	connection = keepalive :: keepalive | close,
 	buffer = <<>> :: binary(),
 	streams = [] :: [#stream{}],
 	in = head :: io(),
 	in_state = {0, 0} :: {non_neg_integer(), non_neg_integer()},
-	out = head :: io(),
-	transform_header_name :: fun((binary()) -> binary())
+	out = head :: io()
 }).
 
 check_options(Opts) ->
@@ -104,12 +102,9 @@ has_keepalive() -> true.
 default_keepalive() -> infinity.
 
 init(Owner, Socket, Transport, Opts) ->
-	%% @todo If we keep the opts we don't need to add these to the state.
 	Version = maps:get(version, Opts, 'HTTP/1.1'),
-	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
-	TransformHeaderName = maps:get(transform_header_name, Opts, fun (N) -> N end),
-	{connected, #http_state{owner=Owner, socket=Socket, transport=Transport, opts=Opts,
-		version=Version, content_handlers=Handlers, transform_header_name=TransformHeaderName}}.
+	{connected, #http_state{owner=Owner, socket=Socket, transport=Transport,
+		opts=Opts, version=Version}}.
 
 switch_transport(Transport, Socket, State) ->
 	State#http_state{socket=Socket, transport=Transport}.
@@ -263,7 +258,7 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 			end
 	end.
 
-handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Handlers0,
+handle_head(Data, State=#http_state{version=ClientVersion, opts=Opts,
 		connection=Conn, streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
 			method=Method, is_alive=IsAlive}|Tail]},
 		EvHandler, EvHandlerState0) ->
@@ -345,6 +340,7 @@ handle_head(Data, State=#http_state{version=ClientVersion, content_handlers=Hand
 					case IsFin of
 						fin -> {undefined, EvHandlerState1};
 						nofin ->
+							Handlers0 = maps:get(content_handlers, Opts, [gun_data_h]),
 							{gun_content_handler:init(ReplyTo, stream_ref(StreamRef),
 								Status, Headers, Handlers0), EvHandlerState1}
 					end
@@ -564,8 +560,11 @@ host_header(Transport, Host0, Port) ->
 		_ -> [Host, $:, integer_to_binary(Port)]
 	end.
 
-transform_header_names(#http_state{transform_header_name = Fun}, Headers) ->
-	lists:keymap(Fun, 1, Headers).
+transform_header_names(#http_state{opts=Opts}, Headers) ->
+	case maps:get(transform_header_name, Opts, undefined) of
+		undefined -> Headers;
+		Fun -> lists:keymap(Fun, 1, Headers)
+	end.
 
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _, _, EvHandlerState) ->
