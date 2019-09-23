@@ -53,7 +53,7 @@
 	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
-	opts = #{} :: map(), %% @todo
+	opts = #{} :: gun:http2_opts(),
 	content_handlers :: gun_content_handler:opt(),
 	buffer = <<>> :: binary(),
 
@@ -89,15 +89,30 @@ do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
-%% @todo Add all http2_machine options.
-do_check_options([{initial_connection_window_size, _}|Opts]) ->
-	do_check_options(Opts);
-do_check_options([{initial_stream_window_size, _}|Opts]) ->
-	do_check_options(Opts);
-do_check_options([{max_frame_size_received, _}|Opts]) ->
-	do_check_options(Opts);
-do_check_options([Opt|_]) ->
-	{error, {options, {http2, Opt}}}.
+do_check_options([Opt={Name, _}|Opts]) ->
+	%% We blindly accept all cow_http2_machine options.
+	HTTP2MachineOpts = [
+		connection_window_margin_size,
+		connection_window_update_threshold,
+		enable_connect_protocol,
+		initial_connection_window_size,
+		initial_stream_window_size,
+		max_connection_window_size,
+		max_concurrent_streams,
+		max_decode_table_size,
+		max_encode_table_size,
+		max_frame_size_received,
+		max_frame_size_sent,
+		max_stream_window_size,
+		preface_timeout,
+		settings_timeout,
+		stream_window_margin_size,
+		stream_window_update_threshold
+	],
+	case lists:member(Name, HTTP2MachineOpts) of
+		true -> do_check_options(Opts);
+		false -> {error, {options, {http2, Opt}}}
+	end.
 
 name() -> http2.
 opts_name() -> http2_opts.

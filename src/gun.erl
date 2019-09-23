@@ -183,7 +183,25 @@
 -type http2_opts() :: #{
 	closing_timeout => timeout(),
 	flow => pos_integer(),
-	keepalive => timeout()
+	keepalive => timeout(),
+
+	%% Options copied from cow_http2_machine.
+	connection_window_margin_size => 0..16#7fffffff,
+	connection_window_update_threshold => 0..16#7fffffff,
+	enable_connect_protocol => boolean(),
+	initial_connection_window_size => 65535..16#7fffffff,
+	initial_stream_window_size => 0..16#7fffffff,
+	max_connection_window_size => 0..16#7fffffff,
+	max_concurrent_streams => non_neg_integer() | infinity,
+	max_decode_table_size => non_neg_integer(),
+	max_encode_table_size => non_neg_integer(),
+	max_frame_size_received => 16384..16777215,
+	max_frame_size_sent => 16384..16777215 | infinity,
+	max_stream_window_size => 0..16#7fffffff,
+	preface_timeout => timeout(),
+	settings_timeout => timeout(),
+	stream_window_margin_size => 0..16#7fffffff,
+	stream_window_update_threshold => 0..16#7fffffff
 }.
 -export_type([http2_opts/0]).
 
