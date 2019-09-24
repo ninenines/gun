@@ -98,9 +98,10 @@
 -export([connecting/3]).
 -export([initial_tls_handshake/3]).
 -export([tls_handshake/3]).
--export([connected_no_input/3]).
--export([connected_data_only/3]).
 -export([connected/3]).
+-export([connected_data_only/3]).
+-export([connected_no_input/3]).
+-export([connected_ws_only/3]).
 -export([closing/3]).
 -export([terminate/3]).
 
@@ -1068,8 +1069,32 @@ protocol_negotiated({error, protocol_not_negotiated}, _) -> http.
 connected_no_input(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 
+connected_data_only(cast, Msg, _)
+		when element(1, Msg) =:= headers; element(1, Msg) =:= request;
+			element(1, Msg) =:= connect; element(1, Msg) =:= ws_upgrade;
+			element(1, Msg) =:= ws_send ->
+	ReplyTo = element(2, Msg),
+	ReplyTo ! {gun_error, self(), {badstate,
+		"This connection does not accept new requests to be opened "
+		"nor does it accept Websocket frames."}},
+	keep_state_and_data;
 connected_data_only(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
+
+connected_ws_only(cast, {ws_send, Owner, Frames}, State=#state{
+		owner=Owner, protocol=Protocol=gun_ws, protocol_state=ProtoState,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Commands, EvHandlerState} = Protocol:send(Frames, ProtoState, EvHandler, EvHandlerState0),
+	commands(Commands, State#state{event_handler_state=EvHandlerState});
+connected_ws_only(cast, Msg, _)
+		when element(1, Msg) =:= headers; element(1, Msg) =:= request; element(1, Msg) =:= data;
+			element(1, Msg) =:= connect; element(1, Msg) =:= ws_upgrade ->
+	ReplyTo = element(2, Msg),
+	ReplyTo ! {gun_error, self(), {badstate,
+		"This connection only accepts Websocket frames."}},
+	keep_state_and_data;
+connected_ws_only(Type, Event, State) ->
+	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 
 connected(internal, {connected, Socket, Protocol0},
 		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
@@ -1135,11 +1160,6 @@ connected(cast, {ws_upgrade, ReplyTo, StreamRef, _, _, _}, _) ->
 	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 		"Websocket is only supported over HTTP/1.1."}},
 	keep_state_and_data;
-connected(cast, {ws_send, Owner, Frames}, State=#state{
-		owner=Owner, protocol=Protocol=gun_ws, protocol_state=ProtoState,
-		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:send(Frames, ProtoState, EvHandler, EvHandlerState0),
-	commands(Commands, State#state{event_handler_state=EvHandlerState});
 connected(cast, {ws_send, ReplyTo, _}, _) ->
 	ReplyTo ! {gun_error, self(), {badstate,
 		"Connection needs to be upgraded to Websocket "

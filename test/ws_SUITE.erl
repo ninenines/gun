@@ -70,6 +70,16 @@ error_http10_upgrade(Config) ->
 		error(timeout)
 	end.
 
+error_http_request(Config) ->
+	doc("Ensure that requests are rejected while using Websocket."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef1 = gun:ws_upgrade(ConnPid, "/", []),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef1),
+	StreamRef2 = gun:get(ConnPid, "/"),
+	{error, {connection_error, {badstate, _}}} = gun:await(ConnPid, StreamRef2),
+	gun:close(ConnPid).
+
 reject_upgrade(Config) ->
 	doc("Ensure Websocket connections can be rejected."),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
