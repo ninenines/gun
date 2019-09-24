@@ -265,15 +265,26 @@ handle_head(Data, State=#http_state{version=ClientVersion, opts=Opts,
 	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
 	{Headers, Rest2} = cow_http:parse_headers(Rest),
 	case {Status, StreamRef} of
-		{101, {websocket, RealStreamRef, WsKey, WsExtensions, WsOpts}} ->
+		{101, _} ->
 			EvHandlerState = EvHandler:response_inform(#{
-				stream_ref => RealStreamRef,
+				stream_ref => stream_ref(StreamRef),
 				reply_to => ReplyTo,
 				status => 101,
 				headers => Headers
 			}, EvHandlerState0),
-			{ws_handshake(Rest2, State, RealStreamRef, Headers, WsKey, WsExtensions, WsOpts),
-				EvHandlerState};
+			%% @todo We might want to switch to the HTTP/2 protocol or to the TLS transport as well.
+			case StreamRef of
+				{websocket, RealStreamRef, WsKey, WsExtensions, WsOpts} ->
+					{ws_handshake(Rest2, State, RealStreamRef, Headers, WsKey, WsExtensions, WsOpts),
+						EvHandlerState};
+				%% Any other 101 response results in us switching to the raw protocol.
+				%% @todo We should check that we asked for an upgrade before accepting it.
+				_ ->
+					{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
+					Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
+					ReplyTo ! {gun_upgrade, self(), StreamRef, Upgrade, Headers},
+					{{switch_protocol, raw}, EvHandlerState0}
+			end;
 		%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 		{_, {connect, RealStreamRef, Destination}} when Status >= 200, Status < 300 ->
 			case IsAlive of

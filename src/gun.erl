@@ -99,6 +99,7 @@
 -export([initial_tls_handshake/3]).
 -export([tls_handshake/3]).
 -export([connected_no_input/3]).
+-export([connected_data_only/3]).
 -export([connected/3]).
 -export([closing/3]).
 -export([terminate/3]).
@@ -114,8 +115,8 @@
 	| {close, ws_close_code(), iodata()}.
 -export_type([ws_frame/0]).
 
--type protocols() :: [http | http2 | socks
-	| {http, http_opts()} | {http2, http2_opts()} | {socks, socks_opts()}].
+-type protocols() :: [http | http2 | raw | socks
+	| {http, http_opts()} | {http2, http2_opts()} | {raw, raw_opts()} | {socks, socks_opts()}].
 -export_type([protocols/0]).
 
 -type opts() :: #{
@@ -158,8 +159,11 @@
 	host := inet:hostname() | inet:ip_address(),
 	port := inet:port_number(),
 	transport := tcp | tls,
-	protocol := http | http2 | socks
+	protocol := http | http2 | raw | socks
 }.
+
+-type raw_opts() :: #{}.
+-export_type([raw_opts/0]).
 
 %% @todo When/if HTTP/2 CONNECT gets implemented, we will want an option here
 %% to indicate that the request must be sent on an existing CONNECT stream.
@@ -359,7 +363,7 @@ check_protocols_opt(Protocols) ->
 	%% Protocols must not appear more than once, and they
 	%% must be one of http, http2 or socks.
 	ProtoNames0 = lists:usort([case P0 of {P, _} -> P; P -> P end || P0 <- Protocols]),
-	ProtoNames = [P || P <- ProtoNames0, lists:member(P, [http, http2, socks])],
+	ProtoNames = [P || P <- ProtoNames0, lists:member(P, [http, http2, raw, socks])],
 	case length(Protocols) =:= length(ProtoNames) of
 		false -> error;
 		true ->
@@ -368,6 +372,7 @@ check_protocols_opt(Protocols) ->
 			TupleCheck = [case P of
 				{http, Opts} -> gun_http:check_options(Opts);
 				{http2, Opts} -> gun_http2:check_options(Opts);
+				{raw, Opts} -> gun_raw:check_options(Opts);
 				{socks, Opts} -> gun_socks:check_options(Opts)
 			end || P <- Protocols, is_tuple(P)],
 			case lists:usort(TupleCheck) of
@@ -382,6 +387,7 @@ consider_tracing(ServerPid, #{trace := true}) ->
 	dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
+	dbg:tpl(gun_raw, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_socks, [{'_', [], [{return_trace}]}]),
 	dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
 	dbg:p(ServerPid, all);
@@ -688,14 +694,18 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 		{error, timeout}
 	end.
 
--spec await_up(pid()) -> {ok, http | http2} | {error, {down, any()} | timeout}.
+-spec await_up(pid())
+	-> {ok, http | http2 | raw | socks}
+	| {error, {down, any()} | timeout}.
 await_up(ServerPid) ->
 	MRef = monitor(process, ServerPid),
 	Res = await_up(ServerPid, 5000, MRef),
 	demonitor(MRef, [flush]),
 	Res.
 
--spec await_up(pid(), reference() | timeout()) -> {ok, http | http2} | {error, {down, any()} | timeout}.
+-spec await_up(pid(), reference() | timeout())
+	-> {ok, http | http2 | raw | socks}
+	| {error, {down, any()} | timeout}.
 await_up(ServerPid, MRef) when is_reference(MRef) ->
 	await_up(ServerPid, 5000, MRef);
 await_up(ServerPid, Timeout) ->
@@ -704,7 +714,9 @@ await_up(ServerPid, Timeout) ->
 	demonitor(MRef, [flush]),
 	Res.
 
--spec await_up(pid(), timeout(), reference()) -> {ok, http | http2} | {error, {down, any()} | timeout}.
+-spec await_up(pid(), timeout(), reference())
+	-> {ok, http | http2 | raw | socks}
+	| {error, {down, any()} | timeout}.
 await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
@@ -831,6 +843,7 @@ start_link(Owner, Host, Port, Opts) ->
 init({Owner, Host, Port, Opts}) ->
 	Retry = maps:get(retry, Opts, 5),
 	OriginTransport = maps:get(transport, Opts, default_transport(Port)),
+	%% @todo The OriginScheme is not http when we connect to socks/raw.
 	{OriginScheme, Transport} = case OriginTransport of
 		tcp -> {<<"http">>, gun_tcp};
 		tls -> {<<"https">>, gun_tls}
@@ -963,7 +976,7 @@ ensure_alpn_sni(Protocols0, TransOpts0, #state{origin_host=OriginHost}) ->
 	Protocols = [case P of
 		http -> <<"http/1.1">>;
 		http2 -> <<"h2">>
-	end || P <- Protocols0, is_atom(P)],
+	end || P <- Protocols0, lists:member(P, [http, http2])],
 	TransOpts = [
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
@@ -1022,7 +1035,7 @@ tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeE
 	}, EvHandlerState0),
 	commands([Error], State#state{event_handler_state=EvHandlerState});
 tls_handshake(Type, Event, State) ->
-	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
+	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 
 normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler_state=EvHandlerState0},
 		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols) ->
@@ -1053,6 +1066,9 @@ protocol_negotiated({error, protocol_not_negotiated}, [Protocol]) -> Protocol;
 protocol_negotiated({error, protocol_not_negotiated}, _) -> http.
 
 connected_no_input(Type, Event, State) ->
+	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
+
+connected_data_only(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
 
 connected(internal, {connected, Socket, Protocol0},
@@ -1151,8 +1167,22 @@ closing(Type, Event, State) ->
 
 %% Common events when we have a connection.
 %%
+%% One function accepts new input, the other doesn't.
+
+%% @todo Do we want to reject ReplyTo if it's not the process
+%% who initiated the connection? For both data and cancel.
+handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
+		State=#state{protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{ProtoState2, EvHandlerState} = Protocol:data(ProtoState,
+		StreamRef, ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
+	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+handle_common_connected(Type, Event, StateName, StateData) ->
+	handle_common_connected_no_input(Type, Event, StateName, StateData).
+
 %% Socket events.
-handle_common_connected(info, {OK, Socket, Data}, _, State0=#state{socket=Socket, messages={OK, _, _},
+handle_common_connected_no_input(info, {OK, Socket, Data}, _,
+		State0=#state{socket=Socket, messages={OK, _, _},
 		protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState, EvHandler, EvHandlerState0),
@@ -1164,27 +1194,22 @@ handle_common_connected(info, {OK, Socket, Data}, _, State0=#state{socket=Socket
 		Res ->
 			Res
 	end;
-handle_common_connected(info, {Closed, Socket}, _, State=#state{socket=Socket, messages={_, Closed, _}}) ->
+handle_common_connected_no_input(info, {Closed, Socket}, _,
+		State=#state{socket=Socket, messages={_, Closed, _}}) ->
 	disconnect(State, closed);
-handle_common_connected(info, {Error, Socket, Reason}, _, State=#state{socket=Socket, messages={_, _, Error}}) ->
+handle_common_connected_no_input(info, {Error, Socket, Reason}, _,
+		State=#state{socket=Socket, messages={_, _, Error}}) ->
 	disconnect(State, {error, Reason});
 %% Timeouts.
 %% @todo HTTP/2 requires more timeouts than just the keepalive timeout.
 %% We should have a timeout function in protocols that deal with
 %% received timeouts. Currently the timeout messages are ignored.
-handle_common_connected(info, keepalive, _, State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
+handle_common_connected_no_input(info, keepalive, _,
+		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	ProtoState2 = Protocol:keepalive(ProtoState),
 	{keep_state, keepalive_timeout(State#state{protocol_state=ProtoState2})};
-%% @todo Do we want to reject ReplyTo if it's not the process
-%% who initiated the connection? For both data and cancel.
-handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
-		State=#state{protocol=Protocol, protocol_state=ProtoState,
-			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{ProtoState2, EvHandlerState} = Protocol:data(ProtoState,
-		StreamRef, ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
-handle_common_connected(cast, {update_flow, ReplyTo, StreamRef, Flow}, _, State0=#state{
-		protocol=Protocol, protocol_state=ProtoState}) ->
+handle_common_connected_no_input(cast, {update_flow, ReplyTo, StreamRef, Flow}, _,
+		State0=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	Commands = Protocol:update_flow(ProtoState, ReplyTo, StreamRef, Flow),
 	case commands(Commands, State0) of
 		{keep_state, State} ->
@@ -1192,16 +1217,16 @@ handle_common_connected(cast, {update_flow, ReplyTo, StreamRef, Flow}, _, State0
 		Res ->
 			Res
 	end;
-handle_common_connected(cast, {cancel, ReplyTo, StreamRef}, _, State=#state{
-		protocol=Protocol, protocol_state=ProtoState,
+handle_common_connected_no_input(cast, {cancel, ReplyTo, StreamRef}, _,
+		State=#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{ProtoState2, EvHandlerState} = Protocol:cancel(ProtoState,
 		StreamRef, ReplyTo, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
-handle_common_connected({call, From}, {stream_info, StreamRef}, _,
+handle_common_connected_no_input({call, From}, {stream_info, StreamRef}, _,
 		#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	{keep_state_and_data, {reply, From, Protocol:stream_info(ProtoState, StreamRef)}};
-handle_common_connected(Type, Event, StateName, State) ->
+handle_common_connected_no_input(Type, Event, StateName, State) ->
 	handle_common(Type, Event, StateName, State).
 
 %% Common events.
@@ -1379,8 +1404,9 @@ disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
 
 protocol_handler(http) -> gun_http;
 protocol_handler(http2) -> gun_http2;
-protocol_handler(ws) -> gun_ws;
-protocol_handler(socks) -> gun_socks.
+protocol_handler(raw) -> gun_raw;
+protocol_handler(socks) -> gun_socks;
+protocol_handler(ws) -> gun_ws.
 
 active(State=#state{active=false}) ->
 	State;

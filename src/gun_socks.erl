@@ -134,6 +134,7 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{opts=Opts, version=5, status=connec
 	end,
 	%% @todo Maybe an event indicating success.
 	#{host := NewHost, port := NewPort} = Opts,
+	%% @todo The origin scheme is wrong when the next protocol is not HTTP.
 	case Opts of
 		#{transport := tls} ->
 			HandshakeEvent = #{
@@ -141,7 +142,7 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{opts=Opts, version=5, status=connec
 				timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 			},
 			[{origin, <<"https">>, NewHost, NewPort, socks5},
-				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http])}];
+				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http2, http])}];
 		_ ->
 			[Protocol] = maps:get(protocols, Opts, [http]),
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
