@@ -25,7 +25,7 @@
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
--export([keepalive/1]).
+-export([keepalive/3]).
 -export([headers/11]).
 -export([request/12]).
 -export([data/7]).
@@ -473,14 +473,14 @@ close_streams([#stream{ref=StreamRef, reply_to=ReplyTo}|Tail], Reason) ->
 	close_streams(Tail, Reason).
 
 %% We don't send a keep-alive when a CONNECT request was initiated.
-keepalive(State=#http_state{streams=[#stream{ref={connect, _, _}}]}) ->
-	State;
+keepalive(State=#http_state{streams=[#stream{ref={connect, _, _}}]}, _, EvHandlerState) ->
+	{State, EvHandlerState};
 %% We can only keep-alive by sending an empty line in-between streams.
-keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}) ->
+keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}, _, EvHandlerState) ->
 	Transport:send(Socket, <<"\r\n">>),
-	State;
-keepalive(State) ->
-	State.
+	{State, EvHandlerState};
+keepalive(State, _, EvHandlerState) ->
+	{State, EvHandlerState}.
 
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,

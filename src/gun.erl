@@ -222,12 +222,13 @@
 }.
 -export_type([socks_opts/0]).
 
-%% @todo keepalive
 -type ws_opts() :: #{
 	closing_timeout => timeout(),
 	compress => boolean(),
 	flow => pos_integer(),
-	protocols => [{binary(), module()}]
+	keepalive => timeout(),
+	protocols => [{binary(), module()}],
+	silence_pings => boolean()
 }.
 -export_type([ws_opts/0]).
 
@@ -602,7 +603,7 @@ connect(ServerPid, Destination, Headers, ReqOpts) ->
 	| {trailers, resp_headers()}
 	| {push, reference(), binary(), binary(), resp_headers()}
 	| {upgrade, [binary()], resp_headers()}
-	| {ws, ws_frame()} %% @todo Excluding ping/pong, for now.
+	| {ws, ws_frame()}
 	| {error, {stream_error | connection_error | down, any()} | timeout}.
 
 -spec await(pid(), reference()) -> await_result().
@@ -1225,9 +1226,11 @@ handle_common_connected_no_input(info, {Error, Socket, Reason}, _,
 %% We should have a timeout function in protocols that deal with
 %% received timeouts. Currently the timeout messages are ignored.
 handle_common_connected_no_input(info, keepalive, _,
-		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	ProtoState2 = Protocol:keepalive(ProtoState),
-	{keep_state, keepalive_timeout(State#state{protocol_state=ProtoState2})};
+		State=#state{protocol=Protocol, protocol_state=ProtoState0,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{ProtoState, EvHandlerState} = Protocol:keepalive(ProtoState0, EvHandler, EvHandlerState0),
+	{keep_state, keepalive_timeout(State#state{
+		protocol_state=ProtoState, event_handler_state=EvHandlerState})};
 handle_common_connected_no_input(cast, {update_flow, ReplyTo, StreamRef, Flow}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	Commands = Protocol:update_flow(ProtoState, ReplyTo, StreamRef, Flow),

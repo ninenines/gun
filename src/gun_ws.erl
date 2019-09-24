@@ -18,11 +18,13 @@
 -export([name/0]).
 -export([opts_name/0]).
 -export([has_keepalive/0]).
+-export([default_keepalive/0]).
 -export([init/4]).
 -export([handle/4]).
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
+-export([keepalive/3]).
 -export([send/4]).
 -export([down/1]).
 
@@ -68,11 +70,17 @@ do_check_options([{default_protocol, M}|Opts]) when is_atom(M) ->
 	do_check_options(Opts);
 do_check_options([{flow, InitialFlow}|Opts]) when is_integer(InitialFlow), InitialFlow > 0 ->
 	do_check_options(Opts);
+do_check_options([{keepalive, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
+	do_check_options(Opts);
 do_check_options([Opt={protocols, L}|Opts]) when is_list(L) ->
 	case lists:usort(lists:flatten([[is_binary(B), is_atom(M)] || {B, M} <- L])) of
 		[true] -> do_check_options(Opts);
 		_ -> {error, {options, {ws, Opt}}}
 	end;
+do_check_options([{silence_pings, B}|Opts]) when B =:= true; B =:= false ->
+	do_check_options(Opts);
 do_check_options([{user_opts, _}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([Opt|_]) ->
@@ -80,7 +88,8 @@ do_check_options([Opt|_]) ->
 
 name() -> ws.
 opts_name() -> ws_opts.
-has_keepalive() -> false.
+has_keepalive() -> true.
+default_keepalive() -> 5000.
 
 init(Owner, Socket, Transport, #{stream_ref := StreamRef, headers := Headers,
 		extensions := Extensions, flow := InitialFlow, handler := Handler, opts := Opts}) ->
@@ -178,16 +187,6 @@ dispatch(Rest, State0=#ws_state{owner=ReplyTo, stream_ref=StreamRef,
 		payload => Payload
 	}, EvHandlerState0),
 	case cow_ws:make_frame(Type, Payload, CloseCode, FragState) of
-		ping ->
-			{[], EvHandlerState} = send(pong, State0, EvHandler, EvHandlerState1),
-			handle(Rest, State0, EvHandler, EvHandlerState);
-		{ping, Payload} ->
-			{[], EvHandlerState} = send({pong, Payload}, State0, EvHandler, EvHandlerState1),
-			handle(Rest, State0, EvHandler, EvHandlerState);
-		pong ->
-			handle(Rest, State0, EvHandler, EvHandlerState1);
-		{pong, _} ->
-			handle(Rest, State0, EvHandler, EvHandlerState1);
 		Frame ->
 			{ok, Dec, HandlerState} = Handler:handle(Frame, HandlerState0),
 			Flow = case Flow0 of
@@ -195,13 +194,23 @@ dispatch(Rest, State0=#ws_state{owner=ReplyTo, stream_ref=StreamRef,
 				_ -> Flow0 - Dec
 			end,
 			State1 = State0#ws_state{flow=Flow, handler_state=HandlerState},
-			State = case Frame of
-				close -> State1#ws_state{in=close};
-				{close, _, _} -> State1#ws_state{in=close};
-				{fragment, fin, _, _} -> State1#ws_state{frag_state=undefined};
-				_ -> State1
+			{State, EvHandlerState} = case Frame of
+				ping ->
+					{[], EvHandlerState2} = send(pong, State1, EvHandler, EvHandlerState1),
+					{State1, EvHandlerState2};
+				{ping, Payload} ->
+					{[], EvHandlerState2} = send({pong, Payload}, State1, EvHandler, EvHandlerState1),
+					{State1, EvHandlerState2};
+				close ->
+					{State1#ws_state{in=close}, EvHandlerState1};
+				{close, _, _} ->
+					{State1#ws_state{in=close}, EvHandlerState1};
+				{fragment, fin, _, _} ->
+					{State1#ws_state{frag_state=undefined}, EvHandlerState1};
+				_ ->
+					{State1, EvHandlerState1}
 			end,
-			handle(Rest, State, EvHandler, EvHandlerState1)
+			handle(Rest, State, EvHandler, EvHandlerState)
 	end.
 
 update_flow(State=#ws_state{flow=Flow0}, _ReplyTo, _StreamRef, Inc) ->
@@ -233,6 +242,10 @@ closing(#ws_state{opts=Opts}) ->
 
 close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
+
+keepalive(State, EvHandler, EvHandlerState0) ->
+	{[], EvHandlerState} = send(ping, State, EvHandler, EvHandlerState0),
+	{State, EvHandlerState}.
 
 %% Send one frame.
 send(Frame, State=#ws_state{owner=ReplyTo, stream_ref=StreamRef,

@@ -20,11 +20,13 @@
 -record(state, {
 	reply_to :: pid(),
 	stream_ref :: reference(),
-	frag_buffer = <<>> :: binary()
+	frag_buffer = <<>> :: binary(),
+	silence_pings :: boolean()
 }).
 
-init(ReplyTo, StreamRef, _, _) ->
-	{ok, #state{reply_to=ReplyTo, stream_ref=StreamRef}}.
+init(ReplyTo, StreamRef, _, Opts) ->
+	{ok, #state{reply_to=ReplyTo, stream_ref=StreamRef,
+		silence_pings=maps:get(silence_pings, Opts, true)}}.
 
 handle({fragment, nofin, _, Payload},
 		State=#state{frag_buffer=SoFar}) ->
@@ -33,6 +35,9 @@ handle({fragment, fin, Type, Payload},
 		State=#state{reply_to=ReplyTo, stream_ref=StreamRef, frag_buffer=SoFar}) ->
 	ReplyTo ! {gun_ws, self(), StreamRef, {Type, << SoFar/binary, Payload/binary >>}},
 	{ok, 1, State#state{frag_buffer= <<>>}};
+handle(Frame, State=#state{silence_pings=true}) when Frame =:= ping; Frame =:= pong;
+		element(1, Frame) =:= ping; element(1, Frame) =:= pong ->
+	{ok, 0, State};
 handle(Frame, State=#state{reply_to=ReplyTo, stream_ref=StreamRef}) ->
 	ReplyTo ! {gun_ws, self(), StreamRef, Frame},
 	{ok, 1, State}.

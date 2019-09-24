@@ -80,6 +80,33 @@ error_http_request(Config) ->
 	{error, {connection_error, {badstate, _}}} = gun:await(ConnPid, StreamRef2),
 	gun:close(ConnPid).
 
+keepalive(Config) ->
+	doc("Ensure that Gun automatically sends ping frames."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
+		ws_opts => #{
+			keepalive => 100,
+			silence_pings => false
+		}
+	}),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	%% Gun sent a ping automatically, we therefore receive a pong.
+	{ws, pong} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+keepalive_default_silence_pings(Config) ->
+	doc("Ensure that Gun does not forward ping/pong by default."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
+		ws_opts => #{keepalive => 100}
+	}),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	%% Gun sent a ping automatically, but we silence ping/pong by default.
+	{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
+	gun:close(ConnPid).
+
 reject_upgrade(Config) ->
 	doc("Ensure Websocket connections can be rejected."),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config)),

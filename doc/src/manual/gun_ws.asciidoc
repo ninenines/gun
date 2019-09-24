@@ -12,9 +12,10 @@ gun_ws - Websocket frame
 
 ConnPid   :: pid()
 StreamRef :: reference()
-Frame     :: close
+Frame     :: close | ping | pong
            | {text | binary | close, binary()}
            | {close, non_neg_integer(), binary()}
+           | {ping | pong, binary()}
 ----
 
 Websocket frame.
@@ -41,6 +42,8 @@ The Websocket frame in question.
 
 == Changelog
 
+* *2.0*: Depending on the option `silence_pings`, ping and
+         pong frames may be sent as well.
 * *1.0*: Message introduced.
 
 == Examples

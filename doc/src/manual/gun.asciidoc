@@ -459,7 +459,9 @@ ws_opts() :: #{
     closing_timeout => timeout(),
     compress        => boolean(),
     flow            => pos_integer(),
-    protocols       => [{binary(), module()}]
+    keepalive       => timeout(),
+    protocols       => [{binary(), module()}],
+    silence_pings   => boolean()
 }
 ----
 
@@ -484,12 +486,22 @@ flow - see below::
 The initial flow control value for the Websocket connection.
 By default flow control is disabled.
 
+keepalive (5000)::
+
+Time between pings in milliseconds.
+
 protocols ([])::
 
 A non-empty list enables Websocket protocol negotiation. The
 list of protocols will be sent in the sec-websocket-protocol
 request header. The handler module interface is currently
 undocumented and must be set to `gun_ws_h`.
+
+silence_pings (true)::
+
+Whether the ping and pong frames should be sent to the user.
+In all cases Gun will automatically send a pong frame back
+when receiving a ping.
 
 // @todo Document default_protocol and user_opts.
 
@@ -517,6 +529,7 @@ undocumented and must be set to `gun_ws_h`.
 * *2.0*: Function `gun:headers/4,5` introduced.
 * *2.0*: The `keepalive` option is now set to `infinity` by
          default for the HTTP/1.1 protocol, disabling it.
+* *2.0*: Websocket options `keepalive` and `silence_pings` introduced.
 * *1.3*: Add the CONNECT destination's `protocols` option and
          deprecate the previously introduced `protocol` option.
 * *1.2*: Introduce the type `connect_destination()`.

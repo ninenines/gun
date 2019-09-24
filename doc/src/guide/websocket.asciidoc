@@ -122,11 +122,3 @@ receive
         handle_frame(ConnPid, StreamRef, Frame)
 end.
 ----
-
-// @todo auto ping has not been implemented yet
-//
-//Gun will automatically send ping messages to the server to keep
-//the connection alive, however if the connection dies and Gun has
-//to reconnect it will not upgrade to Websocket automatically, you
-//need to perform the operation when you receive the `gun_error`
-//message.

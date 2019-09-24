@@ -25,7 +25,7 @@
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
--export([keepalive/1]).
+-export([keepalive/3]).
 -export([headers/11]).
 -export([request/12]).
 -export([data/7]).
@@ -512,9 +512,9 @@ close_stream(#stream{ref=StreamRef, reply_to=ReplyTo}, Reason) ->
 	ReplyTo ! {gun_error, self(), StreamRef, Reason},
 	ok.
 
-keepalive(State=#http2_state{socket=Socket, transport=Transport}) ->
+keepalive(State=#http2_state{socket=Socket, transport=Transport}, _, EvHandlerState) ->
 	Transport:send(Socket, cow_http2:ping(0)),
-	State.
+	{State, EvHandlerState}.
 
 headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0, streams=Streams},
