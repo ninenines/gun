@@ -16,10 +16,10 @@ a remote endpoint. This Gun connection is owned by a user
 process that is called the _owner_ of the connection, and is
 managed by the supervision tree of the `gun` application.
 
-The owner process communicates with the Gun connection
+Any process can communicate with the Gun connection
 by calling functions from the module `gun`. All functions
 perform their respective operations asynchronously. The Gun
-connection will send Erlang messages to the owner process
+connection will send Erlang messages to the calling process
 whenever needed.
 
 When the remote endpoint closes the connection, Gun attempts

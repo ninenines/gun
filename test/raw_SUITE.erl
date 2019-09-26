@@ -159,6 +159,33 @@ do_connect_raw(OriginTransport, ProxyTransport) ->
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
+connect_raw_reply_to(_) ->
+	doc("When using CONNECT to establish a connection with the reply_to option set, "
+		"Gun must honor this option in the raw protocol."),
+	Self = self(),
+	ReplyTo = spawn(fun() ->
+		{ConnPid, StreamRef} = receive Msg -> Msg after 1000 -> error(timeout) end,
+		{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+		Self ! {self(), ready},
+		{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined),
+		Self ! {self(), ok}
+	end),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw, fun do_echo/3),
+	{ok, ProxyPid, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [raw]
+	}, [], #{reply_to => ReplyTo}),
+	ReplyTo ! {ConnPid, StreamRef},
+	{request, <<"CONNECT">>, _, 'HTTP/1.1', _} = receive_from(ProxyPid),
+	handshake_completed = receive_from(OriginPid),
+	receive {ReplyTo, ready} -> ok after 1000 -> error(timeout) end,
+	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
+	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
+
 http11_upgrade_raw_tcp(_) ->
 	doc("Use the HTTP Upgrade mechanism to switch to the raw protocol over TCP."),
 	do_http11_upgrade_raw(tcp).
@@ -201,6 +228,40 @@ do_http11_upgrade_raw(OriginTransport) ->
 		intermediaries := []
 	} = gun:info(ConnPid),
 	gun:close(ConnPid).
+
+http11_upgrade_raw_reply_to(_) ->
+	doc("When upgrading an HTTP/1.1 connection with the reply_to option set, "
+		"Gun must honor this option in the raw protocol."),
+	Self = self(),
+	ReplyTo = spawn(fun() ->
+		{ConnPid, StreamRef} = receive Msg -> Msg after 1000 -> error(timeout) end,
+		{upgrade, [<<"custom/1.0">>], _} = gun:await(ConnPid, StreamRef),
+		Self ! {self(), ready},
+		{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined),
+		Self ! {self(), ok}
+	end),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw,
+		fun (Parent, ClientSocket, ClientTransport) ->
+			%% We skip the request and send a 101 response unconditionally.
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 5000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"Connection: upgrade\r\n"
+				"Upgrade: custom/1.0\r\n"
+				"\r\n"),
+			do_echo(Parent, ClientSocket, ClientTransport)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/", #{
+		<<"connection">> => <<"upgrade">>,
+		<<"upgrade">> => <<"custom/1.0">>
+	}, #{reply_to => ReplyTo}),
+	ReplyTo ! {ConnPid, StreamRef},
+	receive {ReplyTo, ready} -> ok after 1000 -> error(timeout) end,
+	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
+	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
 
 %% The origin server will echo everything back.
 

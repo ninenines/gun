@@ -15,7 +15,7 @@ Stream references use the Erlang _reference_ data type and
 are therefore unique.
 
 Streams can be canceled at any time. This will stop any further
-messages from being sent to the owner process. Depending on
+messages from being sent to the calling process. Depending on
 its capabilities, the server will also be instructed to cancel
 the request.
 
@@ -233,7 +233,7 @@ gun:request(ConnPid, "TRACE", "/", [
 
 === Processing responses
 
-All data received from the server is sent to the owner
+All data received from the server is sent to the calling
 process as a message. First a `gun_response` message is sent,
 followed by zero or more `gun_data` messages. If something goes wrong,
 a `gun_error` message is sent instead.

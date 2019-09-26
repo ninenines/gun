@@ -122,6 +122,24 @@ reject_upgrade(Config) ->
 		error(timeout)
 	end.
 
+reply_to(Config) ->
+	doc("Ensure we can send a list of frames in one gun:ws_send call."),
+	Self = self(),
+	Frame = {text, <<"Hello!">>},
+	ReplyTo = spawn(fun() ->
+		{ConnPid, StreamRef} = receive Msg -> Msg after 1000 -> error(timeout) end,
+		{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+		Self ! {self(), ready},
+		{ws, Frame} = gun:await(ConnPid, StreamRef),
+		Self ! {self(), ok}
+	end),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", [], #{reply_to => ReplyTo}),
+	ReplyTo ! {ConnPid, StreamRef},
+	receive {ReplyTo, ready} -> gun:ws_send(ConnPid, Frame) after 1000 -> error(timeout) end,
+	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
+
 send_many(Config) ->
 	doc("Ensure we can send a list of frames in one gun:ws_send call."),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config)),

@@ -26,7 +26,7 @@
 %% @todo down
 
 -record(socks_state, {
-	owner :: pid(),
+	reply_to :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	opts = #{} :: gun:socks_opts(),
@@ -83,7 +83,7 @@ name() -> socks.
 opts_name() -> socks_opts.
 has_keepalive() -> false.
 
-init(Owner, Socket, Transport, Opts) ->
+init(ReplyTo, Socket, Transport, Opts) ->
 	5 = Version = maps:get(version, Opts, 5),
 	Auth = maps:get(auth, Opts, [none]),
 	Methods = <<case A of
@@ -91,7 +91,7 @@ init(Owner, Socket, Transport, Opts) ->
 		none -> <<0>>
 	end || A <- Auth>>,
 	Transport:send(Socket, [<<5, (length(Auth))>>, Methods]),
-	{connected_no_input, #socks_state{owner=Owner, socket=Socket, transport=Transport,
+	{connected_no_input, #socks_state{reply_to=ReplyTo, socket=Socket, transport=Transport,
 		opts=Opts, version=Version, status=auth_method_select}}.
 
 switch_transport(Transport, Socket, State) ->
@@ -120,7 +120,7 @@ handle(<<1, 0>>, State=#socks_state{version=5, status=auth_username_password}) -
 handle(<<1, _>>, #socks_state{version=5, status=auth_username_password}) ->
 	{error, {socks5, username_password_auth_failure}};
 %% Connect reply.
-handle(<<5, 0, 0, Rest0/bits>>, #socks_state{opts=Opts, version=5, status=connect}) ->
+handle(<<5, 0, 0, Rest0/bits>>, #socks_state{reply_to=ReplyTo, opts=Opts, version=5, status=connect}) ->
 	%% @todo What to do with BoundAddr and BoundPort? Add as metadata to origin info?
 	{_BoundAddr, _BoundPort} = case Rest0 of
 		%% @todo Seen a server with <<1, 0:48>>.
@@ -142,11 +142,11 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{opts=Opts, version=5, status=connec
 				timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 			},
 			[{origin, <<"https">>, NewHost, NewPort, socks5},
-				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http2, http])}];
+				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http2, http]), ReplyTo}];
 		_ ->
 			[Protocol] = maps:get(protocols, Opts, [http]),
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, Protocol}]
+				{switch_protocol, Protocol, ReplyTo}]
 	end;
 handle(<<5, Error, _/bits>>, #socks_state{version=5, status=connect}) ->
 	Reason = case Error of

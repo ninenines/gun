@@ -26,7 +26,7 @@
 %% @todo down
 
 -record(raw_state, {
-	owner :: pid(),
+	reply_to :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module()
 }).
@@ -39,12 +39,12 @@ name() -> raw.
 opts_name() -> raw_opts.
 has_keepalive() -> false.
 
-init(Owner, Socket, Transport, _Opts) ->
-	{connected_data_only, #raw_state{owner=Owner, socket=Socket, transport=Transport}}.
+init(ReplyTo, Socket, Transport, _Opts) ->
+	{connected_data_only, #raw_state{reply_to=ReplyTo, socket=Socket, transport=Transport}}.
 
-handle(Data, State=#raw_state{owner=Owner}, _, EvHandlerState) ->
+handle(Data, State=#raw_state{reply_to=ReplyTo}, _, EvHandlerState) ->
 	%% When we take over the entire connection there is no stream reference.
-	Owner ! {gun_data, self(), undefined, nofin, Data},
+	ReplyTo ! {gun_data, self(), undefined, nofin, Data},
 	{{state, State}, EvHandlerState}.
 
 %% We can always close immediately.

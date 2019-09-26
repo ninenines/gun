@@ -16,7 +16,7 @@ Protocol :: http | http2 | socks
 
 The Socks connection is up.
 
-This message informs the owner process that the connection
+This message informs the owner/calling process that the connection
 completed through the configured Socks proxy.
 
 If Gun is configured to connect to another Socks server, then the

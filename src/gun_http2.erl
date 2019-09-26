@@ -50,7 +50,6 @@
 }).
 
 -record(http2_state, {
-	owner :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	opts = #{} :: gun:http2_opts(),
@@ -119,7 +118,7 @@ opts_name() -> http2_opts.
 has_keepalive() -> true.
 default_keepalive() -> 5000.
 
-init(Owner, Socket, Transport, Opts0) ->
+init(_ReplyTo, Socket, Transport, Opts0) ->
 	%% We have different defaults than the protocol in order
 	%% to optimize for performance when receiving responses.
 	Opts = Opts0#{
@@ -129,7 +128,7 @@ init(Owner, Socket, Transport, Opts0) ->
 	{ok, Preface, HTTP2Machine} = cow_http2_machine:init(client, Opts),
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	%% @todo Better validate the preface being received.
-	State = #http2_state{owner=Owner, socket=Socket,
+	State = #http2_state{socket=Socket,
 		transport=Transport, opts=Opts, content_handlers=Handlers,
 		http2_machine=HTTP2Machine},
 	Transport:send(Socket, Preface),
