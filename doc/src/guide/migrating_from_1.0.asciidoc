@@ -4,7 +4,7 @@
 Gun 1.1 updates the Cowlib dependency to 2.5.1 and fixes a
 few problems with experimental features.
 
-== Features added
+=== Features added
 
 * Update Cowlib to 2.5.1
 

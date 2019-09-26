@@ -1,0 +1,220 @@
+[appendix]
+== Migrating from Gun 1.3 to 2.0
+
+Gun 2.0 adds many features including graceful shutdown,
+flow control for data messages, event handlers, support
+for tunneling TLS connections through TLS proxies, Socks
+proxy support, and much more. It has only a limited
+number of breaking changes compared to the previous
+version.
+
+Gun 2.0 greatly improves the HTTP/2 performance when it
+comes to receiving large response bodies; and when receiving
+response bodies from many separate requests concurrently.
+
+Gun now shares much of its HTTP/2 code with Cowboy,
+including the HTTP/2 state machine. Numerous issues were
+fixed as a result because the Cowboy implementation was
+much more advanced.
+
+The Gun connection process is now implemented using `gen_statem`.
+
+Gun 2.0 requires Erlang/OTP 20.0 or greater.
+
+=== Features added
+
+* Graceful shutdown has been implemented. Graceful shutdown
+  can be initiated on the client side by calling the new
+  function `gun:shutdown/1` or when the owner process goes
+  away; or on the peer side via the connection: close HTTP/1.1
+  header, the HTTP/2 GOAWAY frame or the Websocket close frame.
+  Gun will try to complete existing streams when possible;
+  other streams get canceled immediately. The `closing_timeout`
+  option controls how long we are willing to wait at most
+  before closing the connection.
+
+* Flow control has been added. It allows limiting the number
+  of data/Websocket messages Gun sends to the calling process.
+  Gun will stop reading from the socket or stop updating the
+  protocol's flow control window when applicable as well, to
+  apply some backpressure to the remote endpoint(s). It is
+  disabled by default and can be applied on a per-request
+  basis if necessary.
+
+* An event handler interface has been added providing access
+  to many internal Gun events. This can be used for a variety
+  of purposes including logging, tracing or otherwise
+  instrumenting a Gun connection.
+
+* In order to get separate events when connecting, the domain
+  lookup, connection and TLS handshakes are now performed
+  separately by Gun. As a result, there exists three separate
+  timeout options for each of the steps, and the transport
+  options had to be split into `tcp_opts` and `tls_opts`.
+
+* Gun can connect through any number of HTTP, HTTPS, Socks
+  or secure Socks proxies, including when Socks proxies are
+  located after the HTTP(S) proxies. The ultimate endpoint
+  may be using any protocol, including plain TCP, TLS,
+  HTTP/1.1 or HTTP/2.
+
+* Gun now supports connecting through Socks5 proxies,
+  including secure Socks proxies. Both unauthenticated
+  and username/password authentication are supported.
+
+* When specifying which protocols to use, options can
+  now be provided specific to those protocols. It is
+  now possible to have separate HTTP options for an
+  HTTP proxy and the origin HTTP server, for example.
+  See the new `protocols()` type for details.
+
+* Gun can now be used to send and receive raw data,
+  as if it was just a normal socket. This can be
+  useful when needing to connect through a number
+  of HTTP/Socks proxies, allowing the use of Gun's
+  great proxying capabilities (including TLS over TLS)
+  for any sort of protocols. This can also be useful
+  when performing HTTP/1.1 Upgrade to custom protocols.
+
+* Headers can now be provided as a map. Header names may now
+  be provided as binary, string or atom.
+
+* Header names may now be provided as binary, string or atom.
+
+* Many HTTP/2 options have been added, allowing great
+  control over how Gun and the remote endpoint are
+  using the HTTP/2 connection. They can be used to
+  improve performance or lower the memory usage, for
+  example.
+
+* It is now possible to send many Websocket frames in
+  a single `gun:ws_send/2` call.
+
+* Gun will now send Websocket ping frames automatically
+  at intervals determined by the `keepalive` option. It
+  defaults to 5 seconds.
+
+* A new `silence_pings` option can be set to `false` to
+  receive all ping and pong frames when using Websocket.
+  They are typically not needed and therefore silent by
+  default.
+
+* The `reply_to` option has been added to `gun:ws_upgrade/4`.
+  The option applies to both the response and subsequent
+  Websocket frames.
+
+* The `reply_to` option is also propagated to messages
+  following a CONNECT request when the protocol requested
+  is not HTTP.
+
+* A new option `retry_fun` can be used to implement
+  different backoff strategies when reconnecting.
+
+* A new option `supervise` can be used to start a Gun
+  connection without using Gun's supervisor. It defaults
+  to `true`.
+
+* Gun now automatically lowercases provided header names.
+
+* Many improvements have been done to postpone or reject
+  requests and other operations while in the wrong state
+  (for example during state transitions when switching
+  protocols or connecting to proxies).
+
+=== Features removed
+
+* Gun used to reject operations by processes that were not
+  the owner of the connection. This behavior has been removed.
+  In general the caller of a request or other operation will
+  receive the relevant messages unless the `reply_to` option
+  is used.
+
+* The `connect_destination()` option `protocol` has been
+  removed. It was previously deprecated in favor of `protocols`.
+
+* The `keepalive` timeout is now disabled by default
+  for HTTP/1.1. To be perfectly clear, this is unrelated
+  to the HTTP/1.1 keep-alive mechanism.
+
+=== Functions added
+
+* The function `gun:set_owner/2` has been added. It allows
+  changing the owner of a connection process. Only the current
+  owner can do this operation.
+
+* The function `gun:shutdown/1` has been added. It initiates
+  the graceful shutdown of the connection, followed by the
+  termination of the Gun process.
+
+* The function `gun:stream_info/2` has been added. It provides
+  information about a specific HTTP stream.
+
+=== Functions modified
+
+* The function `gun:info/1` now returns the owner of the connection.
+
+* The functions `gun:await/2,3,4`, `gun:await_body/2,3,4` and
+  `gun:await_up/1,2,3` now distinguish the error types. They
+  can be a timeout, a connection error, a stream error or a
+  down error (when the Gun process exited while waiting).
+
+* The functions `gun:await/2,3,4` will now receive upgrade and
+  Websocket messages and return them.
+
+* The functions `gun:request/4,5,6` have been replaced with
+  `gun:headers/4,5` and `gun:request/5,6`. This provides a
+  cleaner separation between requests that are followed by
+  a body separately from those that don't.
+
+=== Messages modified
+
+* The `gun_down` message no longer has its final element
+  documented as `UnprocessedStreams`. It never worked and
+  was always an empty list.
+
+=== Bugs fixed
+
+* *POTENTIAL SECURITY VULNERABILITY*: Fix transfer-encoding
+  precedence over content-length in responses. This bug may
+  contribute to a response smuggling security vulnerability
+  when Gun is used inside a proxy.
+
+* Gun will no longer send duplicate connection-wide `gun_error`
+  messages to the same process.
+
+* Gun no longer crashes when trying to upgrade to Websocket
+  over a connection restricted to HTTP/1.0.
+
+* The default value for the preferred protocols when using
+  CONNECT over TLS has been corrected. It was mistakenly not
+  enabling HTTP/2.
+
+* Gun will no longer send an empty HTTP/2 DATA frame when
+  there is no request body. It was not necessary.
+
+* Gun will no longer error out when the owner process exits.
+  The error reason will now be a `shutdown` tuple instead.
+
+* The host header was set incorrectly during Websocket upgrades
+  when the host was configured with an IP address, resulting
+  in a crash. This has been corrected.
+
+* A completed stream could be found in the `gun_down` message when
+  the response contained a connection: close header. This is no
+  longer the case.
+
+* Hostnames can now be provided as atom as stated by the
+  documentation.
+
+* Gun will no longer attempt to send empty data chunks. When
+  using HTTP/1.1 chunked transfer-encoding this caused the
+  request body to terminated, even when `nofin` was given.
+
+* Gun now always retries connecting immediately when the
+  connection goes down.
+
+* The default port number for the HTTP and HTTPS schemes is
+  no longer sent in the host header.
+
+* An invalid stream reference was sent on failed Websocket
+  upgrade responses. This has been corrected.

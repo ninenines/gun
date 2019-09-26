@@ -4,7 +4,7 @@
 Gun 1.2 adds support for the CONNECT request over HTTP/1.1
 connections.
 
-== Features added
+=== Features added
 
 * CONNECT requests can now be issued on HTTP/1.1 connections.
   The tunneled connection can use any of the protocols Gun
@@ -22,7 +22,7 @@ connections.
 
 * Update Cowlib to 2.6.0
 
-== Functions added
+=== Functions added
 
 * The functions `gun:connect/2,3,4` have been added. They can
   be used to initiate CONNECT requests on HTTP/1.1 connections.
