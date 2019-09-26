@@ -1,0 +1,14 @@
+[appendix]
+== Changes since Gun 1.3
+
+The following patch versions were released since Gun 1.3:
+
+=== Gun 1.3.1
+
+This release backports a fix that will be included in the
+upcoming Gun 2.0 release:
+
+* *POTENTIAL SECURITY VULNERABILITY*: Fix transfer-encoding
+  precedence over content-length in responses. This bug may
+  contribute to a response smuggling security vulnerability
+  when Gun is used inside a proxy.
