@@ -724,10 +724,8 @@ stream_info(State, StreamRef) ->
 			{ok, undefined}
 	end.
 
-%% @todo Add unprocessed streams when GOAWAY handling is done.
 down(#http2_state{streams=Streams}) ->
-	KilledStreams = [Ref || #stream{ref=Ref} <- Streams],
-	{KilledStreams, []}.
+	[Ref || #stream{ref=Ref} <- Streams].
 
 connection_error(#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine, streams=Streams},

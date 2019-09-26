@@ -291,4 +291,4 @@ ws_send([Frame|Tail], State, ReplyTo, EvHandler, EvHandlerState0) ->
 
 %% Websocket has no concept of streams.
 down(_) ->
-	{[], []}.
+	[].

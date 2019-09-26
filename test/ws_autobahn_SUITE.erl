@@ -123,7 +123,7 @@ loop(Pid, MRef, StreamRef) ->
 		{gun_ws, Pid, StreamRef, Frame} ->
 			gun:ws_send(Pid, Frame),
 			loop(Pid, MRef, StreamRef);
-		{gun_down, Pid, ws, _, _, _} ->
+		{gun_down, Pid, ws, _, _} ->
 			close(Pid, MRef);
 		{'DOWN', MRef, process, Pid, normal} ->
 			close(Pid, MRef);

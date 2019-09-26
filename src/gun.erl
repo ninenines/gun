@@ -758,7 +758,7 @@ flush_pid(ServerPid) ->
 	receive
 		{gun_up, ServerPid, _} ->
 			flush_pid(ServerPid);
-		{gun_down, ServerPid, _, _, _, _} ->
+		{gun_down, ServerPid, _, _, _} ->
 			flush_pid(ServerPid);
 		{gun_inform, ServerPid, _, _, _} ->
 			flush_pid(ServerPid);
@@ -1423,8 +1423,8 @@ disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 			%% We closed the socket, discard any remaining socket events.
 			disconnect_flush(State),
 			%% @todo Stop keepalive timeout, flush message.
-			{KilledStreams, UnprocessedStreams} = Protocol:down(ProtoState),
-			Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams, UnprocessedStreams},
+			KilledStreams = Protocol:down(ProtoState),
+			Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams},
 			Retry = maps:get(retry, Opts, 5),
 			case Retry of
 				0 when Reason =:= normal ->

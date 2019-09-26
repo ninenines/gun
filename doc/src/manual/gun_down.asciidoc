@@ -8,13 +8,12 @@ gun_down - The connection is down
 
 [source,erlang]
 ----
-{gun_down, ConnPid, Protocol, Reason, KilledStreams, UnprocessedStreams}
+{gun_down, ConnPid, Protocol, Reason, KilledStreams}
 
 ConnPid            :: pid()
 Protocol           :: http | http2 | socks | ws
 Reason             :: any()
 KilledStreams      :: [reference()]
-UnprocessedStreams :: [reference()]
 ----
 
 The connection is down.
@@ -53,16 +52,10 @@ They are active streams that did not complete before the closing
 of the connection. Whether they can be retried safely depends
 on the protocol used and the idempotence property of the requests.
 
-UnprocessedStreams::
-
-List of streams that have not been processed by the server.
-+
-They are streams that the server did not start processing yet.
-They may be retried safely depending on whether related streams
-were killed.
-
 == Changelog
 
+* *2.0*: The last element of the message's tuple, `UnprocessedStreams`
+         has been removed.
 * *1.0*: Message introduced.
 
 == Examples
@@ -70,8 +63,7 @@ were killed.
 .Receive a gun_down message in a gen_server
 [source,erlang]
 ----
-handle_info({gun_down, ConnPid, _Protocol,
-             _Reason, _Killed, _Unprocessed},
+handle_info({gun_down, ConnPid, _Protocol, _Reason, _Killed},
             State=#state{conn_pid=ConnPid}) ->
     %% Do something.
     {noreply, State}.

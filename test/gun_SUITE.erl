@@ -171,7 +171,7 @@ killed_streams_http(_) ->
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 	{ok, <<"hello world!">>} = gun:await_body(ConnPid, StreamRef),
 	receive
-		{gun_down, ConnPid, http, normal, KilledStreams, _} ->
+		{gun_down, ConnPid, http, normal, KilledStreams} ->
 			[] = KilledStreams,
 			gun:close(ConnPid)
 	after 1000 ->

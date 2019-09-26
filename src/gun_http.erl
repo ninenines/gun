@@ -701,14 +701,12 @@ stream_info(#http_state{streams=Streams}, StreamRef) ->
 			{ok, undefined}
 	end.
 
-%% HTTP does not provide any way to figure out what streams are unprocessed.
 down(#http_state{streams=Streams}) ->
-	KilledStreams = [case Ref of
+	[case Ref of
 		{connect, Ref2, _} -> Ref2;
 		#websocket{ref=Ref2} -> Ref2;
 		_ -> Ref
-	end || #stream{ref=Ref} <- Streams],
-	{KilledStreams, []}.
+	end || #stream{ref=Ref} <- Streams].
 
 error_stream_closed(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
