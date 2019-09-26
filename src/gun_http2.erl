@@ -730,13 +730,8 @@ down(#http2_state{streams=Streams}) ->
 connection_error(#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine, streams=Streams},
 		{connection_error, Reason, _}) ->
-	%% The connection is going away either at the request of the server,
-	%% or because an error occurred in the protocol. Inform the streams.
-	%% @todo We should not send duplicate messages to processes.
-	%% @todo We should probably also inform the owner process.
-
-	%% @todo Somehow streams aren't removed on receiving a response.
-	_ = [ReplyTo ! {gun_error, self(), Reason} || #stream{reply_to=ReplyTo} <- Streams],
+	Pids = lists:usort([ReplyTo || #stream{reply_to=ReplyTo} <- Streams]),
+	_ = [Pid ! {gun_error, self(), Reason} || Pid <- Pids],
 	Transport:send(Socket, cow_http2:goaway(
 		cow_http2_machine:get_last_streamid(HTTP2Machine),
 		Reason, <<>>)),
