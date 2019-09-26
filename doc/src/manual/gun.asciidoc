@@ -16,6 +16,7 @@ Connection:
 
 * link:man:gun:open(3)[gun:open(3)] - Open a connection to the given host and port
 * link:man:gun:open_unix(3)[gun:open_unix(3)] - Open a connection to the given Unix domain socket
+* link:man:gun:set_owner(3)[gun:set_owner(3)] - Set a new owner for the connection
 * link:man:gun:shutdown(3)[gun:shutdown(3)] - Gracefully close the connection
 * link:man:gun:close(3)[gun:close(3)] - Brutally close the connection
 * link:man:gun:info(3)[gun:info(3)] - Obtain information about the connection

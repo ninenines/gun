@@ -384,6 +384,20 @@ retry_timeout(_) ->
 		error(shutdown_too_late)
 	end.
 
+set_owner(_) ->
+	doc("The owner of the connection can be changed."),
+	Self = self(),
+	Pid = spawn(fun() ->
+		{ok, ConnPid} = gun:open("localhost", 12345),
+		gun:set_owner(ConnPid, Self),
+		Self ! {conn, ConnPid}
+	end),
+	Ref = monitor(process, Pid),
+	receive {'DOWN', Ref, process, Pid, _} -> ok after 1000 -> error(timeout) end,
+	ConnPid = receive {conn, C} -> C after 1000 -> error(timeout) end,
+	#{owner := Self} = gun:info(ConnPid),
+	gun:close(ConnPid).
+
 shutdown_reason(_) ->
 	doc("The last connection failure must be propagated."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),

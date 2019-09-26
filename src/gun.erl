@@ -23,6 +23,7 @@
 -export([open/2]).
 -export([open/3]).
 -export([open_unix/2]).
+-export([set_owner/2]).
 -export([info/1]).
 -export([close/1]).
 -export([shutdown/1]).
@@ -396,9 +397,14 @@ consider_tracing(ServerPid, #{trace := true}) ->
 consider_tracing(_, _) ->
 	ok.
 
+-spec set_owner(pid(), pid()) -> ok.
+set_owner(ServerPid, NewOwnerPid) ->
+	gen_statem:cast(ServerPid, {set_owner, self(), NewOwnerPid}).
+
 -spec info(pid()) -> map().
 info(ServerPid) ->
 	{_, #state{
+		owner=Owner,
 		socket=Socket,
 		transport=Transport,
 		protocol=Protocol,
@@ -407,22 +413,33 @@ info(ServerPid) ->
 		origin_port=OriginPort,
 		intermediaries=Intermediaries
 	}} = sys:get_state(ServerPid),
-	{ok, {SockIP, SockPort}} = Transport:sockname(Socket),
-	#{
+	Info0 = #{
+		owner => Owner,
 		socket => Socket,
 		transport => case OriginScheme of
 			<<"http">> -> tcp;
 			<<"https">> -> tls
 		end,
-		protocol => Protocol:name(),
-		sock_ip => SockIP,
-		sock_port => SockPort,
 		origin_scheme => OriginScheme,
 		origin_host => OriginHost,
 		origin_port => OriginPort,
 		%% Intermediaries are listed in the order data goes through them.
 		intermediaries => lists:reverse(Intermediaries)
-	}.
+	},
+	Info = case Socket of
+		undefined ->
+			Info0;
+		_ ->
+			{ok, {SockIP, SockPort}} = Transport:sockname(Socket),
+			Info0#{
+				sock_ip => SockIP,
+				sock_port => SockPort
+			}
+	end,
+	case Protocol of
+		undefined -> Info;
+		_ -> Info#{protocol => Protocol:name()}
+	end.
 
 -spec close(pid()) -> ok.
 close(ServerPid) ->
@@ -1253,6 +1270,16 @@ handle_common_connected_no_input(Type, Event, StateName, State) ->
 	handle_common(Type, Event, StateName, State).
 
 %% Common events.
+handle_common(cast, {set_owner, CurrentOwner, NewOwner}, _,
+		State=#state{owner=CurrentOwner, status={up, CurrentOwnerRef}}) ->
+	demonitor(CurrentOwnerRef, [flush]),
+	NewOwnerRef = monitor(process, NewOwner),
+	{keep_state, State#state{owner=NewOwner, status={up, NewOwnerRef}}};
+%% We cannot change the owner when we are shutting down.
+handle_common(cast, {set_owner, CurrentOwner, _}, _, #state{owner=CurrentOwner}) ->
+	CurrentOwner ! {gun_error, self(), {badstate,
+		"The owner of the connection cannot be changed when the connection is shutting down."}},
+	keep_state_and_state;
 handle_common(cast, {shutdown, Owner}, StateName, State=#state{
 		owner=Owner, status=Status, socket=Socket, transport=Transport, protocol=Protocol}) ->
 	case {Socket, Protocol} of

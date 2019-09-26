@@ -1,0 +1,57 @@
+= gun:set_owner(3)
+
+== Name
+
+gun:set_owner - Set a new owner for the connection
+
+== Description
+
+[source,erlang]
+----
+set_owner(ConnPid, OwnerPid) -> ok
+
+ConnPid  :: pid()
+OwnerPid :: pid()
+----
+
+Set a new owner for the connection.
+
+Only the current owner of the connection can set a new
+owner.
+
+Gun monitors the owner of the connection and automatically
+shuts down gracefully when the owner exits.
+
+== Arguments
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+OwnerPid::
+
+The pid of the new owner for the connection.
+
+== Return value
+
+The atom `ok` is returned.
+
+== Changelog
+
+* *2.0*: Function introduced.
+
+== Examples
+
+.Set a new owner for the connection
+[source,erlang]
+----
+ok = gun:set_owner(ConnPid, OwnerPid).
+----
+
+== See also
+
+link:man:gun(3)[gun(3)],
+link:man:gun:open(3)[gun:open(3)],
+link:man:gun:open_unix(3)[gun:open_unix(3)],
+link:man:gun:shutdown(3)[gun:shutdown(3)],
+link:man:gun:close(3)[gun:close(3)]

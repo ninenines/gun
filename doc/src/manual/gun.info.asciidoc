@@ -12,6 +12,7 @@ info(ConnPid) -> Info
 
 ConnPid :: pid()
 Info :: #{
+    owner          => pid(),
     socket         => inet:socket() | ssl:sslsocket(),
     transport      => tcp | tls,
     protocol       => http | http2 | socks | ws,
@@ -45,6 +46,7 @@ the connection.
 
 == Changelog
 
+* *2.0*: The value `owner` was added.
 * *1.3*: The values `socket`, `transport`, `protocol`, `origin_host`,
          `origin_port` and `intermediaries` were added.
 * *1.0*: Function introduced.
