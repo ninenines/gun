@@ -202,6 +202,7 @@
 	max_encode_table_size => non_neg_integer(),
 	max_frame_size_received => 16384..16777215,
 	max_frame_size_sent => 16384..16777215 | infinity,
+	max_stream_buffer_size => non_neg_integer(),
 	max_stream_window_size => 0..16#7fffffff,
 	preface_timeout => timeout(),
 	settings_timeout => timeout(),
