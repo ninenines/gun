@@ -2,7 +2,7 @@
 
 PROJECT = gun
 PROJECT_DESCRIPTION = HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP.
-PROJECT_VERSION = 1.3.0
+PROJECT_VERSION = 2.0.0-pre.1
 
 # Options.
 
@@ -67,3 +67,23 @@ $(H2SPECD):
 	-$(verbose) git clone --depth 1 https://github.com/summerwind/h2spec $(dir $(H2SPECD))
 	-$(verbose) $(MAKE) -C $(dir $(H2SPECD)) build MAKEFLAGS=
 	-$(verbose) go build -o $(H2SPECD) $(dir $(H2SPECD))/cmd/h2spec/h2specd.go
+
+# Prepare for the release.
+
+prepare_tag:
+	$(verbose) echo -n "Most recent tag:            "
+	$(verbose) git tag | tail -n1
+	$(verbose) git verify-tag `git tag | tail -n1`
+	$(verbose) echo -n "MAKEFILE: "
+	$(verbose) grep -m1 PROJECT_VERSION Makefile
+	$(verbose) echo -n "APP:                 "
+	$(verbose) grep -m1 vsn ebin/$(PROJECT).app | sed 's/	//g'
+	$(verbose) echo
+	$(verbose) echo "Links in the README:"
+	$(verbose) grep http.*:// README.asciidoc
+	$(verbose) echo
+	$(verbose) echo "Titles in most recent CHANGELOG:"
+	$(verbose) for f in `ls -rv doc/src/guide/migrating_from_*.asciidoc | head -n1`; do \
+		echo $$f:; \
+		grep == $$f; \
+	done
