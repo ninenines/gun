@@ -262,133 +262,146 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 			end
 	end.
 
-handle_head(Data, State=#http_state{version=ClientVersion, opts=Opts,
-		connection=Conn, streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
-			method=Method, is_alive=IsAlive}|Tail]},
-		EvHandler, EvHandlerState0) ->
-	{Version, Status, _, Rest} = cow_http:parse_status_line(Data),
-	{Headers, Rest2} = cow_http:parse_headers(Rest),
-	case {Status, StreamRef} of
-		{101, _} ->
-			EvHandlerState = EvHandler:response_inform(#{
-				stream_ref => stream_ref(StreamRef),
+handle_head(Data, State=#http_state{streams=[#stream{ref=StreamRef}|_]},
+		EvHandler, EvHandlerState) ->
+	{Version, Status, _, Rest0} = cow_http:parse_status_line(Data),
+	{Headers, Rest} = cow_http:parse_headers(Rest0),
+	case StreamRef of
+		{connect, _, _} when Status >= 200, Status < 300 ->
+			handle_connect(Rest, State, EvHandler, EvHandlerState, Version, Status, Headers);
+		_ when Status >= 100, Status =< 199 ->
+			handle_inform(Rest, State, EvHandler, EvHandlerState, Version, Status, Headers);
+		_ ->
+			handle_response(Rest, State, EvHandler, EvHandlerState, Version, Status, Headers)
+	end.
+
+handle_connect(Rest, State=#http_state{
+		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
+		EvHandler, EvHandlerState0, 'HTTP/1.1', Status, Headers) ->
+	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
+	_ = case Stream of
+		#stream{is_alive=false} -> ok;
+		_ -> ReplyTo ! {gun_response, self(), StreamRef, fin, Status, Headers}
+	end,
+	%% @todo Figure out whether the event should trigger if the stream was cancelled.
+	EvHandlerState1 = EvHandler:response_headers(#{
+		stream_ref => StreamRef,
+		reply_to => ReplyTo,
+		status => Status,
+		headers => Headers
+	}, EvHandlerState0),
+	%% We expect there to be no additional data after the CONNECT response.
+	%% @todo That's probably wrong.
+	<<>> = Rest,
+	_ = end_stream(State#http_state{streams=[Stream|Tail]}),
+	NewHost = maps:get(host, Destination),
+	NewPort = maps:get(port, Destination),
+	case Destination of
+		#{transport := tls} ->
+			HandshakeEvent = #{
+				stream_ref => StreamRef,
 				reply_to => ReplyTo,
-				status => 101,
-				headers => Headers
-			}, EvHandlerState0),
-			%% @todo We might want to switch to the HTTP/2 protocol or to the TLS transport as well.
-			case StreamRef of
-				#websocket{} ->
-					{ws_handshake(Rest2, State, StreamRef, Headers), EvHandlerState};
-				%% Any other 101 response results in us switching to the raw protocol.
-				%% @todo We should check that we asked for an upgrade before accepting it.
-				_ ->
-					{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
-					Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
-					ReplyTo ! {gun_upgrade, self(), StreamRef, Upgrade, Headers},
-					{{switch_protocol, raw, ReplyTo}, EvHandlerState0}
+				tls_opts => maps:get(tls_opts, Destination, []),
+				timeout => maps:get(tls_handshake_timeout, Destination, infinity)
+			},
+			Protocols = maps:get(protocols, Destination, [http2, http]),
+			{[{origin, <<"https">>, NewHost, NewPort, connect},
+				{tls_handshake, HandshakeEvent, Protocols, ReplyTo}], EvHandlerState1};
+		_ ->
+			[Protocol] = maps:get(protocols, Destination, [http]),
+			{[{origin, <<"http">>, NewHost, NewPort, connect},
+				{switch_protocol, Protocol, ReplyTo}], EvHandlerState1}
+	end.
+
+%% @todo We probably shouldn't send info messages if the stream is not alive.
+handle_inform(Rest, State=#http_state{
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
+		EvHandler, EvHandlerState0, Version, Status, Headers) ->
+	EvHandlerState = EvHandler:response_inform(#{
+		stream_ref => stream_ref(StreamRef),
+		reply_to => ReplyTo,
+		status => Status,
+		headers => Headers
+	}, EvHandlerState0),
+	%% @todo We might want to switch to the HTTP/2 protocol or to the TLS transport as well.
+	case {Version, Status, StreamRef} of
+		{'HTTP/1.1', 101, #websocket{}} ->
+			{ws_handshake(Rest, State, StreamRef, Headers), EvHandlerState};
+		%% Any other 101 response results in us switching to the raw protocol.
+		%% @todo We should check that we asked for an upgrade before accepting it.
+		{'HTTP/1.1', 101, _} when is_reference(StreamRef) ->
+			try
+				%% @todo We shouldn't ignore Rest.
+				{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
+				Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
+				ReplyTo ! {gun_upgrade, self(), StreamRef, Upgrade, Headers},
+				{{switch_protocol, raw, ReplyTo}, EvHandlerState0}
+			catch _:_ ->
+				%% When the Upgrade header is missing or invalid we treat
+				%% the response as any other informational response.
+				ReplyTo ! {gun_inform, self(), stream_ref(StreamRef), Status, Headers},
+				handle(Rest, State, EvHandler, EvHandlerState)
 			end;
-		%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
-		{_, {connect, RealStreamRef, Destination}} when Status >= 200, Status < 300 ->
-			case IsAlive of
-				false ->
-					ok;
-				true ->
-					ReplyTo ! {gun_response, self(), RealStreamRef,
-						fin, Status, Headers},
-					ok
-			end,
-			%% @todo Figure out whether the event should trigger if the stream was cancelled.
-			EvHandlerState1 = EvHandler:response_headers(#{
-				stream_ref => RealStreamRef,
-				reply_to => ReplyTo,
-				status => Status,
-				headers => Headers
-			}, EvHandlerState0),
-			%% We expect there to be no additional data after the CONNECT response.
-			<<>> = Rest2,
-			_ = end_stream(State#http_state{streams=[Stream|Tail]}),
-			NewHost = maps:get(host, Destination),
-			NewPort = maps:get(port, Destination),
-			case Destination of
-				#{transport := tls} ->
-					HandshakeEvent = #{
-						stream_ref => RealStreamRef,
-						reply_to => ReplyTo,
-						tls_opts => maps:get(tls_opts, Destination, []),
-						timeout => maps:get(tls_handshake_timeout, Destination, infinity)
-					},
-					Protocols = maps:get(protocols, Destination, [http2, http]),
-					{[{origin, <<"https">>, NewHost, NewPort, connect},
-						{tls_handshake, HandshakeEvent, Protocols, ReplyTo}], EvHandlerState1};
-				_ ->
-					[Protocol] = maps:get(protocols, Destination, [http]),
-					{[{origin, <<"http">>, NewHost, NewPort, connect},
-						{switch_protocol, Protocol, ReplyTo}], EvHandlerState1}
-			end;
-		{_, _} when Status >= 100, Status =< 199 ->
+		_ ->
 			ReplyTo ! {gun_inform, self(), stream_ref(StreamRef), Status, Headers},
-			EvHandlerState = EvHandler:response_inform(#{
+			handle(Rest, State, EvHandler, EvHandlerState)
+	end.
+
+handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connection=Conn,
+		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo, method=Method, is_alive=IsAlive}|Tail]},
+		EvHandler, EvHandlerState0, Version, Status, Headers) ->
+	In = response_io_from_headers(Method, Version, Status, Headers),
+	IsFin = case In of head -> fin; _ -> nofin end,
+	%% @todo Figure out whether the event should trigger if the stream was cancelled.
+	{Handlers, EvHandlerState2} = case IsAlive of
+		false ->
+			{undefined, EvHandlerState0};
+		true ->
+			ReplyTo ! {gun_response, self(), stream_ref(StreamRef),
+				IsFin, Status, Headers},
+			EvHandlerState1 = EvHandler:response_headers(#{
 				stream_ref => StreamRef,
 				reply_to => ReplyTo,
 				status => Status,
 				headers => Headers
 			}, EvHandlerState0),
-			handle(Rest2, State, EvHandler, EvHandlerState);
-		_ ->
-			In = response_io_from_headers(Method, Version, Status, Headers),
-			IsFin = case In of head -> fin; _ -> nofin end,
-			%% @todo Figure out whether the event should trigger if the stream was cancelled.
-			{Handlers, EvHandlerState2} = case IsAlive of
-				false ->
-					{undefined, EvHandlerState0};
-				true ->
-					ReplyTo ! {gun_response, self(), stream_ref(StreamRef),
-						IsFin, Status, Headers},
-					EvHandlerState1 = EvHandler:response_headers(#{
-						stream_ref => StreamRef,
-						reply_to => ReplyTo,
-						status => Status,
-						headers => Headers
-					}, EvHandlerState0),
-					case IsFin of
-						fin -> {undefined, EvHandlerState1};
-						nofin ->
-							Handlers0 = maps:get(content_handlers, Opts, [gun_data_h]),
-							{gun_content_handler:init(ReplyTo, stream_ref(StreamRef),
-								Status, Headers, Handlers0), EvHandlerState1}
-					end
-			end,
-			EvHandlerState = case IsFin of
+			case IsFin of
+				fin -> {undefined, EvHandlerState1};
 				nofin ->
-					EvHandlerState2;
-				fin ->
-					EvHandler:response_end(#{
-						stream_ref => StreamRef,
-						reply_to => ReplyTo
-					}, EvHandlerState2)
-			end,
-			Conn2 = if
-				Conn =:= close -> close;
-				Version =:= 'HTTP/1.0' -> close;
-				ClientVersion =:= 'HTTP/1.0' -> close;
-				true -> conn_from_headers(Version, Headers)
-			end,
-			%% We always reset in_state even if not chunked.
-			if
-				IsFin =:= fin, Conn2 =:= close ->
-					{close, EvHandlerState};
-				IsFin =:= fin ->
-					handle(Rest2, end_stream(State#http_state{in=In,
-						in_state={0, 0}, connection=Conn2,
-						streams=[Stream#stream{handler_state=Handlers}|Tail]}),
-						EvHandler, EvHandlerState);
-				true ->
-					handle(Rest2, State#http_state{in=In,
-						in_state={0, 0}, connection=Conn2,
-						streams=[Stream#stream{handler_state=Handlers}|Tail]},
-						EvHandler, EvHandlerState)
+					Handlers0 = maps:get(content_handlers, Opts, [gun_data_h]),
+					{gun_content_handler:init(ReplyTo, stream_ref(StreamRef),
+						Status, Headers, Handlers0), EvHandlerState1}
 			end
+	end,
+	EvHandlerState = case IsFin of
+		nofin ->
+			EvHandlerState2;
+		fin ->
+			EvHandler:response_end(#{
+				stream_ref => StreamRef,
+				reply_to => ReplyTo
+			}, EvHandlerState2)
+	end,
+	Conn2 = if
+		Conn =:= close -> close;
+		Version =:= 'HTTP/1.0' -> close;
+		ClientVersion =:= 'HTTP/1.0' -> close;
+		true -> conn_from_headers(Version, Headers)
+	end,
+	%% We always reset in_state even if not chunked.
+	if
+		IsFin =:= fin, Conn2 =:= close ->
+			{close, EvHandlerState};
+		IsFin =:= fin ->
+			handle(Rest, end_stream(State#http_state{in=In,
+				in_state={0, 0}, connection=Conn2,
+				streams=[Stream#stream{handler_state=Handlers}|Tail]}),
+				EvHandler, EvHandlerState);
+		true ->
+			handle(Rest, State#http_state{in=In,
+				in_state={0, 0}, connection=Conn2,
+				streams=[Stream#stream{handler_state=Handlers}|Tail]},
+				EvHandler, EvHandlerState)
 	end.
 
 stream_ref({connect, StreamRef, _}) -> StreamRef;
