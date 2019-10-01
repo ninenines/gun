@@ -196,15 +196,15 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandl
 			EvHandlerState0
 	end,
 	case cow_http2_machine:frame(Frame, HTTP2Machine0) of
+		%% We only update the connection's window when receiving a lingering data frame.
+		{ok, HTTP2Machine} when element(1, Frame) =:= data ->
+			{update_window(State#http2_state{http2_machine=HTTP2Machine}), EvHandlerState};
 		{ok, HTTP2Machine} ->
 			{maybe_ack(State#http2_state{http2_machine=HTTP2Machine}, Frame),
 				EvHandlerState};
 		{ok, {data, StreamID, IsFin, Data}, HTTP2Machine} ->
 			data_frame(State#http2_state{http2_machine=HTTP2Machine}, StreamID, IsFin, Data,
 				EvHandler, EvHandlerState);
-		{ok, {lingering_data, _StreamID, DataLen}, HTTP2Machine} ->
-			{lingering_data_frame(State#http2_state{http2_machine=HTTP2Machine}, DataLen),
-				EvHandlerState};
 		{ok, {headers, StreamID, IsFin, Headers, PseudoHeaders, BodyLen}, HTTP2Machine} ->
 			headers_frame(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, IsFin, Headers, PseudoHeaders, BodyLen,
@@ -241,11 +241,6 @@ maybe_ack(State=#http2_state{socket=Socket, transport=Transport}, Frame) ->
 		_ -> ok
 	end,
 	State.
-
-lingering_data_frame(State, _DataLen) ->
-	%% We only update the connection's window when receiving
-	%% a lingering data frame.
-	update_window(State).
 
 data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0) ->
 	Stream = #stream{ref=StreamRef, reply_to=ReplyTo, flow=Flow0,
