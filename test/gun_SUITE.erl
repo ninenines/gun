@@ -309,6 +309,29 @@ retry_0(_) ->
 		error(timeout)
 	end.
 
+retry_0_disconnect(_) ->
+	doc("Ensure Gun gives up immediately with retry=0 after a successful connection."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, Pid} = gun:open("localhost", Port, #{retry => 0, retry_timeout => 500}),
+	Ref = monitor(process, Pid),
+	%% On Windows when the connection is refused the OS will retry
+	%% 3 times before giving up, with a 500ms delay between tries.
+	%% This adds approximately 1 second to connection failures.
+	After = case os:type() of
+		{win32, _} -> 1200;
+		_ -> 200
+	end,
+	%% We accept the connection and then close it to trigger a disconnect.
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	gen_tcp:close(ClientSocket),
+	receive
+		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
+			ok
+	after After ->
+		error(timeout)
+	end.
+
 retry_1(_) ->
 	doc("Ensure Gun gives up with retry=1."),
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 500}),
@@ -323,6 +346,18 @@ retry_1(_) ->
 	after After ->
 		error(timeout)
 	end.
+
+retry_1_disconnect(_) ->
+	doc("Ensure Gun gives up with retry=1 after a successful connection."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, Pid} = gun:open("localhost", Port, #{retry => 1, retry_timeout => 500}),
+	%% We accept the connection and then close it to trigger a disconnect.
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	gen_tcp:close(ClientSocket),
+	%% We confirm that Gun reconnects immediately.
+	{ok, _} = gen_tcp:accept(ListenSocket, 200),
+	gun:close(Pid).
 
 retry_fun(_) ->
 	doc("Ensure the retry_fun is used when provided."),
@@ -343,29 +378,10 @@ retry_fun(_) ->
 		error(shutdown_too_late)
 	end.
 
-retry_immediately(_) ->
-	doc("Ensure Gun retries immediately."),
-	%% We have to make a first successful connection in order to test this.
-	{ok, _, OriginPort} = init_origin(tcp, http,
-		fun(_, ClientSocket, ClientTransport) ->
-			ClientTransport:close(ClientSocket)
-		end),
-	{ok, Pid} = gun:open("localhost", OriginPort, #{retry => 1, retry_timeout => 500}),
-	Ref = monitor(process, Pid),
-	After = case os:type() of
-		{win32, _} -> 1200;
-		_ -> 200
-	end,
-	receive
-		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
-			ok
-	after After ->
-		error(timeout)
-	end.
-
 retry_timeout(_) ->
-	doc("Ensure the retry_timeout value is enforced."),
-	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 1000}),
+	doc("Ensure the retry_timeout value is enforced. The first retry is immediate "
+		"and therefore does not use the timeout."),
+	{ok, Pid} = gun:open("localhost", 12345, #{retry => 2, retry_timeout => 1000}),
 	Ref = monitor(process, Pid),
 	After = case os:type() of
 		{win32, _} -> 2800;

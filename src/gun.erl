@@ -891,6 +891,8 @@ init({Owner, Host, Port, Opts}) ->
 default_transport(443) -> tls;
 default_transport(_) -> tcp.
 
+not_connected(_, {retries, 0, normal}, State) ->
+	{stop, normal, State};
 not_connected(_, {retries, 0, Reason}, State) ->
 	{stop, {shutdown, Reason}, State};
 not_connected(_, {retries, Retries0, _}, State=#state{opts=Opts}) ->
@@ -907,9 +909,14 @@ not_connected(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
 default_retry_fun(Retries, Opts) ->
+	%% We retry immediately after a disconnect.
+	Timeout = case maps:get(retry, Opts, 5) of
+		Retries -> 0;
+		_ -> maps:get(retry_timeout, Opts, 5000)
+	end,
 	#{
 		retries => Retries - 1,
-		timeout => maps:get(retry_timeout, Opts, 5000)
+		timeout => Timeout
 	}.
 
 domain_lookup(_, {retries, Retries, _}, State=#state{host=Host, port=Port, opts=Opts,
@@ -1427,17 +1434,10 @@ disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 			KilledStreams = Protocol:down(ProtoState),
 			Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams},
 			Retry = maps:get(retry, Opts, 5),
-			case Retry of
-				0 when Reason =:= normal ->
-					{stop, normal, State};
-				0 ->
-					{stop, {shutdown, Reason}, State};
-				_ ->
-					{next_state, not_connected,
-						keepalive_cancel(State#state{socket=undefined,
-							protocol=undefined, protocol_state=undefined}),
-						{next_event, internal, {retries, Retry - 1, Reason}}}
-			end
+			{next_state, not_connected,
+				keepalive_cancel(State#state{socket=undefined,
+					protocol=undefined, protocol_state=undefined}),
+				{next_event, internal, {retries, Retry, Reason}}}
 	end.
 
 disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
