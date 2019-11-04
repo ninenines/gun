@@ -769,10 +769,15 @@ create_stream(State=#http2_state{streams=Streams, stream_refs=Refs},
 store_stream(State=#http2_state{streams=Streams}, Stream=#stream{id=StreamID}) ->
 	State#http2_state{streams=Streams#{StreamID => Stream}}.
 
-take_stream(State=#http2_state{streams=Streams0}, StreamID) ->
+take_stream(State=#http2_state{streams=Streams0, stream_refs=Refs}, StreamID) ->
 	case maps:take(StreamID, Streams0) of
-		{Stream, Streams} -> {Stream, State#http2_state{streams=Streams}};
-		error -> error
+		{Stream=#stream{ref=StreamRef}, Streams} ->
+			{Stream, State#http2_state{
+				streams=Streams,
+				stream_refs=maps:remove(StreamRef, Refs)
+			}};
+		error ->
+			error
 	end.
 
 maybe_delete_stream(State=#http2_state{http2_machine=HTTP2Machine}, StreamID, local, fin) ->
