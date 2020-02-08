@@ -143,7 +143,12 @@ parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=PS}) ->
 		Error = {connection_error, _, _} ->
 			terminate(State0, Error);
 		more ->
-			{state, State0#http2_state{buffer=Data}}
+			case Data of
+				<<"HTTP/1", _/binary>> ->
+					terminate(State0, {connection_error, protocol_error, 'HTTP/1 response to HTTP/2 request'});
+				_ ->
+					{state, State0#http2_state{buffer=Data}}
+			end
 	end.
 
 %% DATA frame.
