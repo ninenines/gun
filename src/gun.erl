@@ -1224,6 +1224,10 @@ handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
 	{ProtoState2, EvHandlerState} = Protocol:data(ProtoState,
 		StreamRef, ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+handle_common_connected(info, {timeout, TRef, Name}, _,
+		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
+	Commands = Protocol:timeout(ProtoState, Name, TRef),
+	commands(Commands, State);
 handle_common_connected(Type, Event, StateName, StateData) ->
 	handle_common_connected_no_input(Type, Event, StateName, StateData).
 

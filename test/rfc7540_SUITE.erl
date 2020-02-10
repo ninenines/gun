@@ -155,3 +155,28 @@ headers_priority_flag(_) ->
 	StreamRef = gun:get(ConnPid, "/"),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
+
+settings_ack_timeout(_) ->
+	doc("Failure to acknowledge the client's SETTINGS frame "
+		"results in a SETTINGS_TIMEOUT connection error. (RFC7540 6.5.3)"),
+	%% We use 'http' here because we are going to do the handshake manually.
+	{ok, _, Port} = init_origin(tcp, http, fun(_, Socket, Transport) ->
+		%% Send a valid preface.
+		ok = Transport:send(Socket, cow_http2:settings(#{})),
+		%% Receive the fixed sequence from the preface.
+		Preface = <<"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n">>,
+		{ok, Preface} = Transport:recv(Socket, byte_size(Preface), 5000),
+		%% Receive the SETTINGS from the preface.
+		{ok, <<Len:24>>} = Transport:recv(Socket, 3, 5000),
+		{ok, <<4:8, 0:40, _:Len/binary>>} = Transport:recv(Socket, 6 + Len, 5000),
+		%% Receive the WINDOW_UPDATE sent with the preface.
+		{ok, <<4:24, 8:8, 0:40, _:32>>} = Transport:recv(Socket, 13, 5000),
+		%% Receive the SETTINGS ack.
+		{ok, <<0:24, 4:8, 1:8, 0:32>>} = Transport:recv(Socket, 9, 5000),
+		%% Do not ack the client preface. Expect a GOAWAY with reason SETTINGS_TIMEOUT.
+		{ok, << _:24, 7:8, _:72, 4:32 >>} = Transport:recv(Socket, 17, 6000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	timer:sleep(6000),
+	gun:close(ConnPid).

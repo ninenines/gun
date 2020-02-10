@@ -30,6 +30,7 @@
 -export([request/12]).
 -export([data/7]).
 -export([cancel/5]).
+-export([timeout/3]).
 -export([stream_info/2]).
 -export([down/1]).
 
@@ -707,6 +708,14 @@ cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP
 		error ->
 			{error_stream_not_found(State, StreamRef, ReplyTo),
 				EvHandlerState0}
+	end.
+
+timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, Name}, TRef) ->
+	case cow_http2_machine:timeout(Name, TRef, HTTP2Machine0) of
+		{ok, HTTP2Machine} ->
+			{state, State#http2_state{http2_machine=HTTP2Machine}};
+		{error, Error={connection_error, _, _}, _HTTP2Machine} ->
+			connection_error(State, Error)
 	end.
 
 stream_info(State, StreamRef) ->
