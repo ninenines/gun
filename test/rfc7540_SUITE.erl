@@ -119,6 +119,29 @@ prior_knowledge_preface_http1(_) ->
 		error(timeout)
 	end.
 
+prior_knowledge_preface_http1_await(_) ->
+	doc("A PROTOCOL_ERROR connection error must result from the server sending "
+		"an invalid preface in the form of an HTTP/1.1 response when connecting "
+		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
+	%% We use 'http' here because we are going to do the handshake manually.
+	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, Socket, Transport) ->
+		timer:sleep(100),
+		ok = Transport:send(Socket, <<
+			"HTTP/1.1 400 Bad Request\r\n"
+			"Connection: close\r\n"
+			"Content-Length: 0\r\n"
+			"Date: Thu, 27 Feb 2020 09:32:17 GMT\r\n"
+			"\r\n">>),
+		timer:sleep(100)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2], retry => 0}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	{error, {down, {shutdown, {error, {connection_error, protocol_error,
+		'Invalid connection preface received. (RFC7540 3.5)'}}}}}
+		= gun:await(ConnPid, make_ref()),
+	gun:close(ConnPid).
+
 prior_knowledge_preface_other_frame(_) ->
 	doc("A PROTOCOL_ERROR connection error must result from the server sending "
 		"an invalid preface in the form of a non-SETTINGS frame when connecting "
