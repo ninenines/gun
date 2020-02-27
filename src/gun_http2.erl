@@ -154,7 +154,6 @@ parse(Data, State0=#http2_state{status=preface, http2_machine=HTTP2Machine},
 	case cow_http2:parse(Data, MaxFrameSize) of
 		{ok, Frame, Rest} when element(1, Frame) =:= settings ->
 			case frame(State0#http2_state{status=connected}, Frame, EvHandler, EvHandlerState0) of
-				Close = {close, _} -> Close;
 				Error = {{error, _}, _} -> Error;
 				{State, EvHandlerState} -> parse(Rest, State, EvHandler, EvHandlerState)
 			end;
@@ -177,7 +176,6 @@ parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, strea
 	case cow_http2:parse(Data, MaxFrameSize) of
 		{ok, Frame, Rest} ->
 			case frame(State0, Frame, EvHandler, EvHandlerState0) of
-				Close = {close, _} -> Close;
 				Error = {{error, _}, _} -> Error;
 				{State, EvHandlerState} -> parse(Rest, State, EvHandler, EvHandlerState)
 			end;
