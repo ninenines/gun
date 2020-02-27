@@ -63,7 +63,89 @@ do_receive(Pid, Timeout) ->
 		error(timeout)
 	end.
 
+do_init_origin(tcp, http, Fun) ->
+	Self = self(),
+	Pid = spawn_link(fun() -> do_init_origin_tcp(Self, Fun) end),
+	Port = do_receive(Pid),
+	{ok, Pid, Port}.
+
+do_init_origin_tcp(Parent, Fun) ->
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	Parent ! {self(), Port},
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	%% No handshake.
+	Fun(Parent, ClientSocket, gen_tcp).
+
 %% Tests.
+
+prior_knowledge_preface_garbage(_) ->
+	doc("A PROTOCOL_ERROR connection error must result from the server sending "
+		"an invalid preface in the form of garbage when connecting "
+		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
+	%% We are going to do the handshake manually.
+	{ok, _, Port} = do_init_origin(tcp, http, fun(_, Socket, Transport) ->
+		ok = Transport:send(Socket, <<0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15>>),
+		timer:sleep(100)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	receive
+		{gun_down, ConnPid, http2, {error, {connection_error, protocol_error,
+				'Invalid connection preface received. (RFC7540 3.5)'}}, [], []} ->
+			gun:close(ConnPid);
+		Msg ->
+			error({unexpected_msg, Msg})
+	after 1000 ->
+		error(timeout)
+	end.
+
+prior_knowledge_preface_http1(_) ->
+	doc("A PROTOCOL_ERROR connection error must result from the server sending "
+		"an invalid preface in the form of an HTTP/1.1 response when connecting "
+		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
+	%% We are going to do the handshake manually.
+	{ok, _, Port} = do_init_origin(tcp, http, fun(_, Socket, Transport) ->
+		ok = Transport:send(Socket, <<
+			"HTTP/1.1 400 Bad Request\r\n"
+			"Connection: close\r\n"
+			"Content-Length: 0\r\n"
+			"Date: Thu, 27 Feb 2020 09:32:17 GMT\r\n"
+			"\r\n">>),
+		timer:sleep(100)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	receive
+		{gun_down, ConnPid, http2, {error, {connection_error, protocol_error,
+				'Invalid connection preface received. (RFC7540 3.5)'}}, [], []} ->
+			gun:close(ConnPid);
+		Msg ->
+			error({unexpected_msg, Msg})
+	after 1000 ->
+		error(timeout)
+	end.
+
+prior_knowledge_preface_other_frame(_) ->
+	doc("A PROTOCOL_ERROR connection error must result from the server sending "
+		"an invalid preface in the form of a non-SETTINGS frame when connecting "
+		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
+	%% We are going to do the handshake manually.
+	{ok, _, Port} = do_init_origin(tcp, http, fun(_, Socket, Transport) ->
+		ok = Transport:send(Socket, cow_http2:window_update(1)),
+		timer:sleep(100)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	receive
+		{gun_down, ConnPid, http2, {error, {connection_error, protocol_error,
+				'Invalid connection preface received. (RFC7540 3.5)'}}, [], []} ->
+			gun:close(ConnPid);
+		Msg ->
+			error({unexpected_msg, Msg})
+	after 1000 ->
+		error(timeout)
+	end.
 
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "

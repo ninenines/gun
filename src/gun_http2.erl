@@ -75,7 +75,7 @@
 	%% is established and continues normally. An exception is when a HEADERS
 	%% frame is sent followed by CONTINUATION frames: no other frame can be
 	%% sent in between.
-	parse_state = undefined :: normal
+	parse_state = undefined :: preface | normal
 		| {continuation, cowboy_stream:streamid(), cowboy_stream:fin(), binary()},
 
 	%% HPACK decoding and encoding state.
@@ -107,7 +107,7 @@ init(Owner, Socket, Transport, Opts) ->
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	State = #http2_state{owner=Owner, socket=Socket,
 		transport=Transport, opts=Opts, content_handlers=Handlers,
-		parse_state=normal}, %% @todo Have a special parse state for preface.
+		parse_state=preface},
 	#http2_state{local_settings=Settings} = State,
 	%% Send the HTTP/2 preface.
 	Transport:send(Socket, [
@@ -119,8 +119,32 @@ init(Owner, Socket, Transport, Opts) ->
 handle(Data, State=#http2_state{buffer=Buffer}) ->
 	parse(<< Buffer/binary, Data/binary >>, State#http2_state{buffer= <<>>}).
 
+parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=preface}) ->
+	Data = << Buffer/binary, Data0/binary >>,
+	case cow_http2:parse(Data) of
+		{ok, Frame, Rest} when element(1, Frame) =:= settings ->
+			case frame(Frame, State0#http2_state{parse_state=normal}) of
+				close -> close;
+				Error = {error, _} -> Error;
+				State -> parse(Rest, State)
+			end;
+		more ->
+			case Data of
+				%% Maybe we have a proper SETTINGS frame.
+				<<_:24,4:8,_/bits>> ->
+					{state, State0#http2_state{buffer=Data}};
+				%% Not a SETTINGS frame, this is an invalid preface.
+				_ ->
+					terminate(State0, {connection_error, protocol_error,
+						'Invalid connection preface received. (RFC7540 3.5)'})
+			end;
+		%% Any error in the preface is converted to this specific error
+		%% to make debugging the problem easier (it's the server's fault).
+		_ ->
+			terminate(State0, {connection_error, protocol_error,
+				'Invalid connection preface received. (RFC7540 3.5)'})
+	end;
 parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=PS}) ->
-	%% @todo Parse states: Preface. Continuation.
 	Data = << Buffer/binary, Data0/binary >>,
 	case cow_http2:parse(Data) of
 		{ok, Frame, Rest} when PS =:= normal ->
@@ -524,7 +548,7 @@ terminate(#http2_state{socket=Socket, transport=Transport, streams=Streams}, Rea
 	_ = [ReplyTo ! {gun_error, self(), Reason} || #stream{reply_to=ReplyTo} <- Streams],
 	%% @todo LastGoodStreamID
 	Transport:send(Socket, cow_http2:goaway(0, terminate_reason(Reason), <<>>)),
-	close.
+	terminate_ret(Reason).
 
 terminate(State=#http2_state{socket=Socket, transport=Transport}, StreamID, Reason) ->
 	case get_stream_by_id(StreamID, State) of
@@ -532,13 +556,16 @@ terminate(State=#http2_state{socket=Socket, transport=Transport}, StreamID, Reas
 			ReplyTo ! {gun_error, self(), Reason},
 			%% @todo LastGoodStreamID
 			Transport:send(Socket, cow_http2:goaway(0, terminate_reason(Reason), <<>>)),
-			close;
+			terminate_ret(Reason);
 		_ ->
 			terminate(State, Reason)
 	end.
 
 terminate_reason({connection_error, Reason, _}) -> Reason;
 terminate_reason({stop, _, _}) -> no_error.
+
+terminate_ret(Reason={connection_error, _, _}) -> {error, Reason};
+terminate_ret(_) -> close.
 
 %% Stream functions.
 
