@@ -58,8 +58,9 @@
 	buffer = <<>> :: binary(),
 
 	%% Current status of the connection. We use this to ensure we are
-	%% not sending the GOAWAY frame more than once.
-	status = connected :: connected | goaway | closing,
+	%% not sending the GOAWAY frame more than once, and to validate
+	%% the server connection preface.
+	status = preface :: preface | connected | goaway | closing,
 
 	%% HTTP/2 state machine.
 	http2_machine :: cow_http2_machine:http2_machine(),
@@ -147,6 +148,24 @@ handle(Data, State=#http2_state{buffer=Buffer}, EvHandler, EvHandlerState) ->
 	parse(<< Buffer/binary, Data/binary >>, State#http2_state{buffer= <<>>},
 		EvHandler, EvHandlerState).
 
+parse(Data, State0=#http2_state{status=preface, http2_machine=HTTP2Machine},
+		EvHandler, EvHandlerState0) ->
+	MaxFrameSize = cow_http2_machine:get_local_setting(max_frame_size, HTTP2Machine),
+	case cow_http2:parse(Data, MaxFrameSize) of
+		{ok, Frame, Rest} when element(1, Frame) =:= settings ->
+			case frame(State0#http2_state{status=connected}, Frame, EvHandler, EvHandlerState0) of
+				Close = {close, _} -> Close;
+				Error = {{error, _}, _} -> Error;
+				{State, EvHandlerState} -> parse(Rest, State, EvHandler, EvHandlerState)
+			end;
+		more ->
+			{{state, State0#http2_state{buffer=Data}}, EvHandlerState0};
+		%% Any error in the preface is converted to this specific error
+		%% to make debugging the problem easier (it's the server's fault).
+		_ ->
+			{connection_error(State0, {connection_error, protocol_error,
+				'Invalid connection preface received. (RFC7540 3.5)'}), EvHandlerState0}
+	end;
 parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, streams=Streams},
 		EvHandler, EvHandlerState0) ->
 	MaxFrameSize = cow_http2_machine:get_local_setting(max_frame_size, HTTP2Machine),
@@ -154,11 +173,12 @@ parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, strea
 		{ok, Frame, Rest} ->
 			case frame(State0, Frame, EvHandler, EvHandlerState0) of
 				Close = {close, _} -> Close;
+				Error = {{error, _}, _} -> Error;
 				{State, EvHandlerState} -> parse(Rest, State, EvHandler, EvHandlerState)
 			end;
 		{ignore, Rest} ->
 			case ignored_frame(State0) of
-				close -> {close, EvHandlerState0};
+				Error = {error, _} -> {Error, EvHandlerState0};
 				State -> parse(Rest, State, EvHandler, EvHandlerState0)
 			end;
 		{stream_error, StreamID, Reason, Human, Rest} ->
@@ -735,15 +755,15 @@ down(#http2_state{stream_refs=Refs}) ->
 
 connection_error(#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine, streams=Streams},
-		{connection_error, Reason, _}) ->
+		Error={connection_error, Reason, HumanReadable}) ->
 	Pids = lists:usort(maps:fold(
 		fun(_, #stream{reply_to=ReplyTo}, Acc) -> [ReplyTo|Acc] end,
 		[], Streams)),
-	_ = [Pid ! {gun_error, self(), Reason} || Pid <- Pids],
+	_ = [Pid ! {gun_error, self(), {Reason, HumanReadable}} || Pid <- Pids],
 	Transport:send(Socket, cow_http2:goaway(
 		cow_http2_machine:get_last_streamid(HTTP2Machine),
 		Reason, <<>>)),
-	close.
+	{error, Error}.
 
 %% Stream functions.
 
