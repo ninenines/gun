@@ -134,6 +134,9 @@ parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=preface}) ->
 				<<_:24,4:8,_/bits>> ->
 					{state, State0#http2_state{buffer=Data}};
 				%% Not a SETTINGS frame, this is an invalid preface.
+				<<"HTTP/1",_/bits>> ->
+					terminate(State0, {connection_error, protocol_error,
+						'Invalid connection preface received. Appears to be an HTTP/1 response? (RFC7540 3.5)'});
 				_ ->
 					terminate(State0, {connection_error, protocol_error,
 						'Invalid connection preface received. (RFC7540 3.5)'})
@@ -141,8 +144,13 @@ parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=preface}) ->
 		%% Any error in the preface is converted to this specific error
 		%% to make debugging the problem easier (it's the server's fault).
 		_ ->
-			terminate(State0, {connection_error, protocol_error,
-				'Invalid connection preface received. (RFC7540 3.5)'})
+			Reason = case Data of
+				<<"HTTP/1",_/bits>> ->
+					'Invalid connection preface received. Appears to be an HTTP/1 response? (RFC7540 3.5)';
+				_ ->
+					'Invalid connection preface received. (RFC7540 3.5)'
+			end,
+			terminate(State0, {connection_error, protocol_error, Reason})
 	end;
 parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=PS}) ->
 	Data = << Buffer/binary, Data0/binary >>,

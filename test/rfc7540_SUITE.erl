@@ -118,7 +118,7 @@ prior_knowledge_preface_http1(_) ->
 	{ok, http2} = gun:await_up(ConnPid),
 	receive
 		{gun_down, ConnPid, http2, {error, {connection_error, protocol_error,
-				'Invalid connection preface received. (RFC7540 3.5)'}}, [], []} ->
+				'Invalid connection preface received. Appears to be an HTTP/1 response? (RFC7540 3.5)'}}, [], []} ->
 			gun:close(ConnPid);
 		Msg ->
 			error({unexpected_msg, Msg})
@@ -144,7 +144,7 @@ prior_knowledge_preface_http1_await(_) ->
 	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2], retry => 0}),
 	{ok, http2} = gun:await_up(ConnPid),
 	{error, {shutdown, {error, {connection_error, protocol_error,
-		'Invalid connection preface received. (RFC7540 3.5)'}}}}
+		'Invalid connection preface received. Appears to be an HTTP/1 response? (RFC7540 3.5)'}}}}
 		= gun:await(ConnPid, make_ref()),
 	gun:close(ConnPid).
 
