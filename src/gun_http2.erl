@@ -150,11 +150,13 @@ parse(Data0, State0=#http2_state{buffer=Buffer, parse_state=PS}) ->
 		{ok, Frame, Rest} when PS =:= normal ->
 			case frame(Frame, State0) of
 				close -> close;
+				Error = {error, _} -> Error;
 				State1 -> parse(Rest, State1)
 			end;
 		{ok, Frame, Rest} when element(1, PS) =:= continuation ->
 			case continuation_frame(Frame, State0) of
 				close -> close;
+				Error = {error, _} -> Error;
 				State1 -> parse(Rest, State1)
 			end;
 		{ignore, _} when element(1, PS) =:= continuation ->
