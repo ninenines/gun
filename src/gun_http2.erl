@@ -163,8 +163,13 @@ parse(Data, State0=#http2_state{status=preface, http2_machine=HTTP2Machine},
 		%% Any error in the preface is converted to this specific error
 		%% to make debugging the problem easier (it's the server's fault).
 		_ ->
-			{connection_error(State0, {connection_error, protocol_error,
-				'Invalid connection preface received. (RFC7540 3.5)'}), EvHandlerState0}
+			Reason = case Data of
+				<<"HTTP/1",_/bits>> ->
+					'Invalid connection preface received. Appears to be an HTTP/1 response? (RFC7540 3.5)';
+				_ ->
+					'Invalid connection preface received. (RFC7540 3.5)'
+			end,
+			{connection_error(State0, {connection_error, protocol_error, Reason}), EvHandlerState0}
 	end;
 parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, streams=Streams},
 		EvHandler, EvHandlerState0) ->
