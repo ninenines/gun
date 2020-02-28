@@ -19,7 +19,7 @@ DOC_DEPS = asciideck
 
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper cowboy
 dep_ct_helper = git https://github.com/extend/ct_helper.git master
-dep_cowboy_commit = master
+dep_cowboy_commit = 2.6.0
 
 # CI configuration.
 
