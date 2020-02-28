@@ -26,10 +26,10 @@ dep_cowboy_commit = 2.6.0
 dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
 DEP_EARLY_PLUGINS = ci.erlang.mk
 
-AUTO_CI_OTP ?= OTP-19+
+AUTO_CI_OTP ?= OTP-20+
 AUTO_CI_HIPE ?= OTP-LATEST
 # AUTO_CI_ERLLVM ?= OTP-LATEST
-AUTO_CI_WINDOWS ?= OTP-19+
+AUTO_CI_WINDOWS ?= OTP-20+
 
 # Standard targets.
 
@@ -53,6 +53,6 @@ test-build:: $(H2SPECD)
 
 $(H2SPECD):
 	$(gen_verbose) mkdir -p $(GOPATH)/src/github.com/summerwind
-	$(verbose) git clone --depth 1 https://github.com/summerwind/h2spec $(dir $(H2SPECD))
-	$(verbose) $(MAKE) -C $(dir $(H2SPECD)) build MAKEFLAGS=
-	$(verbose) go build -o $(H2SPECD) $(dir $(H2SPECD))/cmd/h2spec/h2specd.go
+	- $(verbose) git clone --depth 1 https://github.com/summerwind/h2spec $(dir $(H2SPECD))
+	- $(verbose) $(MAKE) -C $(dir $(H2SPECD)) build MAKEFLAGS=
+	- $(verbose) go build -o $(H2SPECD) $(dir $(H2SPECD))/cmd/h2spec/h2specd.go
