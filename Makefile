@@ -68,6 +68,50 @@ $(H2SPECD):
 	-$(verbose) $(MAKE) -C $(dir $(H2SPECD)) build MAKEFLAGS=
 	-$(verbose) go build -o $(H2SPECD) $(dir $(H2SPECD))/cmd/h2spec/h2specd.go
 
+# Public suffix module generator.
+# https://publicsuffix.org/list/
+
+GEN_URL = https://publicsuffix.org/list/public_suffix_list.dat
+GEN_DAT = $(ERLANG_MK_TMP)/public_suffix_list.dat
+GEN_SRC = src/gun_public_suffix.erl.src
+GEN_OUT = src/gun_public_suffix.erl
+
+# We use idna for punycode encoding when generating the module.
+dep_idna = git https://github.com/benoitc/erlang-idna 6.0.0
+ALL_DEPS_DIRS += $(DEPS_DIR)/idna
+$(eval $(call dep_target,idna))
+
+# 33 is $!
+define gen.erl
+	{ok, Dat} = file:read_file("$(GEN_DAT)"),
+	Lines = [L || L <- string:split(Dat, <<"\n">>, all),
+		L =/= <<>>, binary:first(L) =/= $$/, binary:first(L) =/= $$\s],
+	Punycode = fun(V) ->
+		unicode:characters_to_binary(idna:encode(unicode:characters_to_list(V)))
+	end,
+	M0 = [string:replace(L, <<"*">>, <<"star-gen-placeholder">>, all)
+		|| L <- Lines, binary:first(L) =/= 33],
+	M1 = [io_lib:format("m(S = ~p) -> e(S);~n", [string:split(Punycode(L), <<".">>, all)])
+		|| L <- M0],
+	M = string:replace(M1, <<"<<\\"star-gen-placeholder\\">>">>, <<"_">>, all),
+	E = [io_lib:format("e(~p) -> false;~n", [string:split(Punycode(L), <<".">>, all)])
+		|| <<"!",L/bits>> <- Lines],
+	{ok, Src0} = file:read_file("$(GEN_SRC)"),
+	Src1 = string:replace(Src0, <<"%% GENERATED_M\n">>, M),
+	Src = string:replace(Src1, <<"%% GENERATED_E\n">>, E),
+	ok = file:write_file("$(GEN_OUT)", Src),
+	halt().
+endef
+
+.PHONY: gen gen-idna
+
+gen-idna: $(DEPS_DIR)/idna
+	$(verbose) $(MAKE) -C $?
+
+gen: gen-idna | $(ERLANG_MK_TMP)
+	$(gen_verbose) wget -qO - $(GEN_URL) > $(GEN_DAT)
+	$(gen_verbose) $(call erlang,$(call gen.erl))
+
 # Prepare for the release.
 
 prepare_tag:

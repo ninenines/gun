@@ -12,7 +12,6 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-%% @todo A test suite can be created based on https://github.com/web-platform-tests/wpt/tree/master/cookies
 -module(gun_cookies).
 
 -export([domain_match/2]).
@@ -149,7 +148,7 @@ session_gc(Store) ->
 %% @todo The given URI must be normalized.
 -spec set_cookie(Store, uri_string:uri_map(), binary(), binary(), cow_cookie:cookie_opts())
 	-> {ok, Store} | {error, any()} when Store::store().
-set_cookie(Store, URI, Name, Value, Attrs) ->
+set_cookie(Store, URI=#{host := Host}, Name, Value, Attrs) ->
 	%% @todo This is where we would add a feature to block cookies (like a blacklist).
 	CurrentTime = erlang:universaltime(),
 	Cookie0 = #{
@@ -175,17 +174,25 @@ set_cookie(Store, URI, Name, Value, Attrs) ->
 				expiry_time => infinity
 			}
 	end,
-	Domain = maps:get(domain, Attrs, <<>>),
-	%% @todo This is where we would reject public suffixes. https://publicsuffix.org/
+	Domain0 = maps:get(domain, Attrs, <<>>),
+	Domain = case gun_public_suffix:match(Domain0) of
+		false ->
+			Domain0;
+		true when Host =:= Domain0 ->
+			<<>>;
+		true ->
+			{error, domain_is_public_suffix}
+	end,
 	case Domain of
 		<<>> ->
 			set_cookie(Store, URI, Attrs, Cookie#{
 				host_only => true,
-				domain => maps:get(host, URI)
+				domain => Host
 			});
+		Error = {error, _} ->
+			Error;
 		_ ->
-			%% @todo Domain must already be canonicalized here.
-			case domain_match(maps:get(host, URI), Domain) of
+			case domain_match(Host, Domain) of
 				true ->
 					set_cookie(Store, URI, Attrs, Cookie#{
 						host_only => false,
@@ -270,7 +277,6 @@ set_cookie3(Store, Attrs, Cookie=#{name := Name,
 			set_cookie_store(Store, Cookie)
 	end.
 
-%% @todo Cookies with an expiry_time in the past result in the cookie getting deleted.
 set_cookie_store(Store0, Cookie) ->
 	Match = maps:with([name, domain, host_only, path], Cookie),
 	case set_cookie_take_exact_match(Store0, Match) of
@@ -365,7 +371,6 @@ wpt_http_state_test_() ->
 		"test/wpt/cookies/chromium0012-test", %% Doesn't match the spec (empty names).
 		"test/wpt/cookies/disabled-chromium0020-test", %% Doesn't match the spec (empty names).
 		"test/wpt/cookies/disabled-chromium0022-test", %% Nonsense.
-		"test/wpt/cookies/domain0017-test", %% This requires rejecting public suffixes.
 		"test/wpt/cookies/mozilla0012-test", %% Doesn't match the spec (empty names).
 		"test/wpt/cookies/mozilla0014-test", %% Doesn't match the spec (empty names).
 		"test/wpt/cookies/mozilla0015-test", %% Doesn't match the spec (empty names).
