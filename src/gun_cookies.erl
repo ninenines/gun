@@ -33,7 +33,7 @@
 	path := binary(),
 	creation_time := calendar:datetime(),
 	last_access_time := calendar:datetime(),
-	expiry_time := calendar:datetime(),
+	expiry_time := calendar:datetime() | infinity,
 	persistent := boolean(),
 	host_only => boolean(),
 	secure_only := boolean(),
@@ -84,11 +84,9 @@ domain_match(String, DomainString) ->
 	end.
 
 -spec gc(Store) -> {ok, Store} when Store::store().
-gc(Store) ->
-%The user agent MUST evict all expired cookies from the cookie store if, at any time, an expired cookie exists in the cookie store.
-%At any time, the user agent MAY “remove excess cookies” from the cookie store if the number of cookies sharing a domain field exceeds some implementation-defined upper bound (such as 50 cookies).
-%At any time, the user agent MAY “remove excess cookies” from the cookie store if the cookie store exceeds some predetermined upper bound (such as 3000 cookies).
-	{todo, Store}.
+gc({Mod, State0}) ->
+	{ok, State} = Mod:gc(State0),
+	{ok, {Mod, State}}.
 
 -spec path_match(binary(), binary()) -> boolean().
 path_match(Path, Path) ->
@@ -140,16 +138,16 @@ query({Mod, State0}, URI) ->
 	{ok, Cookies, {Mod, State}}.
 
 -spec session_gc(Store) -> {ok, Store} when Store::store().
-session_gc(Store) ->
-%When “the current session is over” (as defined by the user agent), the user agent MUST remove from the cookie store all cookies with the persistent-flag set to false.
-	{todo, Store}.
+session_gc({Mod, State0}) ->
+	{ok, State} = Mod:session_gc(State0),
+	{ok, {Mod, State}}.
 
 %% @todo Not cookie_opts()
 %% @todo The given URI must be normalized.
 -spec set_cookie(Store, uri_string:uri_map(), binary(), binary(), cow_cookie:cookie_opts())
 	-> {ok, Store} | {error, any()} when Store::store().
 set_cookie(Store, URI=#{host := Host}, Name, Value, Attrs) ->
-	%% @todo This is where we would add a feature to block cookies (like a blacklist).
+	%% This is where we would add a feature to block cookies (like a blacklist).
 	CurrentTime = erlang:universaltime(),
 	Cookie0 = #{
 		name => Name,
@@ -219,7 +217,7 @@ set_cookie(Store, URI, Attrs, Cookie0) ->
 				secure_only => SecureOnly,
 				http_only => maps:get(http_only, Attrs, false)
 			},
-			%% @todo This is where we would drop cookies from non-HTTP APIs.
+			%% This is where we would drop cookies from non-HTTP APIs.
 			set_cookie1(Store, URI, Attrs, Cookie)
 	end.
 
@@ -248,7 +246,7 @@ set_cookie_secure_match({Mod, State}, Match) ->
 
 set_cookie2(Store, _URI, Attrs, Cookie0) ->
 	Cookie = Cookie0#{same_site => maps:get(same_site, Attrs, none)},
-	%% @todo This is where we would perform the same-site checks.
+	%% This is where we would perform the same-site checks.
 	%%
 	%% It seems that an option would need to be added to Gun
 	%% in order to define the "site for cookies" value. It is
@@ -281,7 +279,7 @@ set_cookie_store(Store0, Cookie) ->
 	Match = maps:with([name, domain, host_only, path], Cookie),
 	case set_cookie_take_exact_match(Store0, Match) of
 		{ok, #{creation_time := CreationTime}, Store} ->
-			%% @todo This is where we would reject a new non-HTTP cookie
+			%% This is where we would reject a new non-HTTP cookie
 			%% if the OldCookie has http_only set to true.
 			store(Store, Cookie#{creation_time => CreationTime});
 		error ->
@@ -306,6 +304,42 @@ store({Mod, State0}, Cookie) ->
 	end.
 
 -ifdef(TEST).
+gc_test() ->
+	URIMap = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/path/to/resource">>},
+	Store0 = gun_cookies_list:init(),
+	%% Add a cookie that expires in 1 second. GC. Cookie can be retrieved.
+	{ok, N0, V0, A0} = cow_cookie:parse_set_cookie(<<"a=b; Path=/; Max-Age=1">>),
+	{ok, Store1} = set_cookie(Store0, URIMap, N0, V0, A0),
+	{ok, Store2} = gc(Store1),
+	{ok, [_], _} = query(Store2, URIMap),
+	%% Wait 2 seconds. GC. Cookie was removed.
+	timer:sleep(2000),
+	{ok, Store} = gc(Store2),
+	{ok, [], _} = query(Store, URIMap),
+	ok.
+
+gc_expiry_time_infinity_test() ->
+	URIMap = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/path/to/resource">>},
+	Store0 = gun_cookies_list:init(),
+	%% Add a session cookie. GC. Cookie can be retrieved.
+	{ok, N0, V0, A0} = cow_cookie:parse_set_cookie(<<"a=b; Path=/">>),
+	{ok, Store1} = set_cookie(Store0, URIMap, N0, V0, A0),
+	{ok, Store} = gc(Store1),
+	{ok, [_], _} = query(Store, URIMap),
+	ok.
+
+session_gc_test() ->
+	URIMap = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/path/to/resource">>},
+	Store0 = gun_cookies_list:init(),
+	%% Add a persistent and a session cookie. GC session cookies. Only persistent can be retrieved.
+	{ok, N0, V0, A0} = cow_cookie:parse_set_cookie(<<"s=s; Path=/">>),
+	{ok, Store1} = set_cookie(Store0, URIMap, N0, V0, A0),
+	{ok, N1, V1, A1} = cow_cookie:parse_set_cookie(<<"p=p; Path=/; Max-Age=999">>),
+	{ok, Store2} = set_cookie(Store1, URIMap, N1, V1, A1),
+	{ok, Store} = session_gc(Store2),
+	{ok, [#{name := <<"p">>}], _} = query(Store, URIMap),
+	ok.
+
 %% Most of the tests for this module are converted from the
 %% Web platform test suite. At the time of writing they could
 %% be found at https://github.com/web-platform-tests/wpt/tree/master/cookies
@@ -525,7 +559,7 @@ wpt_prefix_secure_test_() ->
 		{<<"https">>, <<"__Secure-foo=bar; Secure; Path=/;">>, true},
 		{<<"https">>, <<"__Secure-foo=bar; Secure; Path=/;Max-Age=10">>, true},
 		{<<"https">>, <<"__Secure-foo=bar; Secure; Path=/;HttpOnly">>, true}
-		%% @todo Missing two SameSite cases from prefix/__secure.header.https.
+		%% Missing two SameSite cases from prefix/__secure.header.https. (Not implemented.)
 	],
 	wpt_prefix_common(Tests, <<"__Secure-foo">>).
 
@@ -547,8 +581,8 @@ wpt_prefix_common(Tests, Name) ->
 		end
 	end} || {S, H, Res} <- Tests].
 
-%% @todo WPT: samesite-none-secure/
-%% @todo WPT: samesite/
+%% WPT: samesite-none-secure/ (Not implemented.)
+%% WPT: samesite/ (Not implemented.)
 
 wpt_secure_https_test() ->
 	URIMap = #{

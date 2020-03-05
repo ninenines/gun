@@ -21,10 +21,13 @@
 -export([set_cookie_secure_match/2]).
 -export([set_cookie_take_exact_match/2]).
 -export([store/2]).
+-export([gc/1]).
+-export([session_gc/1]).
 
 -type state() :: #{
 	cookies := [gun_cookies:cookie()]
-	%% @todo Options would go here.
+%% @todo	max_cookies_per_domain => non_neg_integer() | infinity,
+%% @todo	max_cookies => non_neg_integer() | infinity
 }.
 
 -spec init() -> {?MODULE, state()}.
@@ -42,8 +45,6 @@ query(State, _, [], _, CookieList, Cookies) ->
 	{ok, CookieList, State#{cookies => Cookies}};
 query(State, URI=#{scheme := Scheme, host := Host, path := Path},
 		[Cookie|Tail], CurrentTime, CookieList, Acc) ->
-	%% @todo This is probably not correct, says "canonicalized request-host"
-	%% and currently doesn't include the port number, it probably should?
 	Match0 = case Cookie of
 		#{host_only := true, domain := Host} ->
 			true;
@@ -60,9 +61,9 @@ query(State, URI=#{scheme := Scheme, host := Host, path := Path},
 			{#{secure_only := false}, _} -> true;
 			_ -> false
 		end,
-	%% @todo This is where we would check the http_only flag should
+	%% This is where we would check the http_only flag should
 	%% we want to implement a non-HTTP interface.
-	%% @todo This is where we would check for same-site/cross-site.
+	%% This is where we would check for same-site/cross-site.
 	case Match of
 		true ->
 			UpdatedCookie = Cookie#{last_access_time => CurrentTime},
@@ -119,3 +120,15 @@ store(State=#{cookies := Cookies}, NewCookie=#{expiry_time := ExpiryTime}) ->
 		true ->
 			{ok, State#{cookies => [NewCookie|Cookies]}}
 	end.
+
+-spec gc(State) -> {ok, State} when State::state().
+gc(State=#{cookies := Cookies0}) ->
+	CurrentTime = erlang:universaltime(),
+	Cookies = [C || C=#{expiry_time := ExpiryTime} <- Cookies0,
+		(ExpiryTime =:= infinity) orelse (ExpiryTime >= CurrentTime)],
+	{ok, State#{cookies => Cookies}}.
+
+-spec session_gc(State) -> {ok, State} when State::state().
+session_gc(State=#{cookies := Cookies0}) ->
+	Cookies = [C || C=#{persistent := true} <- Cookies0],
+	{ok, State#{cookies => Cookies}}.
