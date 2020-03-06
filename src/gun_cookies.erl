@@ -142,9 +142,8 @@ session_gc({Mod, State0}) ->
 	{ok, State} = Mod:session_gc(State0),
 	{ok, {Mod, State}}.
 
-%% @todo Not cookie_opts()
 %% @todo The given URI must be normalized.
--spec set_cookie(Store, uri_string:uri_map(), binary(), binary(), cow_cookie:cookie_opts())
+-spec set_cookie(Store, uri_string:uri_map(), binary(), binary(), cow_cookie:cookie_attrs())
 	-> {ok, Store} | {error, any()} when Store::store().
 set_cookie(Store, URI=#{host := Host}, Name, Value, Attrs) ->
 	%% This is where we would add a feature to block cookies (like a blacklist).
@@ -346,8 +345,6 @@ session_gc_test() ->
 %%
 %% Some of the tests use files from wpt directly, namely the
 %% http-state ones. They are copied to the test/wpt/cookies directory.
-%%
-%% @todo Go over all the tests to add expire cases.
 
 -define(HOST, "web-platform.test").
 
@@ -470,16 +467,22 @@ wpt_path_default_test() ->
 	Store0 = gun_cookies_list:init(),
 	%% Add a cookie without a path attribute.
 	{ok, N1, V1, A1} = cow_cookie:parse_set_cookie(<<"cookies-path-default=1">>),
-	{ok, Store} = set_cookie(Store0, URIMap, N1, V1, A1),
+	{ok, Store1} = set_cookie(Store0, URIMap, N1, V1, A1),
 	%% Confirm the cookie was stored with the proper default path,
 	%% and gets sent for the same path, other resources at the same level or child paths.
-	{ok, [#{path := <<"/path/to">>}], _} = query(Store, URIMap),
-	{ok, [#{path := <<"/path/to">>}], _} = query(Store, URIMap#{path => <<"/path/to/other">>}),
-	{ok, [#{path := <<"/path/to">>}], _} = query(Store, URIMap#{path => <<"/path/to/resource/sub">>}),
+	{ok, [#{path := <<"/path/to">>}], _} = query(Store1, URIMap),
+	{ok, [#{path := <<"/path/to">>}], _} = query(Store1, URIMap#{path => <<"/path/to/other">>}),
+	{ok, [#{path := <<"/path/to">>}], _} = query(Store1, URIMap#{path => <<"/path/to/resource/sub">>}),
 	%% Confirm that the cookie cannot be retrieved for parent or unrelated paths.
-	{ok, [], _} = query(Store, URIMap#{path => <<"/path">>}),
-	{ok, [], _} = query(Store, URIMap#{path => <<"/path/toon">>}),
-	{ok, [], _} = query(Store, URIMap#{path => <<"/">>}),
+	{ok, [], _} = query(Store1, URIMap#{path => <<"/path">>}),
+	{ok, [], _} = query(Store1, URIMap#{path => <<"/path/toon">>}),
+	{ok, [], _} = query(Store1, URIMap#{path => <<"/">>}),
+	%% Expire the cookie.
+	{ok, N2, V2, A2} = cow_cookie:parse_set_cookie(<<"cookies-path-default=1; Max-Age=0">>),
+	{ok, Store} = set_cookie(Store1, URIMap, N2, V2, A2),
+	{ok, [], _} = query(Store, URIMap),
+	{ok, [], _} = query(Store, URIMap#{path => <<"/path/to/other">>}),
+	{ok, [], _} = query(Store, URIMap#{path => <<"/path/to/resource/sub">>}),
 	ok.
 
 %% WPT: path/match
@@ -502,9 +505,12 @@ wpt_path_match_test_() ->
 		<<"/w/">>
 	],
 	[{P, fun() ->
-		{ok, N, V, A} = cow_cookie:parse_set_cookie(<<"a=b; Path=",P/binary>>),
-		{ok, Store} = set_cookie(gun_cookies_list:init(), URIMap, N, V, A),
-		{ok, [#{name := <<"a">>}], _} = query(Store, URIMap)
+		{ok, N1, V1, A1} = cow_cookie:parse_set_cookie(<<"a=b; Path=",P/binary>>),
+		{ok, Store0} = set_cookie(gun_cookies_list:init(), URIMap, N1, V1, A1),
+		{ok, [#{name := <<"a">>}], _} = query(Store0, URIMap),
+		{ok, N2, V2, A2} = cow_cookie:parse_set_cookie(<<"a=b; Max-Age=0; Path=",P/binary>>),
+		{ok, Store} = set_cookie(Store0, URIMap, N2, V2, A2),
+		{ok, [], _} = query(Store, URIMap)
 	end} || P <- MatchTests]
 	++
 	[{P, fun() ->
