@@ -21,6 +21,10 @@
 -export([session_gc/1]).
 -export([set_cookie/5]).
 
+-ifdef(TEST).
+-export([wpt_http_state_test_files/1]). %% Also used in rfc6265bis_SUITE.
+-endif.
+
 -type store_state() :: any().
 
 -type store() :: {module(), store_state()}.
@@ -42,7 +46,7 @@
 }.
 -export_type([cookie/0]).
 
--callback init() -> store().
+-callback init(any()) -> store().
 
 -callback query(State, uri_string:uri_map())
 	-> {ok, [{binary(), binary()}], State}
@@ -64,6 +68,14 @@
 
 -callback store(State, cookie())
 	-> {ok, State} | {error, any()}
+	when State::store_state().
+
+-callback gc(State)
+	-> {ok, State}
+	when State::store_state().
+
+-callback session_gc(State)
+	-> {ok, State}
 	when State::store_state().
 
 -spec domain_match(binary(), binary()) -> boolean().
@@ -387,35 +399,36 @@ wpt_domain_missing_test() ->
 	{ok, [], _} = query(Store, URIMap#{host => <<"sub." ?HOST>>}),
 	ok.
 
-%% WPT: http-state/general-tests
-%%
-%% The WPT http-state test suite is either broken or complicated to setup.
-%% The original http-state test suite is a better reference at the time
-%% of writing. The server running these tests is at
-%% https://github.com/abarth/http-state/blob/master/tools/testserver/testserver.py
+%% WPT: http-state/*-tests
+wpt_http_state_test_files() ->
+	wpt_http_state_test_files("test/").
+
+wpt_http_state_test_files(TestPath) ->
+	filelib:wildcard(TestPath ++ "wpt/cookies/*-test") -- [
+		TestPath ++ "wpt/cookies/attribute0023-test", %% Doesn't match the spec (path override).
+		TestPath ++ "wpt/cookies/chromium0009-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/chromium0010-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/chromium0012-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/disabled-chromium0020-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/disabled-chromium0022-test", %% Nonsense.
+		TestPath ++ "wpt/cookies/mozilla0012-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/mozilla0014-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/mozilla0015-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/mozilla0016-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/mozilla0017-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/name0017-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/name0023-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/name0025-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/name0028-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/name0031-test", %% Doesn't match the spec (name with quotes).
+		TestPath ++ "wpt/cookies/name0032-test", %% Doesn't match the spec (name with quotes).
+		TestPath ++ "wpt/cookies/name0033-test", %% Doesn't match the spec (empty names).
+		TestPath ++ "wpt/cookies/optional-domain0042-test" %% Doesn't match the spec (empty domain override).
+	].
+
 wpt_http_state_test_() ->
 	URIMap0 = #{scheme => <<"http">>, host => <<"home.example.org">>, path => <<"/cookie-parser">>},
-	TestFiles = filelib:wildcard("test/wpt/cookies/*-test") -- [
-		"test/wpt/cookies/attribute0023-test", %% Doesn't match the spec (path override).
-		"test/wpt/cookies/chromium0009-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/chromium0010-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/chromium0012-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/disabled-chromium0020-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/disabled-chromium0022-test", %% Nonsense.
-		"test/wpt/cookies/mozilla0012-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/mozilla0014-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/mozilla0015-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/mozilla0016-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/mozilla0017-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/name0017-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/name0023-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/name0025-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/name0028-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/name0031-test", %% Doesn't match the spec (name with quotes).
-		"test/wpt/cookies/name0032-test", %% Doesn't match the spec (name with quotes).
-		"test/wpt/cookies/name0033-test", %% Doesn't match the spec (empty names).
-		"test/wpt/cookies/optional-domain0042-test" %% Doesn't match the spec (empty domain override).
-	],
+	TestFiles = wpt_http_state_test_files(),
 	[{F, fun() ->
 		{ok, Test} = file:read_file(F),
 		%% We don't want the final empty line.

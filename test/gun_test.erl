@@ -22,6 +22,10 @@
 
 %% Cowboy listeners.
 
+init_cowboy_tcp(Ref, ProtoOpts, Config) ->
+	{ok, _} = cowboy:start_clear(Ref, [{port, 0}], ProtoOpts),
+	[{ref, Ref}, {port, ranch:get_port(Ref)}|Config].
+
 init_cowboy_tls(Ref, ProtoOpts, Config) ->
 	Opts = ct_helper:get_certs_from_ets(),
 	{ok, _} = cowboy:start_tls(Ref, Opts ++ [{port, 0}], ProtoOpts),

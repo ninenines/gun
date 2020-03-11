@@ -17,6 +17,7 @@
 -module(gun_cookies_list).
 
 -export([init/0]).
+-export([init/1]).
 -export([query/2]).
 -export([set_cookie_secure_match/2]).
 -export([set_cookie_take_exact_match/2]).
@@ -30,8 +31,15 @@
 %% @todo	max_cookies => non_neg_integer() | infinity
 }.
 
+-type opts() :: #{
+}.
+
 -spec init() -> {?MODULE, state()}.
 init() ->
+	init(#{}).
+
+-spec init(opts()) -> {?MODULE, state()}.
+init(_Opts) ->
 	{?MODULE, #{cookies => []}}.
 
 -spec query(State, uri_string:uri_map())

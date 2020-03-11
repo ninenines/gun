@@ -65,6 +65,10 @@
 -export([connect/3]).
 -export([connect/4]).
 
+%% Cookies.
+%% @todo -export([gc_cookies/1]).
+%% @todo -export([session_gc_cookies/1]).
+
 %% Awaiting gun messages.
 -export([await/2]).
 -export([await/3]).
@@ -123,6 +127,8 @@
 
 -type opts() :: #{
 	connect_timeout => timeout(),
+	cookie_ignore_informational => boolean(),
+	cookie_store => gun_cookies:store(),
 	domain_lookup_timeout => timeout(),
 	event_handler => {module(), any()},
 	http_opts => http_opts(),
@@ -252,7 +258,8 @@
 	protocol :: module(),
 	protocol_state :: any(),
 	event_handler :: module(),
-	event_handler_state :: any()
+	event_handler_state :: any(),
+	cookie_store :: undefined | {module(), any()}
 }).
 
 %% Connection.
@@ -300,6 +307,8 @@ check_options([]) ->
 check_options([{connect_timeout, infinity}|Opts]) ->
 	check_options(Opts);
 check_options([{connect_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
+	check_options(Opts);
+check_options([{cookie_store, {Mod, _}}|Opts]) when is_atom(Mod) ->
 	check_options(Opts);
 check_options([{domain_lookup_timeout, infinity}|Opts]) ->
 	check_options(Opts);
@@ -412,7 +421,8 @@ info(ServerPid) ->
 		origin_scheme=OriginScheme,
 		origin_host=OriginHost,
 		origin_port=OriginPort,
-		intermediaries=Intermediaries
+		intermediaries=Intermediaries,
+		cookie_store=CookieStore
 	}} = sys:get_state(ServerPid),
 	Info0 = #{
 		owner => Owner,
@@ -425,7 +435,8 @@ info(ServerPid) ->
 		origin_host => OriginHost,
 		origin_port => OriginPort,
 		%% Intermediaries are listed in the order data goes through them.
-		intermediaries => lists:reverse(Intermediaries)
+		intermediaries => lists:reverse(Intermediaries),
+		cookie_store => CookieStore
 	},
 	Info = case Socket of
 		undefined ->
@@ -543,6 +554,8 @@ put(ServerPid, Path, Headers, Body, ReqOpts) ->
 	request(ServerPid, <<"PUT">>, Path, Headers, Body, ReqOpts).
 
 %% Generic requests interface.
+%%
+%% @todo Accept a TargetURI map as well as a normal Path.
 
 -spec headers(pid(), iodata(), iodata(), req_headers()) -> reference().
 headers(ServerPid, Method, Path, Headers) ->
@@ -880,11 +893,13 @@ init({Owner, Host, Port, Opts}) ->
 		origin_port => Port,
 		opts => Opts
 	}, EvHandlerState0),
+	CookieStore = maps:get(cookie_store, Opts, undefined),
 	State = #state{owner=Owner, status={up, OwnerRef},
 		host=Host, port=Port, origin_scheme=OriginScheme,
 		origin_host=Host, origin_port=Port, opts=Opts,
 		transport=Transport, messages=Transport:messages(),
-		event_handler=EvHandler, event_handler_state=EvHandlerState},
+		event_handler=EvHandler, event_handler_state=EvHandlerState,
+		cookie_store=CookieStore},
 	{ok, domain_lookup, State,
 		{next_event, internal, {retries, Retry, not_connected}}}.
 
@@ -1141,18 +1156,23 @@ connected(internal, {connected, Socket, Protocol0},
 		false -> {next_state, StateName, State}
 	end;
 %% Public HTTP interface.
-connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow},
-		State=#state{origin_host=Host, origin_port=Port,
+%%
+%% @todo It might be better, internally, to pass around a URIMap
+%% containing the target URI, instead of separate Host/Port/PathWithQs.
+connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers0, InitialFlow},
+		State0=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Headers, State} = add_cookie_header(Path, Headers0, State0),
 	{ProtoState2, EvHandlerState} = Protocol:headers(ProtoState,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
 		InitialFlow, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
-connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body, InitialFlow},
-		State=#state{origin_host=Host, origin_port=Port,
+connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, InitialFlow},
+		State0=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Headers, State} = add_cookie_header(Path, Headers0, State0),
 	{ProtoState2, EvHandlerState} = Protocol:request(ProtoState,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
 		InitialFlow, EvHandler, EvHandlerState0),
@@ -1167,8 +1187,8 @@ connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow}
 connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers}, State=#state{opts=Opts}) ->
 	WsOpts = maps:get(ws_opts, Opts, #{}),
 	connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts}, State);
-connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts},
-		State=#state{origin_host=Host, origin_port=Port,
+connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers0, WsOpts},
+		State0=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0})
 		when Protocol =:= gun_http ->
@@ -1178,6 +1198,7 @@ connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts},
 		opts => WsOpts
 	}, EvHandlerState0),
 	%% @todo Can fail if HTTP/1.0.
+	{Headers, State} = add_cookie_header(Path, Headers0, State0),
 	{ProtoState2, EvHandlerState} = Protocol:ws_upgrade(ProtoState,
 		StreamRef, ReplyTo, Host, Port, Path, Headers, WsOpts,
 		EvHandler, EvHandlerState1),
@@ -1194,6 +1215,35 @@ connected(cast, {ws_send, ReplyTo, _}, _) ->
 	keep_state_and_data;
 connected(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
+
+add_cookie_header(_, Headers, State=#state{cookie_store=undefined}) ->
+	{Headers, State};
+add_cookie_header(PathWithQs, Headers0, State=#state{
+		origin_host=OriginHost, transport=Transport, cookie_store=Store0}) ->
+	Scheme = case Transport of
+		gun_tls -> <<"https">>;
+		gun_tls_proxy -> <<"https">>;
+		gun_tcp -> <<"http">>
+	end,
+	#{path := Path} = uri_string:parse(PathWithQs),
+	URIMap = uri_string:normalize(#{
+		scheme => Scheme,
+		host => case lists:keyfind(<<"host">>, 1, Headers0) of
+			false -> iolist_to_binary(OriginHost); %% @todo Probably not enough for atoms and such.
+			{_, HeaderHost} -> iolist_to_binary(HeaderHost)
+		end,
+		path => iolist_to_binary(Path)
+	}, [return_map]),
+	{ok, Cookies0, Store} = gun_cookies:query(Store0, URIMap),
+	Headers = case Cookies0 of
+		[] ->
+			Headers0;
+		_ ->
+			Cookies = [{Name, Value} || #{name := Name, value := Value} <- Cookies0],
+			%% We put cookies at the end of the headers list as it's the least important header.
+			Headers0 ++ [{<<"cookie">>, cow_cookie:cookie(Cookies)}]
+	end,
+	{Headers, State#state{cookie_store=Store}}.
 
 %% Switch to the graceful connection close state.
 closing(State=#state{protocol=Protocol, protocol_state=ProtoState,
@@ -1355,6 +1405,41 @@ commands([{active, Active}|Tail], State) when is_boolean(Active) ->
 	commands(Tail, State#state{active=Active});
 commands([{state, ProtoState}|Tail], State) ->
 	commands(Tail, State#state{protocol_state=ProtoState});
+%% Don't set cookies when cookie store isn't configured.
+commands([{set_cookie, _, _, _, _}|Tail], State=#state{cookie_store=undefined}) ->
+	commands(Tail, State);
+%% Ignore cookies set on informational responses when configured to do so.
+%% This includes cookies set to Websocket upgrade responses!
+commands([{set_cookie, _, _, Status, _}|Tail], State=#state{opts=#{cookie_ignore_informational := true}})
+		when Status >= 100, Status =< 199 ->
+	commands(Tail, State);
+commands([{set_cookie, Authority, PathWithQs, _, Headers}|Tail], State=#state{
+			transport=Transport, cookie_store=Store0}) ->
+	Scheme = case Transport of
+		gun_tls -> <<"https">>;
+		gun_tls_proxy -> <<"https">>;
+		gun_tcp -> <<"http">>
+	end,
+	%% @todo Not sure if this is best done here or in the protocol code or elsewhere.
+	#{host := Host, path := Path} = uri_string:parse([Scheme, <<"://">>, Authority, PathWithQs]),
+	URIMap = uri_string:normalize(#{
+		scheme => Scheme,
+		host => iolist_to_binary(Host),
+		path => iolist_to_binary(Path)
+	}, [return_map]),
+	SetCookies = [SC || {<<"set-cookie">>, SC} <- Headers],
+	Store = lists:foldl(fun(SC, Store1) ->
+		case cow_cookie:parse_set_cookie(SC) of
+			{ok, N, V, A} ->
+				case gun_cookies:set_cookie(Store1, URIMap, N, V, A) of
+					{ok, Store2} -> Store2;
+					{error, _} -> Store1
+				end;
+			ignore ->
+				Store1
+		end
+	end, Store0, SetCookies),
+	commands(Tail, State#state{cookie_store=Store});
 %% Order is important: the origin must be changed before
 %% the transport and/or protocol in order to keep track
 %% of the intermediaries properly.
@@ -1499,7 +1584,13 @@ owner_down(Shutdown = {shutdown, _}, State) -> {stop, Shutdown, State};
 owner_down(Reason, State) -> {stop, {shutdown, {owner_down, Reason}}, State}.
 
 terminate(Reason, StateName, #state{event_handler=EvHandler,
-		event_handler_state=EvHandlerState}) ->
+		event_handler_state=EvHandlerState, cookie_store=Store}) ->
+	case Store of
+		undefined -> ok;
+		%% Optimization: gun_cookies_list isn't a persistent cookie store.
+		{gun_cookies_list, _} -> ok;
+		_ -> gun_cookies:session_gc(Store)
+	end,
 	TerminateEvent = #{
 		state => StateName,
 		reason => Reason

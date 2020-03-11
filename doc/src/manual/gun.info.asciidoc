@@ -6,6 +6,8 @@ gun:info - Obtain information about the connection
 
 == Description
 
+// @todo Document the cookie_store key when documenting cookies.
+
 [source,erlang]
 ----
 info(ConnPid) -> Info
