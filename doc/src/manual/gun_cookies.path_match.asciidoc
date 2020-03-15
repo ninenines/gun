@@ -1,0 +1,52 @@
+= gun_cookies:path_match(3)
+
+== Name
+
+gun_cookies:path_match - Cookie path match
+
+== Description
+
+[source,erlang]
+----
+path_match(ReqPath, CookiePath) -> boolean()
+
+ReqPath    :: binary()
+CookiePath :: binary()
+----
+
+Cookie path match.
+
+This function can be used when implementing the
+`set_cookie_secure_match` callback of a cookie store.
+
+== Arguments
+
+ReqPath::
+
+The request path to match.
+
+CookiePath::
+
+The cookie path that will be matched against.
+
+== Return value
+
+Returns `true` when `ReqPath` path-matches `CookiePath`,
+and `false` otherwise.
+
+== Changelog
+
+* *2.0*: Function introduced.
+
+== Examples
+
+.Perform a path match
+[source,erlang]
+----
+Match = gun_cookies:path_match(ReqPath, CookiePath).
+----
+
+== See also
+
+link:man:gun_cookies(3)[gun_cookies(3)],
+link:man:gun_cookies:domain_match(3)[gun_cookies:domain_match(3)]

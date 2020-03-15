@@ -39,7 +39,7 @@
 	last_access_time := calendar:datetime(),
 	expiry_time := calendar:datetime() | infinity,
 	persistent := boolean(),
-	host_only => boolean(),
+	host_only := boolean(),
 	secure_only := boolean(),
 	http_only := boolean(),
 	same_site := strict | lax | none
@@ -49,7 +49,7 @@
 -callback init(any()) -> store().
 
 -callback query(State, uri_string:uri_map())
-	-> {ok, [{binary(), binary()}], State}
+	-> {ok, [gun_cookies:cookie()], State}
 	when State::store_state().
 
 -callback set_cookie_secure_match(store_state(), #{
@@ -59,12 +59,13 @@
 	path := binary()
 }) -> match | nomatch.
 
--callback set_cookie_exact_match(store_state(), #{
+-callback set_cookie_get_exact_match(State, #{
 	name := binary(),
 	domain := binary(),
 	host_only := boolean(),
 	path := binary()
-}) -> {match, cookie()} | nomatch.
+}) -> {ok, cookie(), State} | error
+	when State::store_state().
 
 -callback store(State, cookie())
 	-> {ok, State} | {error, any()}
@@ -137,7 +138,7 @@ path_match_test_() ->
 
 %% @todo The given URI must be normalized.
 -spec query(Store, uri_string:uri_map())
-	-> {ok, [{binary(), binary()}], Store}
+	-> {ok, [cookie()], Store}
 	when Store::store().
 query({Mod, State0}, URI) ->
 	{ok, Cookies0, State} = Mod:query(State0, URI),
@@ -288,7 +289,7 @@ set_cookie3(Store, Attrs, Cookie=#{name := Name,
 
 set_cookie_store(Store0, Cookie) ->
 	Match = maps:with([name, domain, host_only, path], Cookie),
-	case set_cookie_take_exact_match(Store0, Match) of
+	case set_cookie_get_exact_match(Store0, Match) of
 		{ok, #{creation_time := CreationTime}, Store} ->
 			%% This is where we would reject a new non-HTTP cookie
 			%% if the OldCookie has http_only set to true.
@@ -297,8 +298,8 @@ set_cookie_store(Store0, Cookie) ->
 			store(Store0, Cookie)
 	end.
 
-set_cookie_take_exact_match({Mod, State0}, Match) ->
-	case Mod:set_cookie_take_exact_match(State0, Match) of
+set_cookie_get_exact_match({Mod, State0}, Match) ->
+	case Mod:set_cookie_get_exact_match(State0, Match) of
 		{ok, Cookie, State} ->
 			{ok, Cookie, {Mod, State}};
 		Error ->
@@ -624,5 +625,5 @@ wpt_secure_http_test() ->
 	{error, secure_scheme_only} = set_cookie(gun_cookies_list:init(), URIMap, N, V, A),
 	ok.
 
-%% @todo WPT: secure/set-from-ws* - Anything special required?
+%% WPT: secure/set-from-ws* (Anything special required?)
 -endif.

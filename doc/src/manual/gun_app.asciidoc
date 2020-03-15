@@ -16,6 +16,8 @@ to the server and reconnects automatically when necessary.
 == Modules
 
 * link:man:gun(3)[gun(3)] - Asynchronous HTTP client
+* link:man:gun_cookies(3)[gun_cookies(3)] - Cookie store engine
+* link:man:gun_cookies_list(3)[gun_cookies_list(3)] - Cookie store backend: in-memory, per connection
 
 == Dependencies
 

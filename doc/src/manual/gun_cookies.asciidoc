@@ -1,0 +1,179 @@
+= gun_cookies(3)
+
+== Name
+
+gun_cookies - Cookie store engine
+
+== Description
+
+The `gun_cookies` module implements a cookie store engine.
+It will be used by Gun when a cookie store is configured.
+It also defines the interface and provides functions used
+to implement cookie store backends.
+
+== Callbacks
+
+Cookie store backends implement the following interface.
+Functions are organized by theme: initialization, querying,
+storing and garbage collecting:
+
+=== init
+
+[source,erlang]
+----
+init(Opts :: any()) -> gun_cookies:store()
+----
+
+Initialize the cookie store.
+
+=== query
+
+[source,erlang]
+----
+query(State, URI) -> {ok, [Cookie], State}
+
+URI    :: uri_string:uri_map()
+Cookie :: gun_cookies:cookie()
+State  :: any()
+----
+
+Query the store for the cookies for the given URI.
+
+=== set_cookie_secure_match
+
+[source,erlang]
+----
+set_cookie_secure_match(State, Match) -> match | nomatch
+
+State :: any()
+Match :: #{
+    name := binary(),
+%	secure_only := true,
+    domain := binary(),
+    path := binary()
+}
+----
+
+Perform a secure match against cookies already in the store.
+This is part of the heuristics that the cookie store engine
+applies to decide whether the cookie must be stored.
+
+The `secure_only` attribute is implied, it is not actually
+passed in the argument.
+
+=== set_cookie_get_exact_match
+
+[source,erlang]
+----
+set_cookie_get_exact_match(State, Match)
+    -> {ok, gun_cookies:cookie(), State} | error
+
+State :: any()
+Match :: #{
+	name := binary(),
+	domain := binary(),
+	host_only := boolean(),
+	path := binary()
+}
+----
+
+Perform an exact match against cookies already in the store.
+This is part of the heuristics that the cookie store engine
+applies to decide whether the cookie must be stored.
+
+When a cookie is found, it must be returned so that it gets
+updated. When nothing is found a new cookie will be stored.
+
+=== store
+
+[source,erlang]
+----
+store(State, gun_cookies:cookie())
+	-> {ok, State} | {error, any()}
+
+State :: any()
+----
+
+Unconditionally store the cookie into the cookie store.
+
+=== gc
+
+[source,erlang]
+----
+gc(State) -> {ok, State}
+
+State :: any()
+----
+
+Remove all cookies from the cookie store that are expired.
+
+Other cookies may be removed as well, at the discretion
+of the cookie store. For example excess cookies may be
+removed to reduce the memory footprint.
+
+=== session_gc
+
+[source,erlang]
+----
+session_gc(State) -> {ok, State}
+
+State :: any()
+----
+
+Remove all cookies from the cookie store that have the
+`persistent` flag set to `false`.
+
+== Exports
+
+* link:man:gun_cookies:domain_match(3)[gun_cookies:domain_match(3)] - Cookie domain match
+* link:man:gun_cookies:path_match(3)[gun_cookies:path_match(3)] - Cookie path match
+
+== Types
+
+=== cookie()
+
+[source,erlang]
+----
+cookie() :: #{
+    name             := binary(),
+    value            := binary(),
+    domain           := binary(),
+    path             := binary(),
+    creation_time    := calendar:datetime(),
+    last_access_time := calendar:datetime(),
+    expiry_time      := calendar:datetime() | infinity,
+    persistent       := boolean(),
+    host_only        := boolean(),
+    secure_only      := boolean(),
+    http_only        := boolean(),
+    same_site        := strict | lax | none
+}
+----
+
+A cookie.
+
+This contains the cookie name, value, attributes and flags.
+This is the representation that the cookie store engine
+and Gun expects. Cookies do not have to be kept in this
+format in the cookie store backend.
+
+=== store()
+
+[source,erlang]
+----
+store() :: {module(), StoreState :: any()}
+----
+
+The cookie store.
+
+This is a tuple containing the cookie store backend module
+and its current state.
+
+== Changelog
+
+* *2.0*: Module introduced.
+
+== See also
+
+link:man:gun(7)[gun(7)],
+link:man:gun_cookies_list(3)[gun_cookies_list(3)]

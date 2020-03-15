@@ -15,12 +15,13 @@
 %% A reference cookie store implemented as a list of cookies.
 %% This cookie store cannot be shared between connections.
 -module(gun_cookies_list).
+-behavior(gun_cookies).
 
 -export([init/0]).
 -export([init/1]).
 -export([query/2]).
 -export([set_cookie_secure_match/2]).
--export([set_cookie_take_exact_match/2]).
+-export([set_cookie_get_exact_match/2]).
 -export([store/2]).
 -export([gc/1]).
 -export([session_gc/1]).
@@ -33,6 +34,7 @@
 
 -type opts() :: #{
 }.
+-export_type([opts/0]).
 
 -spec init() -> {?MODULE, state()}.
 init() ->
@@ -43,7 +45,7 @@ init(_Opts) ->
 	{?MODULE, #{cookies => []}}.
 
 -spec query(State, uri_string:uri_map())
-	-> {ok, [{binary(), binary()}], State}
+	-> {ok, [gun_cookies:cookie()], State}
 	when State::state().
 query(State=#{cookies := Cookies}, URI) ->
 	CurrentTime = erlang:universaltime(),
@@ -100,13 +102,13 @@ set_cookie_secure_match(#{cookies := Cookies},
 		_ -> match
 	end.
 
--spec set_cookie_take_exact_match(State, #{
+-spec set_cookie_get_exact_match(State, #{
 	name := binary(),
 	domain := binary(),
 	host_only := boolean(),
 	path := binary()
 }) -> {ok, gun_cookies:cookie(), State} | error when State::state().
-set_cookie_take_exact_match(State=#{cookies := Cookies0}, Match) ->
+set_cookie_get_exact_match(State=#{cookies := Cookies0}, Match) ->
 	Result = [Cookie || Cookie <- Cookies0,
 		Match =:= maps:with([name, domain, host_only, path], Cookie)],
 	Cookies = [Cookie || Cookie <- Cookies0,

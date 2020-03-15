@@ -1,0 +1,55 @@
+= gun_cookies_list(3)
+
+== Name
+
+gun_cookies_list - Cookie store backend: in-memory, per connection
+
+== Description
+
+The `gun_cookies_list` module implements a cookie store
+backend that keeps all the cookie data in-memory and tied
+to a specific connection.
+
+It is possible to implement a custom backend on top of
+`gun_cookies_list` in order to add persistence or sharing
+properties.
+
+== Exports
+
+This module implements the callbacks defined in
+link:man:gun_cookies(3)[gun_cookies(3)].
+
+== Types
+
+=== opts()
+
+[source,erlang]
+----
+opts() :: #{
+}
+----
+
+Cookie store backend options.
+
+There are currently no options available for this backend.
+
+// The default value is given next to the option name:
+
+== Changelog
+
+* *2.0*: Module introduced.
+
+== Examples
+
+.Open a connection with a cookie store configured
+[source,erlang]
+----
+{ok, ConnPid} = gun:open(Host, Port, #{
+    cookie_store => gun_cookies_list:init(#{})
+})
+----
+
+== See also
+
+link:man:gun(7)[gun(7)],
+link:man:gun_cookies(3)[gun_cookies(3)]

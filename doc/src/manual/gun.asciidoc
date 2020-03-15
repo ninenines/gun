@@ -251,6 +251,7 @@ Time between pings in milliseconds.
 ----
 opts() :: #{
     connect_timeout       => timeout(),
+    cookie_store          => gun_cookies:store(),
     domain_lookup_timeout => timeout(),
     http_opts             => http_opts(),
     http2_opts            => http2_opts(),
@@ -275,6 +276,15 @@ The default value is given next to the option name:
 connect_timeout (infinity)::
 
 Connection timeout.
+
+cookie_store - see below::
+
+The cookie store that Gun will use for this connection.
+When configured, Gun will query the store for cookies
+and include them in the request headers; and add cookies
+found in response headers to the store.
++
+By default no cookie store will be used.
 
 domain_lookup_timeout (infinity)::
 
@@ -525,6 +535,9 @@ when receiving a ping.
 
 == Changelog
 
+* *2.0*: The option `cookie_store` was added. It can be used
+         to configure a cookie store that Gun will use
+         automatically.
 * *2.0*: The types `protocols()` and `socks_opts()` have been
          added. Support for the Socks protocol has been added
          in every places where protocol selection is available.

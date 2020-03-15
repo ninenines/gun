@@ -1,0 +1,52 @@
+= gun_cookies:domain_match(3)
+
+== Name
+
+gun_cookies:domain_match - Cookie domain match
+
+== Description
+
+[source,erlang]
+----
+domain_match(String, DomainString) -> boolean()
+
+String       :: binary()
+DomainString :: binary()
+----
+
+Cookie domain match.
+
+This function can be used when implementing the
+`set_cookie_secure_match` callback of a cookie store.
+
+== Arguments
+
+String::
+
+The string to match.
+
+DomainString::
+
+The domain string that will be matched against.
+
+== Return value
+
+Returns `true` when `String` domain-matches `DomainString`,
+and `false` otherwise.
+
+== Changelog
+
+* *2.0*: Function introduced.
+
+== Examples
+
+.Perform a domain match
+[source,erlang]
+----
+Match = gun_cookies:domain_match(Domain, CookieDomain).
+----
+
+== See also
+
+link:man:gun_cookies(3)[gun_cookies(3)],
+link:man:gun_cookies:path_match(3)[gun_cookies:path_match(3)]

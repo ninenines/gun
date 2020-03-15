@@ -1585,7 +1585,7 @@ owner_down(Reason, State) -> {stop, {shutdown, {owner_down, Reason}}, State}.
 
 terminate(Reason, StateName, #state{event_handler=EvHandler,
 		event_handler_state=EvHandlerState, cookie_store=Store}) ->
-	case Store of
+	_ = case Store of
 		undefined -> ok;
 		%% Optimization: gun_cookies_list isn't a persistent cookie store.
 		{gun_cookies_list, _} -> ok;
