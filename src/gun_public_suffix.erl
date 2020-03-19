@@ -7191,7 +7191,6 @@ m(S = [<<"vip">>]) -> e(S);
 m(S = [<<"virgin">>]) -> e(S);
 m(S = [<<"visa">>]) -> e(S);
 m(S = [<<"vision">>]) -> e(S);
-m(S = [<<"vistaprint">>]) -> e(S);
 m(S = [<<"viva">>]) -> e(S);
 m(S = [<<"vivo">>]) -> e(S);
 m(S = [<<"vlaanderen">>]) -> e(S);

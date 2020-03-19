@@ -78,7 +78,6 @@ GEN_OUT = src/gun_public_suffix.erl
 
 # We use idna for punycode encoding when generating the module.
 dep_idna = git https://github.com/benoitc/erlang-idna 6.0.0
-ALL_DEPS_DIRS += $(DEPS_DIR)/idna
 $(eval $(call dep_target,idna))
 
 # 33 is $!
