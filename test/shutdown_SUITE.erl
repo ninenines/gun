@@ -61,7 +61,7 @@ not_connected_gun_shutdown(_) ->
 	ConnRef = monitor(process, ConnPid),
 	gun:shutdown(ConnPid),
 	Timeout = case os:type() of
-		{win32, _} -> 2000;
+		{win32, _} -> 5000;
 		_ -> 1000
 	end,
 	gun_is_down(ConnPid, ConnRef, shutdown, Timeout).
@@ -87,7 +87,7 @@ do_not_connected_owner_down(ExitReason, DownReason) ->
 	ConnPid = receive {conn, C} -> C after 1000 -> error(timeout) end,
 	ConnRef = monitor(process, ConnPid),
 	Timeout = case os:type() of
-		{win32, _} -> 2000;
+		{win32, _} -> 5000;
 		_ -> 1000
 	end,
 	gun_is_down(ConnPid, ConnRef, DownReason, Timeout).

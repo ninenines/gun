@@ -28,9 +28,9 @@ all() ->
 
 groups() ->
 	%% On Windows we sometimes have timeout related failures due to
-	%% some operations taking longer on Windows. Best retry a few times.
+	%% some operations taking longer. Best retry a few times.
 	Props = case os:type() of
-		{win32, _} -> [{repeat_until_all_ok, 100}];
+		{win32, _} -> [{repeat_until_all_ok, 10}];
 		_ -> []
 	end,
 	[{gun, [parallel|Props], ct_helper:all(?MODULE)}].
@@ -296,11 +296,11 @@ retry_0(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
 	%% On Windows when the connection is refused the OS will retry
-	%% 3 times before giving up, with a 500ms delay between tries.
-	%% This adds approximately 1 second to connection failures.
+	%% a few times before giving up, with a delay between tries.
+	%% This adds time to connection failures.
 	After = case os:type() of
-		{win32, _} -> 1200;
-		_ -> 200
+		{win32, _} -> 2300;
+		_ -> 300
 	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
@@ -316,11 +316,11 @@ retry_0_disconnect(_) ->
 	{ok, Pid} = gun:open("localhost", Port, #{retry => 0, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
 	%% On Windows when the connection is refused the OS will retry
-	%% 3 times before giving up, with a 500ms delay between tries.
-	%% This adds approximately 1 second to connection failures.
+	%% a few times before giving up, with a delay between tries.
+	%% This adds time to connection failures.
 	After = case os:type() of
-		{win32, _} -> 1200;
-		_ -> 200
+		{win32, _} -> 2300;
+		_ -> 300
 	end,
 	%% We accept the connection and then close it to trigger a disconnect.
 	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
@@ -337,8 +337,8 @@ retry_1(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
 	After = case os:type() of
-		{win32, _} -> 2700;
-		_ -> 700
+		{win32, _} -> 4800;
+		_ -> 800
 	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, _}} ->
@@ -368,7 +368,7 @@ retry_fun(_) ->
 	}),
 	Ref = monitor(process, Pid),
 	After = case os:type() of
-		{win32, _} -> 2800;
+		{win32, _} -> 4800;
 		_ -> 800
 	end,
 	receive
@@ -384,7 +384,7 @@ retry_timeout(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 2, retry_timeout => 1000}),
 	Ref = monitor(process, Pid),
 	After = case os:type() of
-		{win32, _} -> 2800;
+		{win32, _} -> 4800;
 		_ -> 800
 	end,
 	receive
@@ -419,8 +419,8 @@ shutdown_reason(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
 	Ref = monitor(process, Pid),
 	After = case os:type() of
-		{win32, _} -> 1200;
-		_ -> 200
+		{win32, _} -> 2300;
+		_ -> 300
 	end,
 	receive
 		{'DOWN', Ref, process, Pid, {shutdown, econnrefused}} ->
