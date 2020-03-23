@@ -19,7 +19,7 @@ much more advanced.
 
 The Gun connection process is now implemented using `gen_statem`.
 
-Gun 2.0 requires Erlang/OTP 20.0 or greater.
+Gun 2.0 requires Erlang/OTP 22.0 or greater.
 
 === Features added
 
