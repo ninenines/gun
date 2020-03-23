@@ -89,9 +89,8 @@ default_flow_http2(_) ->
 		StreamRef2 = gun:get(ConnPid, "/", [], #{flow => 2}),
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef2),
 		%% We set the flow to 2 but due to the ensure_window algorithm
-		%% we end up receiving *5* data messages before flow control kicks in,
-		%% equivalent to 3 SSE events.
-		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
+		%% we end up receiving *4* data messages before we consume
+		%% the window.
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
 		{data, nofin, _} = gun:await(ConnPid, StreamRef2),
