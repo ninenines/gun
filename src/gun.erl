@@ -442,11 +442,15 @@ info(ServerPid) ->
 		undefined ->
 			Info0;
 		_ ->
-			{ok, {SockIP, SockPort}} = Transport:sockname(Socket),
-			Info0#{
-				sock_ip => SockIP,
-				sock_port => SockPort
-			}
+			case Transport:sockname(Socket) of
+				{ok, {SockIP, SockPort}} ->
+					Info0#{
+						sock_ip => SockIP,
+						sock_port => SockPort
+					};
+				{error, _} ->
+					Info0
+			end
 	end,
 	case Protocol of
 		undefined -> Info;
