@@ -23,6 +23,17 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
 
 === Features added
 
+* Cookie store support has been added. The `cookie_store`
+  option allows configuring the cookie store backend.
+  The `gun_cookies` module provides functions to help
+  implementing such a backend. Gun comes with the backend
+  `gun_cookies_list` which provides a per-connection,
+  non-persistent cookie store. The cookie store engine
+  implements the entire RFC6265bis draft algorithms except
+  the parts about non-HTTP cookies as no such interface is
+  provided; and the parts about SameSite as Gun has no
+  concept of "browsing context".
+
 * Graceful shutdown has been implemented. Graceful shutdown
   can be initiated on the client side by calling the new
   function `gun:shutdown/1` or when the owner process goes
@@ -76,8 +87,7 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   for any sort of protocols. This can also be useful
   when performing HTTP/1.1 Upgrade to custom protocols.
 
-* Headers can now be provided as a map. Header names may now
-  be provided as binary, string or atom.
+* Headers can now be provided as a map.
 
 * Header names may now be provided as binary, string or atom.
 
@@ -218,3 +228,21 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
 
 * An invalid stream reference was sent on failed Websocket
   upgrade responses. This has been corrected.
+
+* HTTP/2 connection preface errors are now properly detected
+  and propagated in the `gun_down` message to the connection
+  owner as well as the exit reason of the Gun process.
+
+* HTTP/2 connection preface errors now provide a different
+  human readable error when the data received looks like an
+  HTTP/1.x response.
+
+* HTTP/2 connection errors were missing the human readable
+  reason in the `gun_error` message. This has been corrected.
+
+* Fix the host and :authority (pseudo-)headers when connecting
+  to an IPv6 address given as a tuple. They were lacking the
+  surrounding brackets.
+
+* Fix a crash in gun:info/1 when the socket was closed before
+  we call Transport:sockname/1.
