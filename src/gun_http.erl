@@ -605,7 +605,8 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 host_header(Transport, Host0, Port) ->
 	Host = case Host0 of
 		{local, _SocketPath} -> <<>>;
-		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
+		Tuple when tuple_size(Tuple) =:= 8 -> [$[, inet:ntoa(Tuple), $]]; %% IPv6.
+		Tuple when tuple_size(Tuple) =:= 4 -> inet:ntoa(Tuple); %% IPv4.
 		Atom when is_atom(Atom) -> atom_to_list(Atom);
 		_ -> Host0
 	end,

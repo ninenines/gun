@@ -34,6 +34,19 @@ host_default_port_https(_) ->
 	doc("The default port for https should not be sent in the host header. (RFC7230 2.7.2)"),
 	do_host_port(tls, 443, <<>>).
 
+host_ipv6(_) ->
+	doc("When connecting to a server using an IPv6 address the host "
+		"header must wrap the address with brackets. (RFC7230 5.4, RFC3986 3.2.2)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, ConnPid} = gun:open({0,0,0,0,0,0,0,1}, OriginPort, #{transport => tcp}),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	handshake_completed = receive_from(OriginPid),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: [::1]", _/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	gun:close(ConnPid).
+
 host_other_port_http(_) ->
 	doc("Non-default ports for http must be sent in the host header. (RFC7230 2.7.1)"),
 	do_host_port(tcp, 443, <<":443">>).

@@ -35,6 +35,27 @@ authority_default_port_https(_) ->
 		"the :authority pseudo-header. (RFC7540 3, RFC7230 2.7.2)"),
 	do_authority_port(tls, 443, <<>>).
 
+authority_ipv6(_) ->
+	doc("When connecting to a server using an IPv6 address the :authority "
+		"pseudo-header must wrap the address with brackets. (RFC7540 8.1.2.3, RFC3986 3.2.2)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(Parent, Socket, Transport) ->
+		%% Receive the HEADERS frame and send the headers decoded.
+		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
+		{ReqHeaders, _} = cow_hpack:decode(ReqHeadersBlock),
+		Parent ! {self(), ReqHeaders}
+	end),
+	{ok, ConnPid} = gun:open({0,0,0,0,0,0,0,1}, OriginPort, #{
+		transport => tcp,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	_ = gun:get(ConnPid, "/"),
+	ReqHeaders = receive_from(OriginPid),
+	{_, <<"[::1]", _/bits>>} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
+	gun:close(ConnPid).
+
 authority_other_port_http(_) ->
 	doc("Non-default ports for http must be sent in "
 		"the :authority pseudo-header. (RFC7540 3, RFC7230 2.7.1)"),
