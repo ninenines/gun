@@ -2,7 +2,7 @@
 
 PROJECT = gun
 PROJECT_DESCRIPTION = HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP.
-PROJECT_VERSION = 2.0.0-pre.1
+PROJECT_VERSION = 2.0.0-pre.2
 
 # Options.
 
@@ -14,7 +14,7 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib master
+dep_cowlib = git https://github.com/ninenines/cowlib 2.9.0
 
 DOC_DEPS = asciideck
 
