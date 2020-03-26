@@ -44,9 +44,13 @@ init_origin(Transport, Protocol, Fun) ->
 	Port = receive_from(Pid),
 	{ok, Pid, Port}.
 
-init_origin(Parent, tcp, Protocol, Fun) ->
-	%% We setup the socket for both IPv4 and IPv6.
-	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}, inet6]),
+init_origin(Parent, Transport, Protocol, Fun)
+		when Transport =:= tcp; Transport =:= tcp6 ->
+	InetOpt = case Transport of
+		tcp -> inet;
+		tcp6 -> inet6
+	end,
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}, InetOpt]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	Parent ! {self(), Port},
 	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),

@@ -37,7 +37,7 @@ host_default_port_https(_) ->
 host_ipv6(_) ->
 	doc("When connecting to a server using an IPv6 address the host "
 		"header must wrap the address with brackets. (RFC7230 5.4, RFC3986 3.2.2)"),
-	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, OriginPid, OriginPort} = init_origin(tcp6, http),
 	{ok, ConnPid} = gun:open({0,0,0,0,0,0,0,1}, OriginPort, #{transport => tcp}),
 	{ok, http} = gun:await_up(ConnPid),
 	_ = gun:get(ConnPid, "/"),

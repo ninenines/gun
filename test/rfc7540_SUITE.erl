@@ -38,7 +38,7 @@ authority_default_port_https(_) ->
 authority_ipv6(_) ->
 	doc("When connecting to a server using an IPv6 address the :authority "
 		"pseudo-header must wrap the address with brackets. (RFC7540 8.1.2.3, RFC3986 3.2.2)"),
-	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(Parent, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp6, http2, fun(Parent, Socket, Transport) ->
 		%% Receive the HEADERS frame and send the headers decoded.
 		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
