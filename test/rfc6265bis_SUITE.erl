@@ -126,8 +126,6 @@ do_test_giver_loop([TestFile|Tail]) ->
 		{request_test_file, FromPid, FromRef} ->
 			FromPid ! {FromRef, TestFile},
 			do_test_giver_loop(Tail)
-	after 1000 ->
-		error(timeout)
 	end.
 
 do_request_test_file(Config) ->
