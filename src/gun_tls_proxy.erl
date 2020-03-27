@@ -390,23 +390,30 @@ proxy_active(State=#state{proxy_pid=ProxyPid, proxy_active=Active0, proxy_buffer
 	State#state{proxy_active=Active, proxy_buffer= <<>>}.
 
 -ifdef(TEST).
-tcp_test() ->
+proxy_test_() ->
+	{timeout, 15000, [
+		{"TCP proxy", fun proxy_tcp1_t/0},
+		{"TLS proxy", fun proxy_ssl1_t/0},
+		{"Double TLS proxy", fun proxy_ssl2_t/0}
+	]}.
+
+proxy_tcp1_t() ->
 	ssl:start(),
 	{ok, Socket} = gen_tcp:connect("google.com", 443, [binary, {active, false}]),
 	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, gen_tcp, #{}),
 	send(ProxyPid1, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
-	receive {tls_proxy, ProxyPid1, <<"HTTP/1.1 ", _/bits>>} -> ok after 1000 -> error(timeout) end.
+	receive {tls_proxy, ProxyPid1, <<"HTTP/1.1 ", _/bits>>} -> ok end.
 
-ssl_test() ->
+proxy_ssl1_t() ->
 	ssl:start(),
 	_ = (catch ct_helper:make_certs_in_ets()),
 	{ok, _, Port} = do_proxy_start("google.com", 443),
 	{ok, Socket} = ssl:connect("localhost", Port, [binary, {active, false}]),
 	{ok, ProxyPid1} = start_link("google.com", 443, [], 5000, Socket, ssl, #{}),
 	send(ProxyPid1, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
-	receive {tls_proxy, ProxyPid1, <<"HTTP/1.1 ", _/bits>>} -> ok after 1000 -> error(timeout) end.
+	receive {tls_proxy, ProxyPid1, <<"HTTP/1.1 ", _/bits>>} -> ok end.
 
-ssl2_test() ->
+proxy_ssl2_t() ->
 	ssl:start(),
 	_ = (catch ct_helper:make_certs_in_ets()),
 	{ok, _, Port1} = do_proxy_start("google.com", 443),
@@ -415,7 +422,7 @@ ssl2_test() ->
 	{ok, ProxyPid1} = start_link("localhost", Port1, [], 5000, Socket, ssl, #{}),
 	{ok, ProxyPid2} = start_link("google.com", 443, [], 5000, ProxyPid1, ?MODULE, #{}),
 	send(ProxyPid2, <<"GET / HTTP/1.1\r\nHost: google.com\r\n\r\n">>),
-	receive {tls_proxy, ProxyPid2, <<"HTTP/1.1 ", _/bits>>} -> ok after 1000 -> error(timeout) end.
+	receive {tls_proxy, ProxyPid2, <<"HTTP/1.1 ", _/bits>>} -> ok end.
 
 do_proxy_start(Host, Port) ->
 	Self = self(),
