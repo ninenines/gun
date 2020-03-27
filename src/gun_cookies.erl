@@ -319,13 +319,13 @@ store({Mod, State0}, Cookie) ->
 gc_test() ->
 	URIMap = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/path/to/resource">>},
 	Store0 = gun_cookies_list:init(),
-	%% Add a cookie that expires in 1 second. GC. Cookie can be retrieved.
-	{ok, N0, V0, A0} = cow_cookie:parse_set_cookie(<<"a=b; Path=/; Max-Age=1">>),
+	%% Add a cookie that expires in 2 seconds. GC. Cookie can be retrieved.
+	{ok, N0, V0, A0} = cow_cookie:parse_set_cookie(<<"a=b; Path=/; Max-Age=2">>),
 	{ok, Store1} = set_cookie(Store0, URIMap, N0, V0, A0),
 	{ok, Store2} = gc(Store1),
 	{ok, [_], _} = query(Store2, URIMap),
-	%% Wait 2 seconds. GC. Cookie was removed.
-	timer:sleep(2000),
+	%% Wait 3 seconds. GC. Cookie was removed.
+	timer:sleep(3000),
 	{ok, Store} = gc(Store2),
 	{ok, [], _} = query(Store, URIMap),
 	ok.
