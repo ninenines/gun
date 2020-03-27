@@ -284,7 +284,8 @@ do_reply_to(Protocol) ->
 	ok = gen_tcp:send(ClientSocket, ResponseData),
 	ReplyTo ! Ref,
 	receive
-		{response, _, _, _} ->
+		Msg ->
+			{response, _, _, _} = Msg,
 			gun:close(Pid)
 	end.
 
