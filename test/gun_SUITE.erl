@@ -224,9 +224,12 @@ postpone_request_while_not_connected(_) ->
 	{ok, <<"GET /postponed HTTP/1.1\r\n", _/bits>>} = gen_tcp:recv(ClientSocket, 0, 5000),
 	gun:close(ConnPid).
 
-reply_to(_) ->
+reply_to_http(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
-	do_reply_to(http),
+	do_reply_to(http).
+
+reply_to_http2(_) ->
+	doc("The reply_to option allows using a separate process for requests."),
 	do_reply_to(http2).
 
 do_reply_to(Protocol) ->
