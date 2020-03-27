@@ -250,7 +250,7 @@ do_reply_to(Protocol) ->
 	{ok, Protocol} = gun:await_up(Pid),
 	ReplyTo = spawn(fun() ->
 		receive Ref ->
-			Response = gun:await(Pid, Ref),
+			Response = gun:await(Pid, Ref, infinity),
 			Self ! Response
 		end
 	end),
