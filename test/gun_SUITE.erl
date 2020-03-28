@@ -440,7 +440,11 @@ set_owner(_) ->
 
 shutdown_reason(_) ->
 	doc("The last connection failure must be propagated."),
-	{ok, ConnPid} = gun:open("localhost", 12345, #{retry => 0}),
+	%% We set retry=1 so that we can monitor before the process terminates.
+	{ok, ConnPid} = gun:open("localhost", 12345, #{
+		retry => 1,
+		retry_timeout => 500
+	}),
 	Ref = monitor(process, ConnPid),
 	receive
 		{'DOWN', Ref, process, ConnPid, Reason} ->
