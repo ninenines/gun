@@ -315,10 +315,6 @@ do_socks5_through_multiple_proxies(OriginScheme, OriginTransport, ProxyTransport
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
-	Proxy2Transport = case ProxyTransport of
-		tcp -> tcp;
-		tls -> tls_proxy
-	end,
 	#{
 		transport := OriginTransport,
 		protocol := http,
@@ -335,7 +331,7 @@ do_socks5_through_multiple_proxies(OriginScheme, OriginTransport, ProxyTransport
 			type := socks5,
 			host := "localhost",
 			port := Proxy2Port,
-			transport := Proxy2Transport,
+			transport := ProxyTransport,
 			protocol := socks
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
@@ -397,10 +393,6 @@ do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) -
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority2/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
-	Proxy2Transport = case ProxyTransport of
-		tcp -> tcp;
-		tls -> tls_proxy
-	end,
 	#{
 		transport := OriginTransport,
 		protocol := http,
@@ -417,7 +409,7 @@ do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) -
 			type := socks5,
 			host := "localhost",
 			port := Proxy2Port,
-			transport := Proxy2Transport,
+			transport := ProxyTransport,
 			protocol := socks
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).

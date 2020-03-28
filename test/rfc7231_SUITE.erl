@@ -240,26 +240,39 @@ do_connect_h2(OriginScheme, OriginTransport, ProxyTransport) ->
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
-connect_through_multiple_proxies(_) ->
+connect_tcp_through_multiple_tcp_proxies(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through "
 		"two separate HTTP proxies. (RFC7231 4.3.6)"),
-	{ok, OriginPid, OriginPort} = init_origin(tcp),
-	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(tcp),
-	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(tcp),
-	{ok, ConnPid} = gun:open("localhost", Proxy1Port),
+	do_connect_through_multiple_proxies(<<"http">>, tcp, tcp).
+
+connect_tls_through_multiple_tls_proxies(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"two separate HTTPS proxies. (RFC7231 4.3.6)"),
+	do_connect_through_multiple_proxies(<<"https">>, tls, tls).
+
+do_connect_through_multiple_proxies(OriginScheme, OriginTransport, ProxiesTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport),
+	{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(ProxiesTransport),
+	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(ProxiesTransport),
+	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
+		transport => ProxiesTransport
+	}),
 	{ok, http} = gun:await_up(ConnPid),
 	Authority1 = iolist_to_binary(["localhost:", integer_to_binary(Proxy2Port)]),
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
-		port => Proxy2Port
+		port => Proxy2Port,
+		transport => ProxiesTransport
 	}),
 	{request, <<"CONNECT">>, Authority1, 'HTTP/1.1', _} = receive_from(Proxy1Pid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	StreamRef2 = gun:connect(ConnPid, #{
 		host => "localhost",
-		port => OriginPort
+		port => OriginPort,
+		transport => OriginTransport
 	}),
 	{request, <<"CONNECT">>, Authority2, 'HTTP/1.1', _} = receive_from(Proxy2Pid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
@@ -269,22 +282,22 @@ connect_through_multiple_proxies(_) ->
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority2/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	#{
-		transport := tcp,
+		transport := OriginTransport,
 		protocol := http,
-		origin_scheme := <<"http">>,
+		origin_scheme := OriginScheme,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
 			type := connect,
 			host := "localhost",
 			port := Proxy1Port,
-			transport := tcp,
+			transport := ProxiesTransport,
 			protocol := http
 		}, #{
 			type := connect,
 			host := "localhost",
 			port := Proxy2Port,
-			transport := tcp,
+			transport := ProxiesTransport,
 			protocol := http
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).

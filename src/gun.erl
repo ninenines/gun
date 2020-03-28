@@ -434,8 +434,7 @@ info(ServerPid) ->
 		origin_scheme => OriginScheme,
 		origin_host => OriginHost,
 		origin_port => OriginPort,
-		%% Intermediaries are listed in the order data goes through them.
-		intermediaries => lists:reverse(Intermediaries),
+		intermediaries => intermediaries_info(Intermediaries, []),
 		cookie_store => CookieStore
 	},
 	Info = case Socket of
@@ -456,6 +455,19 @@ info(ServerPid) ->
 		undefined -> Info;
 		_ -> Info#{protocol => Protocol:name()}
 	end.
+
+%% We change tls_proxy into tls for intermediaries.
+%%
+%% Intermediaries are listed in the order data goes through them,
+%% that's why we reverse the order here.
+intermediaries_info([], Acc) ->
+	Acc;
+intermediaries_info([Intermediary=#{transport := Transport0}|Tail], Acc) ->
+	Transport = case Transport0 of
+		tls_proxy -> tls;
+		_ -> Transport0
+	end,
+	intermediaries_info(Tail, [Intermediary#{transport => Transport}|Acc]).
 
 -spec close(pid()) -> ok.
 close(ServerPid) ->
