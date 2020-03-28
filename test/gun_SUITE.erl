@@ -443,7 +443,8 @@ shutdown_reason(_) ->
 	{ok, ConnPid} = gun:open("localhost", 12345, #{retry => 0}),
 	Ref = monitor(process, ConnPid),
 	receive
-		{'DOWN', Ref, process, ConnPid, {shutdown, econnrefused}} ->
+		{'DOWN', Ref, process, ConnPid, Reason} ->
+			{shutdown, econnrefused} = Reason,
 			gun:close(ConnPid)
 	end.
 
