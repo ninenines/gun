@@ -165,7 +165,7 @@
 	type := connect | socks5,
 	host := inet:hostname() | inet:ip_address(),
 	port := inet:port_number(),
-	transport := tcp | tls,
+	transport := tcp | tls | tls_proxy,
 	protocol := http | http2 | raw | socks
 }.
 
