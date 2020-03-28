@@ -389,7 +389,7 @@ proxy_active(State=#state{proxy_pid=ProxyPid, proxy_active=Active0, proxy_buffer
 	end,
 	State#state{proxy_active=Active, proxy_buffer= <<>>}.
 
--ifdef(TEST).
+-ifdef(DISABLED_TEST).
 proxy_test_() ->
 	{timeout, 15000, [
 		{"TCP proxy", fun proxy_tcp1_t/0},
