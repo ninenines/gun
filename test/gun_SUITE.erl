@@ -233,55 +233,48 @@ reply_to_http2(_) ->
 	do_reply_to(http2).
 
 do_reply_to(Protocol) ->
-	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}, {nodelay, true}]),
-	{ok, {_, Port}} = inet:sockname(ListenSocket),
-	Self = self(),
-	{ok, Pid} = gun:open("localhost", Port, #{protocols => [Protocol]}),
-	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
-	ok = case Protocol of
-		http -> ok;
-		http2 ->
-			{ok, _} = gen_tcp:recv(ClientSocket, 0, 5000),
-			gen_tcp:send(ClientSocket, [
-				<<0:24, 4:8, 0:40>>, %% Empty SETTINGS frame.
-				<<0:24, 4:8, 1:8, 0:32>> %% SETTINGS ack.
-			])
-	end,
+	{ok, OriginPid, OriginPort} = init_origin(tcp, Protocol,
+		fun(_, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, infinity),
+			ResponseData = case Protocol of
+				http ->
+					"HTTP/1.1 200 OK\r\n"
+					"Content-length: 12\r\n"
+					"\r\n"
+					"Hello world!";
+				http2 ->
+					%% Send a HEADERS frame with PRIORITY back.
+					{HeadersBlock, _} = cow_hpack:encode([
+						{<<":status">>, <<"200">>}
+					]),
+					Len = iolist_size(HeadersBlock),
+					[
+						<<Len:24, 1:8,
+							0:2, %% Undefined.
+							0:1, %% PRIORITY.
+							0:1, %% Undefined.
+							0:1, %% PADDED.
+							1:1, %% END_HEADERS.
+							0:1, %% Undefined.
+							1:1, %% END_STREAM.
+							0:1, 1:31>>,
+						HeadersBlock
+					]
+			end,
+			ok = ClientTransport:send(ClientSocket, ResponseData),
+			timer:sleep(1000)
+		end),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{protocols => [Protocol]}),
 	{ok, Protocol} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	Self = self(),
 	ReplyTo = spawn(fun() ->
-		receive Ref ->
+		receive Ref when is_reference(Ref) ->
 			Response = gun:await(Pid, Ref, infinity),
 			Self ! Response
 		end
 	end),
 	Ref = gun:get(Pid, "/", [], #{reply_to => ReplyTo}),
-	{ok, _} = gen_tcp:recv(ClientSocket, 0, 5000),
-	ResponseData = case Protocol of
-		http ->
-			"HTTP/1.1 200 OK\r\n"
-			"Content-length: 12\r\n"
-			"\r\n"
-			"Hello world!";
-		http2 ->
-			%% Send a HEADERS frame with PRIORITY back.
-			{HeadersBlock, _} = cow_hpack:encode([
-				{<<":status">>, <<"200">>}
-			]),
-			Len = iolist_size(HeadersBlock),
-			[
-				<<Len:24, 1:8,
-					0:2, %% Undefined.
-					0:1, %% PRIORITY.
-					0:1, %% Undefined.
-					0:1, %% PADDED.
-					1:1, %% END_HEADERS.
-					0:1, %% Undefined.
-					1:1, %% END_STREAM.
-					0:1, 1:31>>,
-				HeadersBlock
-			]
-	end,
-	ok = gen_tcp:send(ClientSocket, ResponseData),
 	ReplyTo ! Ref,
 	receive
 		Msg ->
