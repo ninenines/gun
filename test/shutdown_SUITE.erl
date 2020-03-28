@@ -21,6 +21,9 @@
 -import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
+suite() ->
+	[{timetrap, 30000}].
+
 all() ->
 	[{group, shutdown}].
 
@@ -60,11 +63,7 @@ not_connected_gun_shutdown(_) ->
 	{ok, ConnPid} = gun:open("localhost", 12345),
 	ConnRef = monitor(process, ConnPid),
 	gun:shutdown(ConnPid),
-	Timeout = case os:type() of
-		{win32, _} -> 5000;
-		_ -> 1000
-	end,
-	gun_is_down(ConnPid, ConnRef, shutdown, Timeout).
+	gun_is_down(ConnPid, ConnRef, shutdown).
 
 not_connected_owner_down(_) ->
 	doc("Confirm that the Gun process shuts down when the owner exits normally "
@@ -84,13 +83,9 @@ do_not_connected_owner_down(ExitReason, DownReason) ->
 		timer:sleep(500),
 		exit(ExitReason)
 	end),
-	ConnPid = receive {conn, C} -> C after 1000 -> error(timeout) end,
+	ConnPid = receive {conn, C} -> C end,
 	ConnRef = monitor(process, ConnPid),
-	Timeout = case os:type() of
-		{win32, _} -> 5000;
-		_ -> 1000
-	end,
-	gun_is_down(ConnPid, ConnRef, DownReason, Timeout).
+	gun_is_down(ConnPid, ConnRef, DownReason).
 
 http1_gun_shutdown_no_streams(Config) ->
 	doc("HTTP/1.1: Confirm that the Gun process shuts down gracefully "
@@ -182,7 +177,7 @@ do_http_owner_down(Config, Protocol, ExitReason, DownReason) ->
 		timer:sleep(500),
 		exit(ExitReason)
 	end),
-	ConnPid = receive {conn, C} -> C after 1000 -> error(timeout) end,
+	ConnPid = receive {conn, C} -> C end,
 	ConnRef = monitor(process, ConnPid),
 	gun_is_down(ConnPid, ConnRef, DownReason).
 
@@ -520,7 +515,7 @@ do_ws_owner_down(Config, ExitReason, DownReason) ->
 		timer:sleep(500),
 		exit(ExitReason)
 	end),
-	ConnPid = receive {conn, C} -> C after 1000 -> error(timeout) end,
+	ConnPid = receive {conn, C} -> C end,
 	ConnRef = monitor(process, ConnPid),
 	gun_is_down(ConnPid, ConnRef, DownReason).
 
@@ -593,21 +588,15 @@ do_closing_owner_down(Config, ExitReason, DownReason) ->
 		timer:sleep(100),
 		exit(ExitReason)
 	end),
-	ConnPid = receive {conn, C} -> C after 1000 -> error(timeout) end,
+	ConnPid = receive {conn, C} -> C end,
 	ConnRef = monitor(process, ConnPid),
 	gun_is_down(ConnPid, ConnRef, DownReason).
 
 %% Internal.
 
 gun_is_down(ConnPid, ConnRef, Expected) ->
-	gun_is_down(ConnPid, ConnRef, Expected, 1000).
-
-gun_is_down(ConnPid, ConnRef, Expected, Timeout) ->
 	receive
 		{'DOWN', ConnRef, process, ConnPid, Reason} ->
 			Expected = Reason,
 			ok
-	after Timeout ->
-		true = erlang:is_process_alive(ConnPid),
-		error(timeout)
 	end.
