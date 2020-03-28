@@ -447,19 +447,21 @@ shutdown_reason(_) ->
 
 stream_info_http(_) ->
 	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/1.1."),
-	{ok, _, OriginPort} = init_origin(tcp, http,
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http,
 		fun(_, ClientSocket, ClientTransport) ->
-			%% Give some time to detect the cancel.
-			timer:sleep(200),
+			%% Wait for the cancel signal.
+			receive cancel -> ok end,
 			%% Then terminate the stream.
 			ClientTransport:send(ClientSocket,
 				"HTTP/1.1 200 OK\r\n"
 				"content-length: 0\r\n"
 				"\r\n"
 			),
-			timer:sleep(400)
+			receive disconnect -> ok end
 		end),
-	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{
+		event_handler => {gun_test_event_h, self()}
+	}),
 	{ok, http} = gun:await_up(Pid),
 	{ok, undefined} = gun:stream_info(Pid, make_ref()),
 	StreamRef = gun:get(Pid, "/"),
@@ -470,24 +472,32 @@ stream_info_http(_) ->
 		state := running
 	}} = gun:stream_info(Pid, StreamRef),
 	gun:cancel(Pid, StreamRef),
+	OriginPid ! cancel,
 	{ok, #{
 		ref := StreamRef,
 		reply_to := Self,
 		state := stopping
 	}} = gun:stream_info(Pid, StreamRef),
-	%% Wait a little for the stream to terminate.
-	timer:sleep(400),
-	{ok, undefined} = gun:stream_info(Pid, StreamRef),
-	%% Wait a little more for the connection to terminate.
-	timer:sleep(400),
+	%% Wait for the stream to be canceled.
+	receive_event(Pid, cancel),
+	fun F() ->
+		case gun:stream_info(Pid, StreamRef) of
+			{ok, undefined} -> ok;
+			{ok, #{state := stopping}} -> F()
+		end
+	end,
+	%% Wait for the connection to terminate.
+	OriginPid ! disconnect,
+	receive_event(Pid, disconnect),
 	{error, not_connected} = gun:stream_info(Pid, StreamRef),
 	gun:close(Pid).
 
 stream_info_http2(_) ->
 	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/2."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2,
-		fun(_, _, _) -> timer:sleep(200) end),
+		fun(_, _, _) -> receive disconnect -> ok end end),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{
+		event_handler => {gun_test_event_h, self()},
 		protocols => [http2]
 	}),
 	{ok, http2} = gun:await_up(Pid),
@@ -501,8 +511,9 @@ stream_info_http2(_) ->
 		state := running
 	}} = gun:stream_info(Pid, StreamRef),
 	gun:cancel(Pid, StreamRef),
-	%% Wait a little for the connection to terminate.
-	timer:sleep(300),
+	%% Wait for the connection to terminate.
+	OriginPid ! disconnect,
+	receive_event(Pid, disconnect),
 	{error, not_connected} = gun:stream_info(Pid, StreamRef),
 	gun:close(Pid).
 
