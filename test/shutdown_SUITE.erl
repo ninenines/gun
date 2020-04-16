@@ -364,7 +364,8 @@ http2_server_goaway_no_streams(_) ->
 	doc("HTTP/2: Confirm that the Gun process shuts down gracefully "
 		"when receiving a GOAWAY frame with no active streams and "
 		"retry is disabled."),
-	{ok, _, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+		receive go_away -> ok end,
 		Transport:send(Socket, cow_http2:goaway(0, no_error, <<>>)),
 		timer:sleep(500)
 	end),
@@ -375,6 +376,7 @@ http2_server_goaway_no_streams(_) ->
 	}),
 	{ok, Protocol} = gun:await_up(ConnPid),
 	ConnRef = monitor(process, ConnPid),
+	OriginPid ! go_away,
 	gun_is_down(ConnPid, ConnRef, normal).
 
 http2_server_goaway_one_stream(_) ->
