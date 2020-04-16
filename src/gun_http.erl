@@ -123,11 +123,17 @@ switch_transport(Transport, Socket, State) ->
 
 %% This function is called before returning from handle/4.
 handle_ret(CommandOrCommands, #http_state{commands_queue=[]}) ->
-	CommandOrCommands;
+	empty_commands_queue(CommandOrCommands);
 handle_ret(Commands, #http_state{commands_queue=Queue}) when is_list(Commands) ->
-	lists:reverse(Queue, Commands);
+	lists:reverse(Queue, empty_commands_queue(Commands));
 handle_ret(Command, #http_state{commands_queue=Queue}) ->
-	lists:reverse([Command|Queue]).
+	lists:reverse([empty_commands_queue(Command)|Queue]).
+
+empty_commands_queue([{state, State}|Tail]) -> [{state, State#http_state{commands_queue=[]}}|Tail];
+empty_commands_queue([Command|Tail]) -> [Command|empty_commands_queue(Tail)];
+empty_commands_queue([]) -> [];
+empty_commands_queue({state, State}) -> {state, State#http_state{commands_queue=[]}};
+empty_commands_queue(Command) -> Command.
 
 %% Stop looping when we got no more data.
 handle(<<>>, State, _, EvHandlerState) ->
