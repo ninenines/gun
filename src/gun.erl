@@ -310,6 +310,8 @@ check_options([{connect_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
 check_options([{cookie_store, {Mod, _}}|Opts]) when is_atom(Mod) ->
 	check_options(Opts);
+check_options([{cookie_ignore_informational, B}|Opts]) when is_boolean(B) ->
+	check_options(Opts);
 check_options([{domain_lookup_timeout, infinity}|Opts]) ->
 	check_options(Opts);
 check_options([{domain_lookup_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
@@ -348,7 +350,7 @@ check_options([{socks_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 		Error ->
 			Error
 	end;
-check_options([{supervise, B}|Opts]) when B =:= true; B =:= false ->
+check_options([{supervise, B}|Opts]) when is_boolean(B) ->
 	check_options(Opts);
 check_options([{tcp_opts, L}|Opts]) when is_list(L) ->
 	check_options(Opts);
@@ -358,7 +360,7 @@ check_options([{tls_handshake_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
 check_options([{tls_opts, L}|Opts]) when is_list(L) ->
 	check_options(Opts);
-check_options([{trace, B}|Opts]) when B =:= true; B =:= false ->
+check_options([{trace, B}|Opts]) when is_boolean(B) ->
 	check_options(Opts);
 check_options([{transport, T}|Opts]) when T =:= tcp; T =:= tls ->
 	check_options(Opts);

@@ -79,9 +79,10 @@ init_routes() -> [
 		{"/cookie-set/[...]", cookie_set_h, []},
 		{"/cookies/resources/echo-cookie.html", cookie_echo_h, []},
 		{"/cookies/resources/set-cookie.html", cookie_set_h, []},
-		{<<"/cookies/resources/echo.py">>, cookie_echo_h, []},
-		{<<"/cookies/resources/set.py">>, cookie_set_h, []},
-		{<<"/ws">>, ws_cookie_h, []}
+		{"/cookies/resources/echo.py", cookie_echo_h, []},
+		{"/cookies/resources/set.py", cookie_set_h, []},
+		{"/informational", cookie_informational_h, []},
+		{"/ws", ws_cookie_h, []}
 	]}
 ].
 
@@ -140,6 +141,40 @@ do_request_test_file(Config) ->
 	end.
 
 %% Tests.
+
+dont_ignore_informational_set_cookie(Config) ->
+	doc("User agents may accept set-cookie headers "
+		"sent in informational responses. (RFC6265bis 3)"),
+	[{<<"informational">>, <<"1">>}, {<<"final">>, <<"1">>}]
+		= do_informational_set_cookie(Config, false).
+
+ignore_informational_set_cookie(Config) ->
+	doc("User agents may ignore set-cookie headers "
+		"sent in informational responses. (RFC6265bis 3)"),
+	[{<<"final">>, <<"1">>}]
+		= do_informational_set_cookie(Config, true).
+
+do_informational_set_cookie(Config, Boolean) ->
+	Protocol = config(protocol, Config),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
+		transport => config(transport, Config),
+		protocols => [Protocol],
+		cookie_store => gun_cookies_list:init(),
+		cookie_ignore_informational => Boolean
+	}),
+	{ok, Protocol} = gun:await_up(ConnPid),
+	StreamRef1 = gun:get(ConnPid, "/informational"),
+	{inform, 103, Headers1} = gun:await(ConnPid, StreamRef1),
+	ct:log("Headers1:~n~p", [Headers1]),
+	{response, fin, 204, Headers2} = gun:await(ConnPid, StreamRef1),
+	ct:log("Headers2:~n~p", [Headers2]),
+	StreamRef2 = gun:get(ConnPid, "/cookie-echo"),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef2),
+	{ok, Body2} = gun:await_body(ConnPid, StreamRef2),
+	ct:log("Body2:~n~p", [Body2]),
+	Res = cow_cookie:parse_cookie(Body2),
+	gun:close(ConnPid),
+	Res.
 
 -define(HOST, "web-platform.test").
 

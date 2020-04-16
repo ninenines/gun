@@ -64,7 +64,7 @@ do_check_options([{closing_timeout, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{closing_timeout, T}|Opts]) when is_integer(T), T > 0 ->
 	do_check_options(Opts);
-do_check_options([{compress, B}|Opts]) when B =:= true; B =:= false ->
+do_check_options([{compress, B}|Opts]) when is_boolean(B) ->
 	do_check_options(Opts);
 do_check_options([{default_protocol, M}|Opts]) when is_atom(M) ->
 	do_check_options(Opts);
@@ -81,7 +81,7 @@ do_check_options([Opt={protocols, L}|Opts]) when is_list(L) ->
 	end;
 do_check_options([{reply_to, P}|Opts]) when is_pid(P) ->
 	do_check_options(Opts);
-do_check_options([{silence_pings, B}|Opts]) when B =:= true; B =:= false ->
+do_check_options([{silence_pings, B}|Opts]) when is_boolean(B) ->
 	do_check_options(Opts);
 do_check_options([{user_opts, _}|Opts]) ->
 	do_check_options(Opts);
