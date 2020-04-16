@@ -485,7 +485,7 @@ stream_info_http(_) ->
 			{ok, undefined} -> ok;
 			{ok, #{state := stopping}} -> F()
 		end
-	end,
+	end(),
 	%% Wait for the connection to terminate.
 	OriginPid ! disconnect,
 	receive_event(Pid, disconnect),
