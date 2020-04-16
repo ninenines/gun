@@ -433,6 +433,9 @@ set_owner(_) ->
 
 shutdown_reason(_) ->
 	doc("The last connection failure must be propagated."),
+	do_shutdown_reason().
+
+do_shutdown_reason() ->
 	%% We set retry=1 so that we can monitor before the process terminates.
 	{ok, ConnPid} = gun:open("localhost", 12345, #{
 		retry => 1,
@@ -440,6 +443,12 @@ shutdown_reason(_) ->
 	}),
 	Ref = monitor(process, ConnPid),
 	receive
+		%% Depending on timings we may monitor AFTER the process already
+		%% failed to connect and exited. In that case we just try again.
+		%% We rely on timetrap_timeout to stop the test if it takes too long.
+		{'DOWN', Ref, process, ConnPid, noproc} ->
+			ct:log("Monitor got noproc, trying again..."),
+			do_shutdown_reason();
 		{'DOWN', Ref, process, ConnPid, Reason} ->
 			{shutdown, econnrefused} = Reason,
 			gun:close(ConnPid)
