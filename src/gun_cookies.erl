@@ -407,23 +407,8 @@ wpt_http_state_test_files() ->
 wpt_http_state_test_files(TestPath) ->
 	filelib:wildcard(TestPath ++ "wpt/cookies/*-test") -- [
 		TestPath ++ "wpt/cookies/attribute0023-test", %% Doesn't match the spec (path override).
-		TestPath ++ "wpt/cookies/chromium0009-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/chromium0010-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/chromium0012-test", %% Doesn't match the spec (empty names).
 		TestPath ++ "wpt/cookies/disabled-chromium0020-test", %% Doesn't match the spec (empty names).
 		TestPath ++ "wpt/cookies/disabled-chromium0022-test", %% Nonsense.
-		TestPath ++ "wpt/cookies/mozilla0012-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/mozilla0014-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/mozilla0015-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/mozilla0016-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/mozilla0017-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/name0017-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/name0023-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/name0025-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/name0028-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/name0031-test", %% Doesn't match the spec (name with quotes).
-		TestPath ++ "wpt/cookies/name0032-test", %% Doesn't match the spec (name with quotes).
-		TestPath ++ "wpt/cookies/name0033-test", %% Doesn't match the spec (empty names).
 		TestPath ++ "wpt/cookies/optional-domain0042-test" %% Doesn't match the spec (empty domain override).
 	].
 
@@ -464,16 +449,11 @@ wpt_http_state_test_() ->
 			{ok, <<"Cookie: ",CookiesBin0/bits>>} ->
 				%% We only care about the first line.
 				[CookiesBin, <<>>|_] = string:split(CookiesBin0, <<"\n">>, all),
-				ExpectedCookies = cow_cookie:parse_cookie(CookiesBin),
-				wpt_http_state_test_validate_cookies(Cookies, ExpectedCookies)
+				CookiesBin = iolist_to_binary(cow_cookie:cookie(
+					[{Name, Value} || #{name := Name, value := Value} <- Cookies])),
+				ok
 		end
 	end} || F <- TestFiles].
-
-wpt_http_state_test_validate_cookies([], []) ->
-	ok;
-wpt_http_state_test_validate_cookies([Cookie|Tail], [{Name, Value}|ExpectedTail]) ->
-	#{name := Name, value := Value} = Cookie,
-	wpt_http_state_test_validate_cookies(Tail, ExpectedTail).
 
 %% WPT: path/default
 wpt_path_default_test() ->
