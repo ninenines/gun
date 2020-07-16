@@ -17,11 +17,145 @@
 -compile(nowarn_export_all).
 
 -import(ct_helper, [doc/1]).
+-import(gun_test, [init_origin/2]).
 -import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
 all() ->
 	ct_helper:all(?MODULE).
+
+%% Proxy helpers.
+
+-record(proxy_stream, {
+	id,
+	status,
+	resp_headers = [],
+	delay = 0,
+	origin_socket
+}).
+
+-record(proxy, {
+	parent,
+	socket,
+	transport,
+	streams = [],
+	decode_state = cow_hpack:init(),
+	encode_state = cow_hpack:init()
+}).
+
+do_proxy_start(Transport) ->
+	do_proxy_start(Transport, [#proxy_stream{id=1, status=200, resp_headers=[], delay=0}]).
+
+do_proxy_start(Transport0, Streams) ->
+	Transport = case Transport0 of
+		tcp -> gun_tcp;
+		tls -> gun_tls
+	end,
+	Proxy = #proxy{parent=self(), transport=Transport, streams=Streams},
+	Pid = spawn_link(fun() -> do_proxy_init(Proxy) end),
+	Port = receive_from(Pid),
+	{ok, Pid, Port}.
+
+do_proxy_init(Proxy=#proxy{parent=Parent, transport=Transport}) ->
+	{ok, ListenSocket} = case Transport of
+		gun_tcp ->
+			gen_tcp:listen(0, [binary, {active, false}]);
+		gun_tls ->
+			Opts = ct_helper:get_certs_from_ets(),
+			ssl:listen(0, [binary, {active, false}|Opts])
+	end,
+	{ok, {_, Port}} = Transport:sockname(ListenSocket),
+	Parent ! {self(), Port},
+	{ok, Socket} = case Transport of
+		gun_tcp ->
+			gen_tcp:accept(ListenSocket, 5000);
+		gun_tls ->
+			{ok, Socket0} = ssl:transport_accept(ListenSocket, 5000),
+			ssl:handshake(Socket0, 5000),
+			{ok, <<"h2">>} = ssl:negotiated_protocol(Socket0),
+			{ok, Socket0}
+	end,
+	gun_test:http2_handshake(Socket, case Transport of
+		gun_tcp -> gen_tcp;
+		gun_tls -> ssl
+	end),
+	Parent ! {self(), handshake_completed},
+	Transport:setopts(Socket, [{active, true}]),
+	do_proxy_receive(<<>>, Proxy#proxy{socket=Socket}).
+
+do_proxy_receive(Buffer, Proxy=#proxy{socket=Socket, transport=Transport}) ->
+	{OK, _, _} = Transport:messages(),
+	receive
+		{OK, Socket, Data0} ->
+			do_proxy_parse(<<Buffer/binary, Data0/bits>>, Proxy);
+		{tcp, OriginSocket, OriginData} ->
+			do_proxy_forward(Buffer, Proxy, OriginSocket, OriginData);
+		{tcp_closed, _} ->
+			ok;
+		{ssl_closed, _} ->
+			ok;
+		Msg ->
+			error(Msg)
+	end.
+
+%% We only expect to receive data on a CONNECT stream.
+do_proxy_parse(<<Len:24, 0:8, _:8, StreamID:32, Payload:Len/binary, Rest/bits>>,
+		Proxy=#proxy{streams=Streams}) ->
+	#proxy_stream{origin_socket=OriginSocket}
+		= lists:keyfind(StreamID, #proxy_stream.id, Streams),
+	case gen_tcp:send(OriginSocket, Payload) of
+		ok ->
+			do_proxy_parse(Rest, Proxy);
+		{error, _} ->
+			ok
+	end;
+do_proxy_parse(<<Len:24, 1:8, _:8, StreamID:32, ReqHeadersBlock:Len/binary, Rest/bits>>,
+		Proxy=#proxy{parent=Parent, socket=Socket, transport=Transport,
+			streams=Streams0, decode_state=DecodeState0, encode_state=EncodeState0}) ->
+	#proxy_stream{status=Status, resp_headers=RespHeaders, delay=Delay}
+		= Stream = lists:keyfind(StreamID, #proxy_stream.id, Streams0),
+	{ReqHeaders0, DecodeState} = cow_hpack:decode(ReqHeadersBlock, DecodeState0),
+	ReqHeaders = maps:from_list(ReqHeaders0),
+	timer:sleep(Delay),
+	Parent ! {self(), {request, ReqHeaders}},
+	{IsFin, OriginSocket} = case ReqHeaders of
+		#{<<":method">> := <<"CONNECT">>, <<":authority">> := Authority}
+				when Status >= 200, Status < 300 ->
+			{OriginHost, OriginPort} = cow_http_hd:parse_host(Authority),
+			{ok, OriginSocket0} = gen_tcp:connect(
+				binary_to_list(OriginHost), OriginPort,
+				[binary, {active, true}]),
+			{nofin, OriginSocket0};
+		#{} ->
+			{fin, undefined}
+	end,
+	{RespHeadersBlock, EncodeState} = cow_hpack:encode([
+		{<<":status">>, integer_to_binary(Status)}
+	|RespHeaders], EncodeState0),
+	ok = Transport:send(Socket, [
+		cow_http2:headers(StreamID, IsFin, RespHeadersBlock)
+	]),
+	Streams = lists:keystore(StreamID, #proxy_stream.id, Streams0,
+		Stream#proxy_stream{origin_socket=OriginSocket}),
+	do_proxy_parse(Rest, Proxy#proxy{streams=Streams,
+		decode_state=DecodeState, encode_state=EncodeState});
+do_proxy_parse(<<Len:24, Header:6/binary, Payload:Len/binary, Rest/bits>>, Proxy) ->
+	ct:pal("Ignoring packet header ~0p~npayload ~p", [Header, Payload]),
+	do_proxy_parse(Rest, Proxy);
+do_proxy_parse(Rest, Proxy) ->
+	do_proxy_receive(Rest, Proxy).
+
+do_proxy_forward(Buffer, Proxy=#proxy{socket=Socket, transport=Transport, streams=Streams},
+		OriginSocket, OriginData) ->
+	#proxy_stream{id=StreamID} = lists:keyfind(OriginSocket, #proxy_stream.origin_socket, Streams),
+	Len = byte_size(OriginData),
+	Data = [<<Len:24, 0:8, 0:8, StreamID:32>>, OriginData],
+	case Transport:send(Socket, Data) of
+		ok ->
+			do_proxy_receive(Buffer, Proxy);
+		{error, _} ->
+			ok
+	end.
 
 %% Tests.
 
@@ -294,4 +428,63 @@ settings_ack_timeout(_) ->
 	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
 	{ok, http2} = gun:await_up(ConnPid),
 	timer:sleep(6000),
+	gun:close(ConnPid).
+
+connect_http(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_http(<<"http">>, tcp, <<"http">>, tcp).
+
+do_connect_http(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport, [
+		#proxy_stream{id=1, status=200}
+	]),
+	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		transport => ProxyTransport,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(ProxyPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => OriginTransport
+	}),
+	{request, #{
+		<<":method">> := <<"CONNECT">>,
+		<<":authority">> := Authority
+	}} = receive_from(ProxyPid),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	handshake_completed = receive_from(OriginPid),
+	ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	#{
+		transport := ProxyTransport,
+		protocol := http2,
+		origin_scheme := ProxyScheme,
+		origin_host := "localhost",
+		origin_port := ProxyPort,
+		intermediaries := [] %% Intermediaries are specific to the CONNECT stream.
+	} = gun:info(ConnPid),
+	{ok, #{
+		ref := StreamRef,
+		reply_to := Self,
+		state := running,
+		tunnel := #{
+			transport := OriginTransport,
+			protocol := http,
+			origin_scheme := OriginScheme,
+			origin_host := "localhost",
+			origin_port := OriginPort
+		}
+	}} = gun:stream_info(ConnPid, StreamRef),
+	{ok, #{
+		ref := ProxiedStreamRef,
+		reply_to := Self,
+		state := running
+	}} = gun:stream_info(ConnPid, ProxiedStreamRef),
 	gun:close(ConnPid).

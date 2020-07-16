@@ -108,6 +108,7 @@
 -export([connected_no_input/3]).
 -export([connected_ws_only/3]).
 -export([closing/3]).
+-export([protocol_handler/1]).
 -export([terminate/3]).
 
 -type req_headers() :: [{binary() | string() | atom(), iodata()}]
@@ -178,7 +179,8 @@
 %% the entire connection.
 -type req_opts() :: #{
 	flow => pos_integer(),
-	reply_to => pid()
+	reply_to => pid(),
+	tunnel => reference() | [reference()]
 }.
 -export_type([req_opts/0]).
 
@@ -580,12 +582,13 @@ headers(ServerPid, Method, Path, Headers) ->
 	headers(ServerPid, Method, Path, Headers, #{}).
 
 -spec headers(pid(), iodata(), iodata(), req_headers(), req_opts()) -> reference().
-headers(ServerPid, Method, Path, Headers, ReqOpts) ->
-	StreamRef = make_ref(),
+headers(ServerPid, Method, Path, Headers0, ReqOpts) ->
+	Tunnel = get_tunnel(ReqOpts),
+	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
 	gen_statem:cast(ServerPid, {headers, ReplyTo, StreamRef,
-		Method, Path, normalize_headers(Headers), InitialFlow}),
+		Method, Path, normalize_headers(Headers0), InitialFlow}),
 	StreamRef.
 
 -spec request(pid(), iodata(), iodata(), req_headers(), iodata()) -> reference().
@@ -594,12 +597,23 @@ request(ServerPid, Method, Path, Headers, Body) ->
 
 -spec request(pid(), iodata(), iodata(), req_headers(), iodata(), req_opts()) -> reference().
 request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
-	StreamRef = make_ref(),
+	Tunnel = get_tunnel(ReqOpts),
+	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
 	gen_statem:cast(ServerPid, {request, ReplyTo, StreamRef,
 		Method, Path, normalize_headers(Headers), Body, InitialFlow}),
 	StreamRef.
+
+get_tunnel(#{tunnel := Tunnel}) when is_reference(Tunnel) ->
+	[Tunnel];
+get_tunnel(#{tunnel := Tunnel}) ->
+	Tunnel;
+get_tunnel(_) ->
+	undefined.
+
+make_stream_ref(undefined) -> make_ref();
+make_stream_ref(Tunnel) -> Tunnel ++ [make_ref()].
 
 normalize_headers([]) ->
 	[];
@@ -638,6 +652,7 @@ connect(ServerPid, Destination, Headers, ReqOpts) ->
 	StreamRef = make_ref(),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	%% @todo tunnel
 	gen_statem:cast(ServerPid, {connect, ReplyTo, StreamRef,
 		Destination, Headers, InitialFlow}),
 	StreamRef.
@@ -876,6 +891,7 @@ ws_upgrade(ServerPid, Path, Headers, Opts) ->
 	ok = gun_ws:check_options(Opts),
 	StreamRef = make_ref(),
 	ReplyTo = maps:get(reply_to, Opts, self()),
+	%% @todo Also accept tunnel option.
 	gen_statem:cast(ServerPid, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, Opts}),
 	StreamRef.
 
@@ -1197,6 +1213,7 @@ connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, Init
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
+	%% @todo Not events are currently handled for the request?
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers, InitialFlow),
 	{keep_state, State#state{protocol_state=ProtoState2}};
 %% Public Websocket interface.
