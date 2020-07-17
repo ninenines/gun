@@ -188,13 +188,13 @@ connect_raw_reply_to(_) ->
 
 h2_connect_tcp_raw_tcp(_) ->
 	doc("Use CONNECT over clear HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
-	do_h2_connect_raw(tcp, tcp).
+	do_h2_connect_raw(tcp, <<"http">>, tcp).
 
 h2_connect_tls_raw_tcp(_) ->
 	doc("Use CONNECT over secure HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
-	do_h2_connect_raw(tcp, tls).
+	do_h2_connect_raw(tcp, <<"https">>, tls).
 
-do_h2_connect_raw(OriginTransport, ProxyTransport) ->
+do_h2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
 	{ok, ProxyPid, ProxyPort} = rfc7540_SUITE:do_proxy_start(ProxyTransport, [
 		{proxy_stream, 1, 200, [], 0, undefined}
@@ -219,21 +219,28 @@ do_h2_connect_raw(OriginTransport, ProxyTransport) ->
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
-	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined),
-%% @todo
-%	#{
-%		transport := OriginTransport,
-%		protocol := raw,
-%		origin_scheme := _, %% @todo This should be 'undefined'.
-%		origin_host := "localhost",
-%		origin_port := OriginPort,
-%		intermediaries := [#{
-%			type := connect,
-%			host := "localhost",
-%			port := ProxyPort,
-%			transport := ProxyTransport,
-%			protocol := http
-%	}]} = gun:info(ConnPid),
+	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, StreamRef),
+	#{
+		transport := ProxyTransport,
+		protocol := http2,
+		origin_scheme := ProxyScheme,
+		origin_host := "localhost",
+		origin_port := ProxyPort,
+		intermediaries := []
+	} = gun:info(ConnPid),
+	Self = self(),
+	{ok, #{
+		ref := StreamRef,
+		reply_to := Self,
+		state := running,
+		tunnel := #{
+			transport := OriginTransport,
+			protocol := raw,
+			origin_scheme := _, %% @todo This should be 'undefined'.
+			origin_host := "localhost",
+			origin_port := OriginPort
+		}
+	}} = gun:stream_info(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
 http11_upgrade_raw_tcp(_) ->

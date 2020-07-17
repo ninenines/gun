@@ -407,7 +407,9 @@ headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Com
 				stream_ref => StreamRef
 			},
 			OriginTransport = gun_tcp_proxy,
-			{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport, ProtoOpts),
+			{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport,
+				%% @todo We are giving the wrong StreamRef we need to give the list (if any).
+				ProtoOpts#{stream_ref => StreamRef}),
 			%% @todo EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 			%% @todo What about keepalive?
 			{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState,
