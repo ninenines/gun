@@ -29,7 +29,7 @@
 -export([headers/11]).
 -export([request/12]).
 -export([data/7]).
--export([connect/6]).
+-export([connect/7]).
 -export([cancel/5]).
 -export([stream_info/2]).
 -export([down/1]).
@@ -683,12 +683,12 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
 	end.
 
-connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _) when Streams =/= [] ->
+connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _) when Streams =/= [] ->
 	ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}},
 	State;
 connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version=Version},
-		StreamRef, ReplyTo, Destination=#{host := Host0}, Headers0, InitialFlow0) ->
+		StreamRef, ReplyTo, Destination=#{host := Host0}, _TunnelInfo, Headers0, InitialFlow0) ->
 	Host = case Host0 of
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host0

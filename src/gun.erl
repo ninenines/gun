@@ -166,8 +166,8 @@
 	type := connect | socks5,
 	host := inet:hostname() | inet:ip_address(),
 	port := inet:port_number(),
-	transport := tcp | tls | tls_proxy,
-	protocol := http | http2 | raw | socks
+	transport := tcp | tls,
+	protocol := http | socks
 }.
 
 -type raw_opts() :: #{}.
@@ -1212,9 +1212,12 @@ connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, Init
 		InitialFlow, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
-		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
+		State=#state{origin_host=Host, origin_port=Port,
+			protocol=Protocol, protocol_state=ProtoState}) ->
 	%% @todo Not events are currently handled for the request?
-	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers, InitialFlow),
+	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo,
+		Destination, #{host => Host, port => Port},
+		Headers, InitialFlow),
 	{keep_state, State#state{protocol_state=ProtoState2}};
 %% Public Websocket interface.
 %% @todo Maybe make an interface in the protocol module instead of checking on protocol name.

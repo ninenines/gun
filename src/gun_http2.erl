@@ -29,12 +29,22 @@
 -export([headers/11]).
 -export([request/12]).
 -export([data/7]).
--export([connect/6]).
+-export([connect/7]).
 -export([cancel/5]).
 -export([timeout/3]).
 -export([stream_info/2]).
 -export([down/1]).
 %-export([ws_upgrade/10]).
+
+-type tunnel_info() :: #{
+	%% Tunnel.
+	host := inet:hostname() | inet:ip_address(),
+	port := inet:port_number(),
+
+	%% Origin.
+	origin_host => inet:hostname() | inet:ip_address(),
+	origin_port => inet:port_number()
+}.
 
 -record(stream, {
 	id = undefined :: cow_http2:streamid(),
@@ -56,7 +66,9 @@
 	handler_state :: undefined | gun_content_handler:state(),
 
 	%% CONNECT tunnel.
-	tunnel :: {module(), any(), gun:connect_destination()} | {setup, gun:connect_destination()} | undefined
+	tunnel :: {module(), any(), tunnel_info()}
+		| {setup, gun:connect_destination(), tunnel_info()}
+		| undefined
 }).
 
 -record(http2_state, {
@@ -300,15 +312,14 @@ maybe_ack(State=#http2_state{socket=Socket, transport=Transport}, Frame) ->
 	end,
 	State.
 
-%% @todo CONNECT streams may need to pass data through TLS socket.
 data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0) ->
 	case get_stream_by_id(State, StreamID) of
 		Stream=#stream{tunnel=undefined} ->
 			data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream);
-		Stream=#stream{tunnel={Protocol, ProtoState0, Destination}} ->
+		Stream=#stream{tunnel={Protocol, ProtoState0, TunnelInfo}} ->
 			{ProtoState, EvHandlerState} = Protocol:handle(Data, ProtoState0,
 				EvHandler, EvHandlerState0),
-			{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState, Destination}}),
+			{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState, TunnelInfo}}),
 				EvHandlerState}
 	end.
 
@@ -380,7 +391,7 @@ headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Com
 				headers => Headers
 			}, EvHandlerState0),
 			%% @todo Handle TLS over TCP and TLS over TLS.
-			{setup, Destination} = Tunnel,
+			{setup, Destination=#{host := DestHost, port := DestPort}, TunnelInfo} = Tunnel,
 			tcp = maps:get(transport, Destination, tcp),
 			[Protocol0] = maps:get(protocols, Destination, [http]),
 			%% Options are either passed directly or #{} is used. Since the
@@ -399,7 +410,8 @@ headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Com
 			{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport, ProtoOpts),
 			%% @todo EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 			%% @todo What about keepalive?
-			{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState, Destination}}),
+			{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState,
+				TunnelInfo#{origin_host => DestHost, origin_port => DestPort}}}),
 				EvHandlerState};
 		true ->
 			ReplyTo ! {gun_response, self(), StreamRef, IsFin, Status, Headers},
@@ -698,12 +710,13 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 request(State, [StreamRef|Tail], ReplyTo, Method, _Host, _Port,
 		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
-		Stream=#stream{tunnel={Proto, ProtoState0, Destination=#{host := OriginHost, port := OriginPort}}} ->
+		Stream=#stream{tunnel={Proto, ProtoState0, TunnelInfo=#{
+				origin_host := OriginHost, origin_port := OriginPort}}} ->
 			%% @todo So the event is probably not giving the right StreamRef?
 			{ProtoState, EvHandlerState} = Proto:request(ProtoState0, normalize_stream_ref(Tail),
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
 				InitialFlow, EvHandler, EvHandlerState0),
-			{store_stream(State, Stream#stream{tunnel={Proto, ProtoState, Destination}}), EvHandlerState};
+			{store_stream(State, Stream#stream{tunnel={Proto, ProtoState, TunnelInfo}}), EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 				"The stream is not a tunnel."}},
@@ -774,10 +787,10 @@ data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, 
 %% Tunneled data.
 data(State, [StreamRef|Tail], ReplyTo, IsFin, Data, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
-		Stream=#stream{tunnel={Proto, ProtoState0, Destination}} ->
+		Stream=#stream{tunnel={Proto, ProtoState0, TunnelInfo}} ->
 			{ProtoState, EvHandlerState} = Proto:data(ProtoState0, normalize_stream_ref(Tail),
 				ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
-			{store_stream(State, Stream#stream{tunnel={Proto, ProtoState, Destination}}), EvHandlerState};
+			{store_stream(State, Stream#stream{tunnel={Proto, ProtoState, TunnelInfo}}), EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), StreamRef, {badstate,
 				"The stream is not a tunnel."}},
@@ -854,8 +867,8 @@ reset_stream(State0=#http2_state{socket=Socket, transport=Transport},
 	end.
 
 connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
-		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo, Destination=#{host := Host0},
-		Headers0, InitialFlow0) ->
+		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo,
+		Destination=#{host := Host0}, TunnelInfo, Headers0, InitialFlow0) ->
 	Host = case Host0 of
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host0
@@ -885,7 +898,7 @@ connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	Transport:send(Socket, cow_http2:headers(StreamID, nofin, HeaderBlock)),
 	InitialFlow = initial_flow(InitialFlow0, Opts),
 	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
-		authority=Authority, path= <<>>, tunnel={setup, Destination}},
+		authority=Authority, path= <<>>, tunnel={setup, Destination, TunnelInfo}},
 	create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream).
 
 cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP2Machine0},
@@ -917,7 +930,8 @@ timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, Nam
 
 stream_info(State, StreamRef) when is_reference(StreamRef) ->
 	case get_stream_by_ref(State, StreamRef) of
-		#stream{reply_to=ReplyTo, tunnel={Protocol, _, #{host := OriginHost, port := OriginPort}}} ->
+		#stream{reply_to=ReplyTo, tunnel={Protocol, _, #{
+				origin_host := OriginHost, origin_port := OriginPort}}} ->
 			{ok, #{
 				ref => StreamRef,
 				reply_to => ReplyTo,
@@ -940,17 +954,34 @@ stream_info(State, StreamRef) when is_reference(StreamRef) ->
 			{ok, undefined}
 	end;
 %% Tunneled streams.
-stream_info(State, StreamRefList=[StreamRef|Tail]) ->
+stream_info(State=#http2_state{transport=Transport}, StreamRefList=[StreamRef|Tail]) ->
 	case get_stream_by_ref(State, StreamRef) of
-		#stream{tunnel={Protocol, ProtoState, _}} ->
+		#stream{tunnel={Protocol, ProtoState, #{host := TunnelHost, port := TunnelPort}}} ->
 			%% We must return the real StreamRef as seen by the user.
 			%% We therefore set it on return, with the outer layer "winning".
-			%% @todo Would be well worth returning intermediaries as well.
+			%%
+			%% We also add intermediaries which are prepended to the list and
+			%% therefore are ultimately given from outer to inner layer just
+			%% like gun:info/1 intermediaries.
 			case Protocol:stream_info(ProtoState, normalize_stream_ref(Tail)) of
 				{ok, undefined} ->
 					{ok, undefined};
 				{ok, Info} ->
-					{ok, Info#{ref => StreamRefList}}
+					Intermediaries = maps:get(intermediaries, Info, []),
+					{ok, Info#{
+						ref => StreamRefList,
+						intermediaries => [#{
+							type => connect,
+							host => TunnelHost,
+							port => TunnelPort,
+							transport => case Transport:name() of
+								tcp_proxy -> tcp;
+								tls_proxy -> tls;
+								TransportName -> TransportName
+							end,
+							protocol => http2
+						}|Intermediaries]
+					}}
 			end;
 		error ->
 			{ok, undefined}

@@ -62,7 +62,7 @@ do_proxy_init(Proxy=#proxy{parent=Parent, transport=Transport}) ->
 			gen_tcp:listen(0, [binary, {active, false}]);
 		gun_tls ->
 			Opts = ct_helper:get_certs_from_ets(),
-			ssl:listen(0, [binary, {active, false}|Opts])
+			ssl:listen(0, [binary, {active, false}, {alpn_preferred_protocols, [<<"h2">>]}|Opts])
 	end,
 	{ok, {_, Port}} = Transport:sockname(ListenSocket),
 	Parent ! {self(), Port},
@@ -435,6 +435,11 @@ connect_http(_) ->
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_http(<<"http">>, tcp, <<"http">>, tcp).
 
+connect_https(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_http(<<"http">>, tcp, <<"https">>, tls).
+
 do_connect_http(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport, [
@@ -485,6 +490,13 @@ do_connect_http(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
 	{ok, #{
 		ref := ProxiedStreamRef,
 		reply_to := Self,
-		state := running
+		state := running,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := ProxyPort,
+			transport := ProxyTransport,
+			protocol := http2
+		}]
 	}} = gun:stream_info(ConnPid, ProxiedStreamRef),
 	gun:close(ConnPid).

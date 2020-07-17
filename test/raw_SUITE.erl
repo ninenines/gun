@@ -187,8 +187,12 @@ connect_raw_reply_to(_) ->
 	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
 
 h2_connect_tcp_raw_tcp(_) ->
-	doc("Use HTTP/2 CONNECT over TCP to connect to a remote endpoint using the raw protocol over TCP."),
+	doc("Use CONNECT over clear HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
 	do_h2_connect_raw(tcp, tcp).
+
+h2_connect_tls_raw_tcp(_) ->
+	doc("Use CONNECT over secure HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
+	do_h2_connect_raw(tcp, tls).
 
 do_h2_connect_raw(OriginTransport, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
