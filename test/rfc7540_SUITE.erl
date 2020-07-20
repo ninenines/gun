@@ -430,18 +430,53 @@ settings_ack_timeout(_) ->
 	timer:sleep(6000),
 	gun:close(ConnPid).
 
-connect_http(_) ->
+connect_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
-	do_connect_http(<<"http">>, tcp, <<"http">>, tcp).
+	do_connect_http(<<"http">>, tcp, http, <<"http">>, tcp).
 
-connect_https(_) ->
+connect_http_via_h2(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
-	do_connect_http(<<"http">>, tcp, <<"https">>, tls).
+	do_connect_http(<<"http">>, tcp, http, <<"https">>, tls).
 
-do_connect_http(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
-	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
+connect_h2c_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/2 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_http(<<"http">>, tcp, http2, <<"http">>, tcp).
+
+connect_h2c_via_h2(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/2 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_http(<<"http">>, tcp, http2, <<"https">>, tls).
+
+do_origin_fun(http) ->
+	fun(Parent, Socket, Transport) ->
+		%% Receive the request-line and headers, parse and send them.
+		{ok, Data} = Transport:recv(Socket, 0, 5000),
+		{Method, Target, 'HTTP/1.1', Rest} = cow_http:parse_request_line(Data),
+		{Headers0, _} = cow_http:parse_headers(Rest),
+		Headers = maps:from_list(Headers0),
+		%% We roughly transform the HTTP/1.1 headers into HTTP/2 format.
+		Parent ! {self(), Headers#{
+			<<":authority">> => maps:get(<<"host">>, Headers, <<>>),
+			<<":method">> => Method,
+			<<":path">> => Target
+		}},
+		gun_test:loop_origin(Parent, Socket, Transport)
+	end;
+do_origin_fun(http2) ->
+	fun(Parent, Socket, Transport) ->
+		%% Receive the HEADERS frame and send the headers decoded.
+		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
+		{ReqHeaders, _} = cow_hpack:decode(ReqHeadersBlock),
+		Parent ! {self(), maps:from_list(ReqHeaders)},
+		gun_test:loop_origin(Parent, Socket, Transport)
+	end.
+
+do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, OriginProtocol, do_origin_fun(OriginProtocol)),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport, [
 		#proxy_stream{id=1, status=200}
 	]),
@@ -455,7 +490,8 @@ do_connect_http(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => OriginTransport
+		transport => OriginTransport,
+		protocols => [OriginProtocol]
 	}),
 	{request, #{
 		<<":method">> := <<"CONNECT">>,
@@ -464,9 +500,7 @@ do_connect_http(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
-	Data = receive_from(OriginPid),
-	Lines = binary:split(Data, <<"\r\n">>, [global]),
-	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	#{<<":authority">> := Authority} = receive_from(OriginPid),
 	#{
 		transport := ProxyTransport,
 		protocol := http2,
@@ -481,7 +515,7 @@ do_connect_http(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
 		state := running,
 		tunnel := #{
 			transport := OriginTransport,
-			protocol := http,
+			protocol := OriginProtocol,
 			origin_scheme := OriginScheme,
 			origin_host := "localhost",
 			origin_port := OriginPort

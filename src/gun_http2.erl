@@ -317,7 +317,8 @@ data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0) ->
 		Stream=#stream{tunnel=undefined} ->
 			data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream);
 		Stream=#stream{tunnel={Protocol, ProtoState0, TunnelInfo}} ->
-			{ProtoState, EvHandlerState} = Protocol:handle(Data, ProtoState0,
+			%% @todo Commands.
+			{{state, ProtoState}, EvHandlerState} = Protocol:handle(Data, ProtoState0,
 				EvHandler, EvHandlerState0),
 			{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState, TunnelInfo}}),
 				EvHandlerState}
@@ -761,7 +762,8 @@ prepare_headers(#http2_state{transport=Transport}, Method, Host0, Port, Path, He
 		scheme => case Transport of
 			gun_tls -> <<"https">>;
 			gun_tls_proxy -> <<"https">>;
-			gun_tcp -> <<"http">>
+			gun_tcp -> <<"http">>;
+			gun_tcp_proxy -> <<"http">>
 		end,
 		authority => Authority,
 		path => Path

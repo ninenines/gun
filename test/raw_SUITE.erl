@@ -186,63 +186,6 @@ connect_raw_reply_to(_) ->
 	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
 	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
 
-h2_connect_tcp_raw_tcp(_) ->
-	doc("Use CONNECT over clear HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
-	do_h2_connect_raw(tcp, <<"http">>, tcp).
-
-h2_connect_tls_raw_tcp(_) ->
-	doc("Use CONNECT over secure HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
-	do_h2_connect_raw(tcp, <<"https">>, tls).
-
-do_h2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
-	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
-	{ok, ProxyPid, ProxyPort} = rfc7540_SUITE:do_proxy_start(ProxyTransport, [
-		{proxy_stream, 1, 200, [], 0, undefined}
-	]),
-	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
-	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
-		transport => ProxyTransport,
-		protocols => [http2]
-	}),
-	{ok, http2} = gun:await_up(ConnPid),
-	handshake_completed = receive_from(ProxyPid),
-	StreamRef = gun:connect(ConnPid, #{
-		host => "localhost",
-		port => OriginPort,
-		transport => OriginTransport,
-		protocols => [raw]
-	}),
-	{request, #{
-		<<":method">> := <<"CONNECT">>,
-		<<":authority">> := Authority
-	}} = receive_from(ProxyPid),
-	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
-	handshake_completed = receive_from(OriginPid),
-	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
-	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, StreamRef),
-	#{
-		transport := ProxyTransport,
-		protocol := http2,
-		origin_scheme := ProxyScheme,
-		origin_host := "localhost",
-		origin_port := ProxyPort,
-		intermediaries := []
-	} = gun:info(ConnPid),
-	Self = self(),
-	{ok, #{
-		ref := StreamRef,
-		reply_to := Self,
-		state := running,
-		tunnel := #{
-			transport := OriginTransport,
-			protocol := raw,
-			origin_scheme := _, %% @todo This should be 'undefined'.
-			origin_host := "localhost",
-			origin_port := OriginPort
-		}
-	}} = gun:stream_info(ConnPid, StreamRef),
-	gun:close(ConnPid).
-
 http11_upgrade_raw_tcp(_) ->
 	doc("Use the HTTP Upgrade mechanism to switch to the raw protocol over TCP."),
 	do_http11_upgrade_raw(tcp).
@@ -319,6 +262,63 @@ http11_upgrade_raw_reply_to(_) ->
 	receive {ReplyTo, ready} -> ok after 1000 -> error(timeout) end,
 	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
 	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
+
+http2_connect_tcp_raw_tcp(_) ->
+	doc("Use CONNECT over clear HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
+	do_http2_connect_raw(tcp, <<"http">>, tcp).
+
+http2_connect_tls_raw_tcp(_) ->
+	doc("Use CONNECT over secure HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
+	do_http2_connect_raw(tcp, <<"https">>, tls).
+
+do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
+	{ok, ProxyPid, ProxyPort} = rfc7540_SUITE:do_proxy_start(ProxyTransport, [
+		{proxy_stream, 1, 200, [], 0, undefined}
+	]),
+	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		transport => ProxyTransport,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(ProxyPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => OriginTransport,
+		protocols => [raw]
+	}),
+	{request, #{
+		<<":method">> := <<"CONNECT">>,
+		<<":authority">> := Authority
+	}} = receive_from(ProxyPid),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	handshake_completed = receive_from(OriginPid),
+	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
+	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, StreamRef),
+	#{
+		transport := ProxyTransport,
+		protocol := http2,
+		origin_scheme := ProxyScheme,
+		origin_host := "localhost",
+		origin_port := ProxyPort,
+		intermediaries := []
+	} = gun:info(ConnPid),
+	Self = self(),
+	{ok, #{
+		ref := StreamRef,
+		reply_to := Self,
+		state := running,
+		tunnel := #{
+			transport := OriginTransport,
+			protocol := raw,
+			origin_scheme := _, %% @todo This should be 'undefined'.
+			origin_host := "localhost",
+			origin_port := OriginPort
+		}
+	}} = gun:stream_info(ConnPid, StreamRef),
+	gun:close(ConnPid).
 
 %% The origin server will echo everything back.
 
