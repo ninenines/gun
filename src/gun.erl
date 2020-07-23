@@ -115,6 +115,19 @@
 	| #{binary() | string() | atom() => iodata()}.
 -export_type([req_headers/0]).
 
+-type tunnel_info() :: #{
+	stream_ref := reference() | [reference()],
+
+	%% Tunnel.
+	host := inet:hostname() | inet:ip_address(),
+	port := inet:port_number(),
+
+	%% Origin.
+	origin_host => inet:hostname() | inet:ip_address(),
+	origin_port => inet:port_number()
+}.
+-export_type([tunnel_info/0]).
+
 -type ws_close_code() :: 1000..4999.
 
 -type ws_frame() :: close | ping | pong
@@ -1214,9 +1227,9 @@ connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, Init
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState}) ->
-	%% @todo Not events are currently handled for the request?
+	%% @todo No events are currently handled for the CONNECT request?
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo,
-		Destination, #{host => Host, port => Port},
+		Destination, #{stream_ref => StreamRef, host => Host, port => Port},
 		Headers, InitialFlow),
 	{keep_state, State#state{protocol_state=ProtoState2}};
 %% Public Websocket interface.

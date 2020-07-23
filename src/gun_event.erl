@@ -57,9 +57,9 @@
 %% tls_handshake_start/tls_handshake_end.
 %%
 %% These events occur when connecting to a TLS server or when
-%% upgrading the connection to use TLS, for example using CONNECT.
-%% The stream_ref/reply_to values are only present when the TLS
-%% handshake occurs as a result of a request.
+%% upgrading the connection or stream to use TLS, for example
+%% using CONNECT. The stream_ref/reply_to values are only
+%% present when the TLS handshake occurs as a result of a request.
 
 -type tls_handshake_event() :: #{
 	stream_ref => reference(),

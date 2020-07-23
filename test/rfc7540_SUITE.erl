@@ -534,3 +534,6 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 		}]
 	}} = gun:stream_info(ConnPid, ProxiedStreamRef),
 	gun:close(ConnPid).
+
+%% @todo Have a test with a Cowboy origin that confirms that tunneled requests
+%% work as intended.
