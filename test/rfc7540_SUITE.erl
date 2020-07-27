@@ -535,5 +535,70 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 	}} = gun:stream_info(ConnPid, ProxiedStreamRef),
 	gun:close(ConnPid).
 
-%% @todo Have a test with a Cowboy origin that confirms that tunneled requests
-%% work as intended.
+connect_cowboy_http_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"http">>, tcp, http, <<"http">>, tcp).
+
+connect_cowboy_http_via_h2(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"http">>, tcp, http, <<"https">>, tls).
+
+connect_cowboy_h2c_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/2 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"http">>, tcp, http2, <<"http">>, tcp).
+
+connect_cowboy_h2c_via_h2(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/2 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"http">>, tcp, http2, <<"https">>, tls).
+
+do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, ProxyTransport) ->
+	{ok, Ref, OriginPort} = do_cowboy_origin(OriginTransport, OriginProtocol),
+	try
+		{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport, [
+			#proxy_stream{id=1, status=200}
+		]),
+		Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+		{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+			transport => ProxyTransport,
+			protocols => [http2]
+		}),
+		{ok, http2} = gun:await_up(ConnPid),
+		handshake_completed = receive_from(ProxyPid),
+		StreamRef = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => OriginPort,
+			transport => OriginTransport,
+			protocols => [OriginProtocol]
+		}),
+		{request, #{
+			<<":method">> := <<"CONNECT">>,
+			<<":authority">> := Authority
+		}} = receive_from(ProxyPid),
+		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+		ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
+		{response, nofin, 200, _} = gun:await(ConnPid, ProxiedStreamRef),
+		gun:close(ConnPid)
+	after
+		cowboy:stop_listener(Ref)
+	end.
+
+do_cowboy_origin(OriginTransport, OriginProtocol) ->
+	Ref = make_ref(),
+	ProtoOpts0 = case OriginTransport of
+		tcp -> #{protocols => [OriginProtocol]};
+		tls -> #{}
+	end,
+	ProtoOpts = ProtoOpts0#{
+		env => #{dispatch => cowboy_router:compile([{'_', [
+			{"/proxied/[...]", proxied_h, []}
+		]}])}
+	},
+	[{ref, _}, {port, Port}] = case OriginTransport of
+		tcp -> gun_test:init_cowboy_tcp(Ref, ProtoOpts, []);
+		tls -> gun_test:init_cowboy_tls(Ref, ProtoOpts, [])
+	end,
+	{ok, Ref, Port}.

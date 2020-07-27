@@ -515,6 +515,8 @@ close_reason(closed) -> closed;
 close_reason(Reason) -> {closed, Reason}.
 
 %% @todo Do we want an event for this?
+%%
+%% @todo Need to propagate stream closing to tunneled streams.
 close_streams(_, [], _) ->
 	ok;
 close_streams(State, [#stream{is_alive=false}|Tail], Reason) ->

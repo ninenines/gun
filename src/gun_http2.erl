@@ -330,12 +330,23 @@ data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0) ->
 
 			%% This means that #stream{} must contain both the user-facing StreamRef and the reference.
 
-			%% @todo Commands.
-			{{state, ProtoState}, EvHandlerState} = Protocol:handle(Data, ProtoState0,
-				EvHandler, EvHandlerState0),
-			{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState, TunnelInfo}}),
-				EvHandlerState}
+			{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState0, EvHandler, EvHandlerState0),
+			{tunnel_commands(Commands, Stream, Protocol, TunnelInfo, State), EvHandlerState}
 	end.
+
+tunnel_commands(Command, Stream, Protocol, TunnelInfo, State) when not is_list(Command) ->
+	tunnel_commands([Command], Stream, Protocol, TunnelInfo, State);
+tunnel_commands([], Stream, _, _, State) ->
+	store_stream(State, Stream);
+tunnel_commands([{state, ProtoState}|Tail], Stream, Protocol, TunnelInfo, State) ->
+	tunnel_commands(Tail, Stream#stream{tunnel={Protocol, ProtoState, TunnelInfo}},
+		Protocol, TunnelInfo, State);
+tunnel_commands([SetCookie={set_cookie, _, _, _, _}|Tail], Stream, Protocol, TunnelInfo,
+		State=#http2_state{commands_queue=Queue}) ->
+	tunnel_commands(Tail, Stream, Protocol, TunnelInfo,
+		State#http2_state{commands_queue=[SetCookie|Queue]});
+tunnel_commands([{active, true}|Tail], Stream, Protocol, TunnelInfo, State) ->
+	tunnel_commands(Tail, Stream, Protocol, TunnelInfo, State).
 
 data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 		Stream=#stream{ref=StreamRef, reply_to=ReplyTo, flow=Flow0, handler_state=Handlers0}) ->

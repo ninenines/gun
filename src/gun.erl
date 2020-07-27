@@ -1464,6 +1464,7 @@ commands([{set_cookie, _, _, _, _}|Tail], State=#state{cookie_store=undefined}) 
 commands([{set_cookie, _, _, Status, _}|Tail], State=#state{opts=#{cookie_ignore_informational := true}})
 		when Status >= 100, Status =< 199 ->
 	commands(Tail, State);
+%% @todo Make sure this works for proxied requests too.
 commands([{set_cookie, Authority, PathWithQs, _, Headers}|Tail], State=#state{
 			transport=Transport, cookie_store=Store0}) ->
 	Scheme = case Transport of
