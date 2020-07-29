@@ -345,6 +345,42 @@ tunnel_commands([SetCookie={set_cookie, _, _, _, _}|Tail], Stream, Protocol, Tun
 		State=#http2_state{commands_queue=Queue}) ->
 	tunnel_commands(Tail, Stream, Protocol, TunnelInfo,
 		State#http2_state{commands_queue=[SetCookie|Queue]});
+tunnel_commands([{origin, _, NewHost, NewPort, Type}|Tail], Stream, Protocol, TunnelInfo, State) ->
+%% @todo Event?
+	tunnel_commands(Tail, Stream, Protocol, TunnelInfo#{
+		origin_host => NewHost,
+		origin_port => NewPort,
+		intermediaries => [#{
+			type => Type,
+			host => maps:get(origin_host, TunnelInfo),
+			port => maps:get(origin_port, TunnelInfo),
+			transport => tcp, %% @todo
+			protocol => Protocol:name()
+		}|maps:get(intermediaries, TunnelInfo, [])]
+	}, State);
+tunnel_commands([{switch_protocol, Protocol0, ReplyTo}|Tail], Stream=#stream{ref=StreamRef},
+		CurrentProtocol, TunnelInfo, State=#http2_state{opts=Opts}) ->
+	{Protocol, ProtoOpts} = case Protocol0 of
+		{P, PO} -> {gun:protocol_handler(P), PO};
+		P ->
+			Protocol1 = gun:protocol_handler(P),
+			%% @todo We need to allow other protocol opts in http2_opts too.
+			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
+	end,
+	%% When we switch_protocol from socks we must send a gun_socks_up message.
+%% @todo OK but perhaps we should give the StreamRef!!
+	_ = case CurrentProtocol of
+		gun_socks -> ReplyTo ! {gun_socks_up, self(), Protocol:name()};
+		_ -> ok
+	end,
+	OriginSocket = #{
+		reply_to => ReplyTo,
+		stream_ref => StreamRef
+	},
+	OriginTransport = gun_tcp_proxy,
+	{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport, ProtoOpts),
+%% @todo	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
+	tunnel_commands([{state, ProtoState}|Tail], Stream, Protocol, TunnelInfo, State);
 tunnel_commands([{active, true}|Tail], Stream, Protocol, TunnelInfo, State) ->
 	tunnel_commands(Tail, Stream, Protocol, TunnelInfo, State).
 
@@ -410,8 +446,7 @@ headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Com
 			{setup, Destination=#{host := DestHost, port := DestPort}, TunnelInfo} = Tunnel,
 			%% In the case of CONNECT responses the RealStreamRef is found in TunnelInfo.
 			%% We therefore do not need to call stream_ref/2.
-			%% @todo Maybe we don't need it in TunnelInfo anymore?
-			#{stream_ref := RealStreamRef} = TunnelInfo,
+			RealStreamRef = stream_ref(State, StreamRef),
 			ReplyTo ! {gun_response, self(), RealStreamRef, IsFin, Status, Headers},
 			EvHandlerState = EvHandler:response_headers(#{
 				stream_ref => RealStreamRef,
@@ -428,19 +463,12 @@ headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Com
 				{P, PO} -> {gun:protocol_handler(P), PO};
 				P -> {gun:protocol_handler(P), #{}}
 			end,
-			%% @todo What about gun_socks_up?
 			%% @todo What about the StateName returned?
 			OriginSocket = #{
 				reply_to => ReplyTo,
 				stream_ref => RealStreamRef
 			},
 			OriginTransport = gun_tcp_proxy,
-			%% @todo Depending on protocol:
-			%% - HTTP/1.1 will need to add the stream_ref in Opts to its StreamRef in messages.
-			%% - HTTP/2 as well
-			%% - raw already uses it
-			%% - ws already uses it (but it's passed slightly differently)
-			%% - socks might not need it? what about gun_socks_up?
 			{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport,
 				ProtoOpts#{stream_ref => RealStreamRef}),
 			%% @todo EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
@@ -993,7 +1021,7 @@ stream_info(State, StreamRef) when is_reference(StreamRef) ->
 %% Tunneled streams.
 stream_info(State=#http2_state{transport=Transport}, StreamRefList=[StreamRef|Tail]) ->
 	case get_stream_by_ref(State, StreamRef) of
-		#stream{tunnel={Protocol, ProtoState, #{host := TunnelHost, port := TunnelPort}}} ->
+		#stream{tunnel={Protocol, ProtoState, TunnelInfo=#{host := TunnelHost, port := TunnelPort}}} ->
 			%% We must return the real StreamRef as seen by the user.
 			%% We therefore set it on return, with the outer layer "winning".
 			%%
@@ -1004,7 +1032,8 @@ stream_info(State=#http2_state{transport=Transport}, StreamRefList=[StreamRef|Ta
 				{ok, undefined} ->
 					{ok, undefined};
 				{ok, Info} ->
-					Intermediaries = maps:get(intermediaries, Info, []),
+					Intermediaries1 = maps:get(intermediaries, TunnelInfo, []),
+					Intermediaries2 = maps:get(intermediaries, Info, []),
 					{ok, Info#{
 						ref => StreamRefList,
 						intermediaries => [#{
@@ -1017,7 +1046,7 @@ stream_info(State=#http2_state{transport=Transport}, StreamRefList=[StreamRef|Ta
 								TransportName -> TransportName
 							end,
 							protocol => http2
-						}|Intermediaries]
+						}|Intermediaries1 ++ Intermediaries2]
 					}}
 			end;
 		error ->

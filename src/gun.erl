@@ -115,19 +115,6 @@
 	| #{binary() | string() | atom() => iodata()}.
 -export_type([req_headers/0]).
 
--type tunnel_info() :: #{
-	stream_ref := reference() | [reference()],
-
-	%% Tunnel.
-	host := inet:hostname() | inet:ip_address(),
-	port := inet:port_number(),
-
-	%% Origin.
-	origin_host => inet:hostname() | inet:ip_address(),
-	origin_port => inet:port_number()
-}.
--export_type([tunnel_info/0]).
-
 -type ws_close_code() :: 1000..4999.
 
 -type ws_frame() :: close | ping | pong
@@ -182,6 +169,20 @@
 	transport := tcp | tls,
 	protocol := http | socks
 }.
+
+-type tunnel_info() :: #{
+	%% Tunnel.
+	host := inet:hostname() | inet:ip_address(),
+	port := inet:port_number(),
+
+	%% Origin.
+	origin_host => inet:hostname() | inet:ip_address(),
+	origin_port => inet:port_number(),
+
+	%% Non-stream intermediaries (for example SOCKS).
+	intermediaries => [intermediary()]
+}.
+-export_type([tunnel_info/0]).
 
 -type raw_opts() :: #{}.
 -export_type([raw_opts/0]).
@@ -1229,7 +1230,7 @@ connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow}
 			protocol=Protocol, protocol_state=ProtoState}) ->
 	%% @todo No events are currently handled for the CONNECT request?
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo,
-		Destination, #{stream_ref => StreamRef, host => Host, port => Port},
+		Destination, #{host => Host, port => Port},
 		Headers, InitialFlow),
 	{keep_state, State#state{protocol_state=ProtoState2}};
 %% Public Websocket interface.

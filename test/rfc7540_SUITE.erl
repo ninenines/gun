@@ -559,7 +559,8 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 	{ok, Ref, OriginPort} = do_cowboy_origin(OriginTransport, OriginProtocol),
 	try
 		{ok, ProxyPid, ProxyPort} = do_proxy_start(ProxyTransport, [
-			#proxy_stream{id=1, status=200}
+			#proxy_stream{id=1, status=200},
+			#proxy_stream{id=3, status=299}
 		]),
 		Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 		{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
@@ -581,6 +582,9 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 		ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
 		{response, nofin, 200, _} = gun:await(ConnPid, ProxiedStreamRef),
+		%% We can create more requests on the proxy as well.
+		ProxyStreamRef = gun:get(ConnPid, "/"),
+		{response, fin, 299, _} = gun:await(ConnPid, ProxyStreamRef),
 		gun:close(ConnPid)
 	after
 		cowboy:stop_listener(Ref)

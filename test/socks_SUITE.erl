@@ -413,3 +413,89 @@ do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) -
 			protocol := socks
 	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
+
+socks5_tcp_through_h2_connect_tcp_to_tcp_origin(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through "
+		"a TCP HTTP/2 proxy followed by a Socks5 proxy."),
+	do_socks5_through_h2_connect_proxy(<<"http">>, tcp, <<"http">>, tcp).
+
+do_socks5_through_h2_connect_proxy(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
+	{ok, Proxy1Pid, Proxy1Port} = rfc7540_SUITE:do_proxy_start(ProxyTransport, [
+		{proxy_stream, 1, 200, [], 0, undefined}
+	]),
+	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(ProxyTransport, none),
+	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
+		transport => ProxyTransport,
+		protocols => [http2]
+	}),
+	%% We receive a gun_up first. This is the HTTP proxy.
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(Proxy1Pid),
+	Authority1 = iolist_to_binary(["localhost:", integer_to_binary(Proxy2Port)]),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => Proxy2Port,
+		transport => ProxyTransport,
+		protocols => [{socks, #{
+			host => "localhost",
+			port => OriginPort,
+			transport => OriginTransport
+		}}]
+	}),
+	{request, #{
+		<<":method">> := <<"CONNECT">>,
+		<<":authority">> := Authority1
+	}} = receive_from(Proxy1Pid),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	%% We receive a gun_socks_up afterwards. This is the origin HTTP server.
+	{ok, http} = gun:await_up(ConnPid),
+	%% The second proxy receives a Socks5 auth/connect request.
+	{auth_methods, 1, [none]} = receive_from(Proxy2Pid),
+	{connect, <<"localhost">>, OriginPort} = receive_from(Proxy2Pid),
+	handshake_completed = receive_from(OriginPid),
+	ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
+	Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority2/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	#{
+		transport := ProxyTransport,
+		protocol := http2,
+		origin_scheme := ProxyScheme,
+		origin_host := "localhost",
+		origin_port := Proxy1Port,
+		intermediaries := [] %% Intermediaries are specific to the CONNECT stream.
+	} = gun:info(ConnPid),
+	{ok, #{
+		ref := StreamRef,
+		reply_to := Self,
+		state := running,
+		tunnel := #{
+			transport := OriginTransport,
+			protocol := http,
+			origin_scheme := OriginScheme,
+			origin_host := "localhost",
+			origin_port := OriginPort
+		}
+	}} = gun:stream_info(ConnPid, StreamRef),
+	{ok, #{
+		ref := ProxiedStreamRef,
+		reply_to := Self,
+		state := running,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := Proxy1Port,
+			transport := ProxyTransport,
+			protocol := http2
+		}, #{
+			type := socks5,
+			host := "localhost",
+			port := Proxy2Port,
+			transport := ProxyTransport,
+			protocol := socks
+		}]
+	}} = gun:stream_info(ConnPid, ProxiedStreamRef),
+	gun:close(ConnPid).
