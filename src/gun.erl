@@ -719,6 +719,8 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{upgrade, Protocols, Headers};
 		{gun_ws, ServerPid, StreamRef, Frame} ->
 			{ws, Frame};
+		{gun_socks_up, ServerPid, StreamRef, Protocol} ->
+			{up, Protocol};
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->

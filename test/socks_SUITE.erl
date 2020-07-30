@@ -449,8 +449,8 @@ do_socks5_through_h2_connect_proxy(OriginScheme, OriginTransport, ProxyScheme, P
 		<<":authority">> := Authority1
 	}} = receive_from(Proxy1Pid),
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
-	%% We receive a gun_socks_up afterwards. This is the origin HTTP server.
-	{ok, http} = gun:await_up(ConnPid),
+	%% We receive a stream-specific gun_socks_up afterwards. This is the origin HTTP server.
+	{up, http} = gun:await(ConnPid, StreamRef),
 	%% The second proxy receives a Socks5 auth/connect request.
 	{auth_methods, 1, [none]} = receive_from(Proxy2Pid),
 	{connect, <<"localhost">>, OriginPort} = receive_from(Proxy2Pid),

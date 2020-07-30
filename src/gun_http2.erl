@@ -368,9 +368,8 @@ tunnel_commands([{switch_protocol, Protocol0, ReplyTo}|Tail], Stream=#stream{ref
 			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
 	end,
 	%% When we switch_protocol from socks we must send a gun_socks_up message.
-%% @todo OK but perhaps we should give the StreamRef!!
 	_ = case CurrentProtocol of
-		gun_socks -> ReplyTo ! {gun_socks_up, self(), Protocol:name()};
+		gun_socks -> ReplyTo ! {gun_socks_up, self(), stream_ref(State, StreamRef), Protocol:name()};
 		_ -> ok
 	end,
 	OriginSocket = #{
