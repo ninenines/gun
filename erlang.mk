@@ -5491,7 +5491,7 @@ define compat_rebar_config
 $(call comma_list,$(foreach d,$(DEPS),\
 	$(if $(filter hex,$(call dep_fetch,$d)),\
 		{$(call dep_name,$d)$(comma)"$(call dep_repo,$d)"},\
-		{$(call dep_name,$d)$(comma)".*"$(comma){git,"$(call dep_repo,$d)"$(comma)"$(call dep_commit,$d)"}})))
+		{$(call dep_name,$d)$(comma)".*"$(comma){git,"$(call dep_repo,$d)"$(comma){ref,"$(call dep_commit,$d)"}}})))
 ]}.
 {erl_opts, $(call compat_erlc_opts_to_list,$(ERLC_OPTS))}.
 endef
