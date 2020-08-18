@@ -97,7 +97,8 @@ run_tests([Port|Tail]) ->
 	try
 		{ok, Conn} = gun:open("127.0.0.1", Port, #{
 			protocols => [http2],
-			retry => 0
+			retry => 0,
+			tcp_opts => [{nodelay, true}]
 		}),
 		MRef = monitor(process, Conn),
 		{ok, http2} = gun:await_up(Conn),
