@@ -102,7 +102,9 @@
 -export([domain_lookup/3]).
 -export([connecting/3]).
 -export([initial_tls_handshake/3]).
+-export([ensure_alpn_sni/3]).
 -export([tls_handshake/3]).
+-export([protocol_negotiated/2]).
 -export([connected/3]).
 -export([connected_data_only/3]).
 -export([connected_no_input/3]).
@@ -180,7 +182,10 @@
 	origin_port => inet:port_number(),
 
 	%% Non-stream intermediaries (for example SOCKS).
-	intermediaries => [intermediary()]
+	intermediaries => [intermediary()],
+
+	%% TLS proxy.
+	tls_proxy_pid => pid()
 }.
 -export_type([tunnel_info/0]).
 
@@ -1049,10 +1054,10 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 				{next_event, internal, {retries, Retries, Reason}}}
 	end.
 
-initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts}) ->
+initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts, origin_host=OriginHost}) ->
 	Protocols = maps:get(protocols, Opts, [http2, http]),
 	HandshakeEvent = #{
-		tls_opts => ensure_alpn_sni(Protocols, maps:get(tls_opts, Opts, []), State0),
+		tls_opts => ensure_alpn_sni(Protocols, maps:get(tls_opts, Opts, []), OriginHost),
 		timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 	},
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
@@ -1064,7 +1069,7 @@ initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts}) -
 				{next_event, internal, {retries, Retries, Reason}}}
 	end.
 
-ensure_alpn_sni(Protocols0, TransOpts0, #state{origin_host=OriginHost}) ->
+ensure_alpn_sni(Protocols0, TransOpts0, OriginHost) ->
 	%% ALPN.
 	Protocols = [case P of
 		http -> <<"http/1.1">>;
@@ -1101,7 +1106,7 @@ tls_handshake(internal, {tls_handshake,
 		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols, ReplyTo},
 		State=#state{socket=Socket, transport=Transport, origin_host=OriginHost, origin_port=OriginPort,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	TLSOpts = ensure_alpn_sni(Protocols, TLSOpts0, State),
+	TLSOpts = ensure_alpn_sni(Protocols, TLSOpts0, OriginHost),
 	HandshakeEvent = HandshakeEvent0#{
 		tls_opts => TLSOpts,
 		socket => Socket
@@ -1130,9 +1135,10 @@ tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeE
 tls_handshake(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 
-normal_tls_handshake(Socket, State=#state{event_handler=EvHandler, event_handler_state=EvHandlerState0},
+normal_tls_handshake(Socket, State=#state{
+		origin_host=OriginHost, event_handler=EvHandler, event_handler_state=EvHandlerState0},
 		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols) ->
-	TLSOpts = ensure_alpn_sni(Protocols, TLSOpts0, State),
+	TLSOpts = ensure_alpn_sni(Protocols, TLSOpts0, OriginHost),
 	HandshakeEvent = HandshakeEvent0#{
 		tls_opts => TLSOpts,
 		socket => Socket
@@ -1355,6 +1361,48 @@ handle_common_connected_no_input(info, {Closed, Socket}, _,
 handle_common_connected_no_input(info, {Error, Socket, Reason}, _,
 		State=#state{socket=Socket, messages={_, _, Error}}) ->
 	disconnect(State, {error, Reason});
+%% Socket events from TLS proxy sockets set up by HTTP/2 CONNECT.
+%% We always forward the messages to Protocol:handle_continue.
+handle_common_connected_no_input(info,
+		Msg={gun_tls_proxy, _, _, {handle_continue, StreamRef, _, _}}, _,
+		State0=#state{protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Commands, EvHandlerState} = Protocol:handle_continue(StreamRef, Msg,
+		ProtoState, EvHandler, EvHandlerState0),
+	case commands(Commands, State0#state{event_handler_state=EvHandlerState}) of
+		{keep_state, State} ->
+			{keep_state, active(State)};
+		{next_state, closing, State, Actions} ->
+			{next_state, closing, active(State), Actions};
+		Res ->
+			Res
+	end;
+%% @todo
+%	NewProtocol = protocol_negotiated(Negotiated, Protocols),
+%	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+%		socket => Socket,
+%		protocol => NewProtocol
+%	}, EvHandlerState0),
+%	commands([{switch_protocol, NewProtocol, ReplyTo}], State0#state{event_handler_state=EvHandlerState});
+%%
+%		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+%	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+%		error => Reason
+%	}, EvHandlerState0),
+%	commands([Error], State#state{event_handler_state=EvHandlerState});
+handle_common_connected_no_input(info, {handle_continue, StreamRef, Msg}, _,
+		State0=#state{protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Commands, EvHandlerState} = Protocol:handle_continue(StreamRef, Msg,
+		ProtoState, EvHandler, EvHandlerState0),
+	case commands(Commands, State0#state{event_handler_state=EvHandlerState}) of
+		{keep_state, State} ->
+			{keep_state, active(State)};
+		{next_state, closing, State, Actions} ->
+			{next_state, closing, active(State), Actions};
+		Res ->
+			Res
+	end;
 %% Timeouts.
 %% @todo HTTP/2 requires more timeouts than just the keepalive timeout.
 %% We should have a timeout function in protocols that deal with

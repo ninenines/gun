@@ -95,6 +95,7 @@
 	extra :: any()
 }).
 
+-define(DEBUG_PROXY, 1).
 -ifdef(DEBUG_PROXY).
 -define(DEBUG_LOG(Format, Args),
 	io:format(user, "(~p) ~p:~p/~p:" ++ Format ++ "~n",
@@ -113,6 +114,8 @@ start_link(Host, Port, Opts, Timeout, OutSocket, OutTransport, Extra) ->
 			[]) of
 		{ok, Pid} when is_port(OutSocket) ->
 			ok = gen_tcp:controlling_process(OutSocket, Pid),
+			{ok, Pid};
+		{ok, Pid} when is_map(OutSocket) ->
 			{ok, Pid};
 		{ok, Pid} when not is_pid(OutSocket) ->
 			ok = ssl:controlling_process(OutSocket, Pid),
@@ -262,6 +265,27 @@ connected({call, From}, Msg={send, Data}, State=#state{proxy_socket=Socket}) ->
 	?DEBUG_LOG("spawned ~0p", [SpawnedPid]),
 	keep_state_and_data;
 %% Messages from the proxy socket.
+%%
+%% When the out_socket is a #{stream_ref := _} map we know that processing
+%% of the data isn't yet complete. We wrap the message in a handle_continue
+%% tuple and provide the StreamRef for further processing.
+connected(info, Msg={ssl, Socket, Data}, State=#state{owner_pid=OwnerPid, proxy_socket=Socket,
+		out_socket=#{stream_ref := StreamRef}}) ->
+	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	OwnerPid ! {handle_continue, StreamRef, {tls_proxy, self(), Data}},
+	keep_state_and_data;
+connected(info, Msg={ssl_closed, Socket}, State=#state{owner_pid=OwnerPid, proxy_socket=Socket,
+		out_socket=#{stream_ref := StreamRef}}) ->
+	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	OwnerPid ! {handle_continue, StreamRef, {tls_proxy_closed, self()}},
+	keep_state_and_data;
+connected(info, Msg={ssl_error, Socket, Reason}, State=#state{owner_pid=OwnerPid, proxy_socket=Socket,
+		out_socket=#{stream_ref := StreamRef}}) ->
+	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	OwnerPid ! {handle_continue, StreamRef, {tls_proxy_error, self(), Reason}},
+	keep_state_and_data;
+%% When the out_socket is anything else then the data is sent like normal
+%% socket data. It does not need to be handled specially.
 connected(info, Msg={ssl, Socket, Data}, State=#state{owner_pid=OwnerPid, proxy_socket=Socket}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
 	OwnerPid ! {tls_proxy, self(), Data},
