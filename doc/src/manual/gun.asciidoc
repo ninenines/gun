@@ -64,7 +64,7 @@ by sending any of the following messages:
 Connection:
 
 * link:man:gun_up(3)[gun_up(3)] - The connection is up
-* link:man:gun_socks_up(3)[gun_socks_up(3)] - The Socks connection is up
+* link:man:gun_tunnel_up(3)[gun_tunnel_up(3)] - The tunnel is up
 * link:man:gun_down(3)[gun_down(3)] - The connection is down
 * link:man:gun_upgrade(3)[gun_upgrade(3)] - Successful protocol upgrade
 * link:man:gun_error(3)[gun_error(3)] - Stream or connection-wide error

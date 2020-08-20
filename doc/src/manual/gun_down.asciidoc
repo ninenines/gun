@@ -75,5 +75,5 @@ link:man:gun(3)[gun(3)],
 link:man:gun:open(3)[gun:open(3)],
 link:man:gun:open_unix(3)[gun:open_unix(3)],
 link:man:gun_up(3)[gun_up(3)],
-link:man:gun_socks_up(3)[gun_socks_up(3)],
+link:man:gun_tunnel_up(3)[gun_tunnel_up(3)],
 link:man:gun_error(3)[gun_error(3)]

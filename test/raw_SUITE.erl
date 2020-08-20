@@ -85,7 +85,7 @@ do_socks5_raw(OriginTransport, ProxyTransport) ->
 			protocols => [raw]
 		}}]
 	}),
-	%% We receive a gun_up and a gun_socks_up.
+	%% We receive a gun_up and a gun_tunnel_up.
 	{ok, socks} = gun:await_up(ConnPid),
 	{ok, raw} = gun:await_up(ConnPid),
 	%% The proxy received two packets.

@@ -808,8 +808,7 @@ await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
 			{ok, Protocol};
-		%% @todo Maybe name it gun_tunnel_up. And send it for HTTP/1.1 CONNECT and HTTP/2 CONNECT and SOCKS.
-		{gun_socks_up, ServerPid, Protocol} ->
+		{gun_tunnel_up, ServerPid, Protocol} ->
 			{ok, Protocol};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
 			{error, {down, Reason}}
@@ -1587,9 +1586,9 @@ commands([{switch_protocol, Protocol0, ReplyTo}], State0=#state{
 			Protocol1 = protocol_handler(P),
 			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
 	end,
-	%% When we switch_protocol from socks we must send a gun_socks_up message.
+	%% When we switch_protocol from socks we must send a gun_tunnel_up message.
 	_ = case CurrentProtocol of
-		gun_socks -> ReplyTo ! {gun_socks_up, self(), Protocol:name()};
+		gun_socks -> ReplyTo ! {gun_tunnel_up, self(), Protocol:name()};
 		_ -> ok
 	end,
 	{StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),

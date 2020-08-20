@@ -340,12 +340,14 @@ handle_connect(Rest, State=#http_state{
 				timeout => maps:get(tls_handshake_timeout, Destination, infinity)
 			},
 			Protocols = maps:get(protocols, Destination, [http2, http]),
+%% @todo gun_tunnel_up when the protocol switch is complete
 			{handle_ret([
 				{origin, <<"https">>, NewHost, NewPort, connect},
 				{tls_handshake, HandshakeEvent, Protocols, ReplyTo}
 			], State), EvHandlerState1};
 		_ ->
 			[Protocol] = maps:get(protocols, Destination, [http]),
+%% @todo gun_tunnel_up
 			{handle_ret([
 				{origin, <<"http">>, NewHost, NewPort, connect},
 				{switch_protocol, Protocol, ReplyTo}

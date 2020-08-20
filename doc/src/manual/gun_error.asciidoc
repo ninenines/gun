@@ -64,5 +64,5 @@ handle_info({gun_error, ConnPid, _StreamRef, _Reason},
 
 link:man:gun(3)[gun(3)],
 link:man:gun_up(3)[gun_up(3)],
-link:man:gun_socks_up(3)[gun_socks_up(3)],
+link:man:gun_tunnel_up(3)[gun_tunnel_up(3)],
 link:man:gun_down(3)[gun_down(3)]

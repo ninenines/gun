@@ -1,14 +1,16 @@
-= gun_socks_up(3)
+= gun_tunnel_up(3)
 
 == Name
 
-gun_socks_up - The Socks connection is up
+gun_tunnel_up - The tunnel is up
+
+// @todo Update with StreamRef
 
 == Description
 
 [source,erlang]
 ----
-{gun_socks_up, ConnPid, Protocol}
+{gun_tunnel_up, ConnPid, Protocol}
 
 ConnPid  :: pid()
 Protocol :: http | http2 | socks
@@ -21,7 +23,7 @@ completed through the configured Socks proxy.
 
 If Gun is configured to connect to another Socks server, then the
 connection is not usable yet. One or more
-link:man:gun_socks_up(3)[gun_socks_up(3)] messages will follow.
+link:man:gun_tunnel_up(3)[gun_tunnel_up(3)] messages will follow.
 
 Otherwise, Gun will start processing the messages it received while
 waiting for the connection to be up. If this is a reconnection,
@@ -46,10 +48,10 @@ to determine the capabilities of the server.
 
 == Examples
 
-.Receive a gun_socks_up message in a gen_server
+.Receive a gun_tunnel_up message in a gen_server
 [source,erlang]
 ----
-handle_info({gun_socks_up, ConnPid, _Protocol},
+handle_info({gun_tunnel_up, ConnPid, _Protocol},
             State=#state{conn_pid=ConnPid}) ->
     %% Do something.
     {noreply, State}.

@@ -366,7 +366,7 @@ tunnel_commands([{switch_protocol, Protocol0, ReplyTo}|Tail], Stream=#stream{ref
 			%% @todo We need to allow other protocol opts in http2_opts too.
 			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
 	end,
-	%% When we switch_protocol from socks we must send a gun_socks_up message.
+	%% When we switch_protocol from socks we must send a gun_tunnel_up message.
 	_ = case CurrentProtocol of
 		gun_socks -> ReplyTo ! {gun_tunnel_up, self(), stream_ref(State, StreamRef), Protocol:name()};
 		_ -> ok

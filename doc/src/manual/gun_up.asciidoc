@@ -21,7 +21,7 @@ reconnection completed.
 
 If Gun is configured to connect to a Socks server, then the
 connection is not usable yet. One or more
-link:man:gun_socks_up(3)[gun_socks_up(3)] messages will follow.
+link:man:gun_tunnel_up(3)[gun_tunnel_up(3)] messages will follow.
 
 Otherwise, Gun will start processing the messages it received while
 waiting for the connection to be up. If this is a reconnection,
@@ -61,6 +61,6 @@ link:man:gun(3)[gun(3)],
 link:man:gun:open(3)[gun:open(3)],
 link:man:gun:open_unix(3)[gun:open_unix(3)],
 link:man:gun:await_up(3)[gun:await_up(3)],
-link:man:gun_socks_up(3)[gun_socks_up(3)],
+link:man:gun_tunnel_up(3)[gun_tunnel_up(3)],
 link:man:gun_down(3)[gun_down(3)],
 link:man:gun_error(3)[gun_error(3)]
