@@ -724,7 +724,7 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{upgrade, Protocols, Headers};
 		{gun_ws, ServerPid, StreamRef, Frame} ->
 			{ws, Frame};
-		{gun_socks_up, ServerPid, StreamRef, Protocol} ->
+		{gun_tunnel_up, ServerPid, StreamRef, Protocol} ->
 			{up, Protocol};
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, {stream_error, Reason}};
@@ -808,6 +808,7 @@ await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
 			{ok, Protocol};
+		%% @todo Maybe name it gun_tunnel_up. And send it for HTTP/1.1 CONNECT and HTTP/2 CONNECT and SOCKS.
 		{gun_socks_up, ServerPid, Protocol} ->
 			{ok, Protocol};
 		{'DOWN', MRef, process, ServerPid, Reason} ->

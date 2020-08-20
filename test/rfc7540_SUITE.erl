@@ -443,14 +443,6 @@ connect_http_via_h2(_) ->
 	do_connect_http(<<"http">>, tcp, http, <<"https">>, tls).
 
 connect_https_via_h2(_) ->
-
-%dbg:tracer(),
-%dbg:tpl(gun, []),
-%dbg:tpl(gun_http2, []),
-%dbg:tpl(gun_tls_proxy, []),
-%dbg:tpl(gun_tls_proxy_http2_connect, []),
-%dbg:p(all, c),
-
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_http(<<"https">>, tls, http, <<"https">>, tls).
@@ -514,12 +506,7 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 	}} = receive_from(ProxyPid),
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
-	%% @todo The 200 response must not be sent before the TLS handshake completed successfully?
-	%% Or the coming request must be kept around until the tunnel is up? We probably need
-	%% to gun_tunnel_up or something to inform the user the tunnel is up.
-	%%
-	%% @todo QUEUE data until the tunnel is up? Send a gun_up of some kind?
-	timer:sleep(1000),
+	{up, OriginProtocol} = gun:await(ConnPid, StreamRef),
 	ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
 	#{<<":authority">> := Authority} = receive_from(OriginPid),
 	#{

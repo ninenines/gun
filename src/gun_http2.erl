@@ -326,29 +326,9 @@ data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0) ->
 				stream_ref => stream_ref(State, StreamRef)
 			},
 			ProxyPid ! {tls_proxy_http2_connect, OriginSocket, Data},
-io:format(user, "(~p) ~p:~p/~p: data ~p~n",
-	[self(), ?MODULE, ?FUNCTION_NAME, ?FUNCTION_ARITY, Data]),
 			%% @todo What about IsFin?
 			{State, EvHandlerState0};
 		Stream=#stream{tunnel={Protocol, ProtoState0, TunnelInfo}} ->
-			%% @todo Can't call Protocol:handle directly, may need to unwrap TLS first...
-
-			%% in this case we know Transport is either gun_tcp_proxy or gun_tls_proxy
-			%% if gun_tcp_proxy we can dispatch to Protocol:handle directly;
-			%% otherwise we must pass the data to gun_tls_proxy
-			%%  -> send {ssl, Socket, Data}
-			%%  -> eventually Gun process receives {Tag, Socket, Data}
-			%%  -> somehow it needs to call this stream to resume processing and call Protocol:handle
-
-			%% maybe {Tag, Socket, Data, Info} instead and Info is used to dispatch
-			%% maybe {stream_Tag, StreamRef, Data}
-			%%  -> StreamRef to know which stream is the connect stream (potentially recursive)
-			%%  -> Protocol:resume_handle(Data, StreamRef, State, EvHandler, EvHandlerState)
-			%%     -> if reference() then we do Protocol:handle/4
-			%%     -> otherwise we pass to the next stream onward
-
-			%% This means that #stream{} must contain both the user-facing StreamRef and the reference.
-
 			{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState0, EvHandler, EvHandlerState0),
 			{tunnel_commands(Commands, Stream, Protocol, TunnelInfo, State), EvHandlerState}
 	end.
@@ -388,7 +368,7 @@ tunnel_commands([{switch_protocol, Protocol0, ReplyTo}|Tail], Stream=#stream{ref
 	end,
 	%% When we switch_protocol from socks we must send a gun_socks_up message.
 	_ = case CurrentProtocol of
-		gun_socks -> ReplyTo ! {gun_socks_up, self(), stream_ref(State, StreamRef), Protocol:name()};
+		gun_socks -> ReplyTo ! {gun_tunnel_up, self(), stream_ref(State, StreamRef), Protocol:name()};
 		_ -> ok
 	end,
 	OriginSocket = #{
@@ -524,6 +504,7 @@ headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Com
 					{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts#{stream_ref => RealStreamRef}),
 					%% @todo EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 					%% @todo What about keepalive?
+					ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},
 					{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState,
 						TunnelInfo#{origin_host => DestHost, origin_port => DestPort}}}),
 						EvHandlerState}
@@ -653,6 +634,7 @@ handle_continue(StreamRef, Msg, State, EvHandler, EvHandlerState0)
 					end,
 					{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, gun_tcp_proxy,
 						ProtoOpts#{stream_ref => RealStreamRef}),
+					ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},
 					{{state, store_stream(State, Stream#stream{tunnel={Protocol, ProtoState,
 						TunnelInfo#{origin_host => DestHost, origin_port => DestPort}}})},
 						EvHandlerState0};
@@ -681,8 +663,6 @@ handle_continue(StreamRef, Msg, State, EvHandler, EvHandlerState0)
 			case Msg of
 				%% Data that was received and decrypted.
 				{tls_proxy, ProxyPid, Data} ->
-io:format(user, "(~p) ~p:~p/~p: data ~p~n",
-	[self(), ?MODULE, ?FUNCTION_NAME, ?FUNCTION_ARITY, Data]),
 					{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState0, EvHandler, EvHandlerState0),
 					{tunnel_commands(Commands, Stream, Protocol, TunnelInfo, State), EvHandlerState};
 				%% @todo What to do about those?
@@ -691,38 +671,14 @@ io:format(user, "(~p) ~p:~p/~p: data ~p~n",
 				{tls_proxy_error, ProxyPid, _Reason} ->
 					todo;
 				%% Data that must be sent as a DATA frame.
-				{data, ReplyTo, _, IsFin, Data} ->
+				{data, _, _, IsFin, Data} ->
 					{State1, EvHandlerState} = maybe_send_data(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0),
 					{{state, State1}, EvHandlerState}
 			end
-
-
-%			{store_stream(State, Stream#stream{tunnel={Proto, ProtoState, TunnelInfo}}), EvHandlerState}%;
-		%% The stream may have ended while TLS was being decoded. @todo What should we do?
+%% @todo Is this possible?
 %		error ->
 %			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
 	end;
-
-
-
-%					[Protocol0] = maps:get(protocols, Destination, [http]),
-%					%% Options are either passed directly or #{} is used. Since the
-%					%% protocol only applies to a stream we cannot use connection-wide options.
-%					{Protocol, ProtoOpts} = case Protocol0 of
-%						{P, PO} -> {gun:protocol_handler(P), PO};
-%						P -> {gun:protocol_handler(P), #{}}
-%					end,
-%					%% @todo What about the StateName returned?
-%					{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, gun_tcp_proxy,
-%						ProtoOpts#{stream_ref => RealStreamRef}),
-%					%% @todo EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
-%					%% @todo What about keepalive?
-%					{store_stream(State, Stream#stream{tunnel={Protocol, ProtoState,
-%						TunnelInfo#{origin_host => DestHost, origin_port => DestPort}}}),
-%						EvHandlerState}
-%
-%
-%	todo;
 %% Tunneled data.
 handle_continue([StreamRef|Tail], Msg, State, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
@@ -734,31 +690,6 @@ handle_continue([StreamRef|Tail], Msg, State, EvHandler, EvHandlerState0) ->
 %		error ->
 %			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
 	end.
-
-
-
-
-%data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, Data,
-%		EvHandler, EvHandlerState) when is_reference(StreamRef) ->
-%	case get_stream_by_ref(State, StreamRef) of
-%		#stream{id=StreamID} ->
-%			case cow_http2_machine:get_stream_local_state(StreamID, HTTP2Machine) of
-%				{ok, fin, _} ->
-%					{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
-%				{ok, _, fin} ->
-%					{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
-%				{ok, _, _} ->
-%					maybe_send_data(State, StreamID, IsFin, Data, EvHandler, EvHandlerState)
-%			end;
-%		error ->
-%			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState}
-%	end;
-%%% Tunneled data.
-%data(State, [StreamRef|Tail], ReplyTo, IsFin, Data, EvHandler, EvHandlerState0) ->
-
-
-
-
 
 update_flow(State, _ReplyTo, StreamRef, Inc) ->
 	case get_stream_by_ref(State, StreamRef) of
@@ -1030,16 +961,6 @@ data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, 
 				{ok, _, fin} ->
 					{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
 				{ok, _, _} ->
-io:format(user, "(~p) ~p:~p/~p: data ~p~n",
-	[self(), ?MODULE, ?FUNCTION_NAME, ?FUNCTION_ARITY, Data]),
-
-%% @todo The data to be sent on the tunnel neeeds to be encrypted as well! So we need
-%% to have a different clause when we have a tunnel AND it has a tls_proxy_pid in TunnelInfo.
-%% But we would need to differentiate between the incoming data and the encrypted data so
-%% that we do not encrypt it in a loop.
-%%
-%% So I guess we need an handle_continue.
-
 					case Tunnel of
 						%% We need to encrypt the data before we can send it. We send it
 						%% directly to the gun_tls_proxy process and then

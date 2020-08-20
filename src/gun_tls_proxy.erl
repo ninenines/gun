@@ -95,7 +95,6 @@
 	extra :: any()
 }).
 
--define(DEBUG_PROXY, 1).
 -ifdef(DEBUG_PROXY).
 -define(DEBUG_LOG(Format, Args),
 	io:format(user, "(~p) ~p:~p/~p:" ++ Format ++ "~n",

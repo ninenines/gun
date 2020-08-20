@@ -295,6 +295,7 @@ do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
 	}} = receive_from(ProxyPid),
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
+	{up, raw} = gun:await(ConnPid, StreamRef),
 	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
 	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, StreamRef),
 	#{

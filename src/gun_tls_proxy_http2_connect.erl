@@ -24,14 +24,18 @@
 -export([close/1]).
 
 -type socket() :: #{
+	%% The pid of the Gun connection.
+	gun_pid := pid(),
+
+	%% The pid of the process that gets replies for this tunnel.
 	reply_to := pid(),
+
+	%% The full stream reference for this tunnel.
 	stream_ref := reference() | [reference()]
 }.
 
 name() -> tls_proxy_http2_connect.
 
-%% We need different message tags because the messages
-%% must be propagated to the right stream.
 messages() -> {tls_proxy_http2_connect, tls_proxy_http2_connect_closed, tls_proxy_http2_connect_error}.
 
 -spec connect(_, _, _) -> no_return().
@@ -49,7 +53,7 @@ send(#{gun_pid := GunPid, reply_to := ReplyTo, stream_ref := StreamRef}, Data) -
 
 -spec setopts(_, _) -> no_return().
 setopts(_, _) ->
-%	error(not_implemented).
+	%% We send messages automatically regardless of active mode.
 	ok.
 
 -spec sockname(_) -> no_return().
