@@ -224,7 +224,7 @@ do_socks5(OriginScheme, OriginTransport, OriginProtocol, ProxyTransport, SocksAu
 	}),
 	%% We receive a gun_up and a gun_tunnel_up.
 	{ok, socks} = gun:await_up(ConnPid),
-	{ok, OriginProtocol} = gun:await_up(ConnPid),
+	{up, OriginProtocol} = gun:await(ConnPid, undefined),
 	%% The proxy received two packets.
 	AuthMethod = do_auth_method(SocksAuth),
 	{auth_methods, 1, [AuthMethod]} = receive_from(ProxyPid),
@@ -302,8 +302,8 @@ do_socks5_through_multiple_proxies(OriginScheme, OriginTransport, ProxyTransport
 	}),
 	%% We receive a gun_up and two gun_tunnel_up.
 	{ok, socks} = gun:await_up(ConnPid),
-	{ok, socks} = gun:await_up(ConnPid),
-	{ok, http} = gun:await_up(ConnPid),
+	{up, socks} = gun:await(ConnPid, undefined),
+	{up, http} = gun:await(ConnPid, undefined),
 	%% The first proxy received two packets.
 	{auth_methods, 1, [none]} = receive_from(Proxy1Pid),
 	{connect, <<"localhost">>, Proxy2Port} = receive_from(Proxy1Pid),
@@ -382,8 +382,9 @@ do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) -
 	}),
 	{request, <<"CONNECT">>, Authority1, 'HTTP/1.1', _} = receive_from(Proxy1Pid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
-	%% We receive a gun_tunnel_up afterwards. This is the origin HTTP server.
-	{ok, http} = gun:await_up(ConnPid),
+	%% We receive two gun_tunnel_up messages. First the SOCKS server and then the origin HTTP server.
+	{up, socks} = gun:await(ConnPid, StreamRef),
+	{up, http} = gun:await(ConnPid, StreamRef),
 	%% The second proxy receives a Socks5 auth/connect request.
 	{auth_methods, 1, [none]} = receive_from(Proxy2Pid),
 	{connect, <<"localhost">>, OriginPort} = receive_from(Proxy2Pid),

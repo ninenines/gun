@@ -87,7 +87,7 @@ do_socks5_raw(OriginTransport, ProxyTransport) ->
 	}),
 	%% We receive a gun_up and a gun_tunnel_up.
 	{ok, socks} = gun:await_up(ConnPid),
-	{ok, raw} = gun:await_up(ConnPid),
+	{up, raw} = gun:await(ConnPid, undefined),
 	%% The proxy received two packets.
 	{auth_methods, 1, [none]} = receive_from(ProxyPid),
 	{connect, <<"localhost">>, OriginPort} = receive_from(ProxyPid),
@@ -141,9 +141,9 @@ do_connect_raw(OriginTransport, ProxyTransport) ->
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef), %% @todo Why fin?
 	handshake_completed = receive_from(OriginPid),
-	%% When we take over the entire connection there is no stream reference.
-	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
-	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined),
+	{up, raw} = gun:await(ConnPid, StreamRef),
+	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
+	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, StreamRef),
 	#{
 		transport := OriginTransport,
 		protocol := raw,
@@ -166,8 +166,9 @@ connect_raw_reply_to(_) ->
 	ReplyTo = spawn(fun() ->
 		{ConnPid, StreamRef} = receive Msg -> Msg after 1000 -> error(timeout) end,
 		{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+		{up, raw} = gun:await(ConnPid, StreamRef),
 		Self ! {self(), ready},
-		{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined),
+		{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, StreamRef),
 		Self ! {self(), ok}
 	end),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, raw, fun do_echo/3),
@@ -183,7 +184,7 @@ connect_raw_reply_to(_) ->
 	{request, <<"CONNECT">>, _, 'HTTP/1.1', _} = receive_from(ProxyPid),
 	handshake_completed = receive_from(OriginPid),
 	receive {ReplyTo, ready} -> ok after 1000 -> error(timeout) end,
-	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
+	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
 	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
 
 http11_upgrade_raw_tcp(_) ->

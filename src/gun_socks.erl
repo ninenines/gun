@@ -26,6 +26,7 @@
 %% @todo down
 
 -record(socks_state, {
+	ref :: undefined | reference(), %% @todo Need a proper stream_ref type.
 	reply_to :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
@@ -84,6 +85,7 @@ opts_name() -> socks_opts.
 has_keepalive() -> false.
 
 init(ReplyTo, Socket, Transport, Opts) ->
+	StreamRef = maps:get(stream_ref, Opts, undefined),
 	5 = Version = maps:get(version, Opts, 5),
 	Auth = maps:get(auth, Opts, [none]),
 	Methods = <<case A of
@@ -91,7 +93,7 @@ init(ReplyTo, Socket, Transport, Opts) ->
 		none -> <<0>>
 	end || A <- Auth>>,
 	Transport:send(Socket, [<<5, (length(Auth))>>, Methods]),
-	{connected_no_input, #socks_state{reply_to=ReplyTo, socket=Socket, transport=Transport,
+	{connected_no_input, #socks_state{ref=StreamRef, reply_to=ReplyTo, socket=Socket, transport=Transport,
 		opts=Opts, version=Version, status=auth_method_select}}.
 
 switch_transport(Transport, Socket, State) ->
@@ -120,7 +122,8 @@ handle(<<1, 0>>, State=#socks_state{version=5, status=auth_username_password}) -
 handle(<<1, _>>, #socks_state{version=5, status=auth_username_password}) ->
 	{error, {socks5, username_password_auth_failure}};
 %% Connect reply.
-handle(<<5, 0, 0, Rest0/bits>>, #socks_state{reply_to=ReplyTo, opts=Opts, version=5, status=connect}) ->
+handle(<<5, 0, 0, Rest0/bits>>, #socks_state{ref=StreamRef, reply_to=ReplyTo, opts=Opts,
+		version=5, status=connect}) ->
 	%% @todo What to do with BoundAddr and BoundPort? Add as metadata to origin info?
 	{_BoundAddr, _BoundPort} = case Rest0 of
 		%% @todo Seen a server with <<1, 0:48>>.
@@ -137,16 +140,28 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{reply_to=ReplyTo, opts=Opts, versio
 	%% @todo The origin scheme is wrong when the next protocol is not HTTP.
 	case Opts of
 		#{transport := tls} ->
-			HandshakeEvent = #{
+			HandshakeEvent0 = #{
 				tls_opts => maps:get(tls_opts, Opts, []),
 				timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 			},
+			HandshakeEvent = case StreamRef of
+				undefined -> HandshakeEvent0;
+				_ -> HandshakeEvent0#{stream_ref => StreamRef}
+			end,
 			[{origin, <<"https">>, NewHost, NewPort, socks5},
 				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http2, http]), ReplyTo}];
 		_ ->
-			[Protocol] = maps:get(protocols, Opts, [http]),
+			[NewProtocol0] = maps:get(protocols, Opts, [http]),
+			NewProtocol = {Protocol0, _} = case {StreamRef, NewProtocol0} of
+				{undefined, {_, _}} -> NewProtocol0;
+				{undefined, P} -> {P, #{}};
+				{_, {P, POpts}} -> {P, POpts#{stream_ref => StreamRef}};
+				{_, P} -> {P, #{stream_ref => StreamRef}}
+			end,
+			Protocol = gun:protocol_handler(Protocol0),
+			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, Protocol, ReplyTo}]
+				{switch_protocol, NewProtocol, ReplyTo}]
 	end;
 handle(<<5, Error, _/bits>>, #socks_state{version=5, status=connect}) ->
 	Reason = case Error of

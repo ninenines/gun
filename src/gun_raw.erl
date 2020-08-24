@@ -57,7 +57,7 @@ close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
 
 %% @todo Initiate closing on IsFin=fin.
-data(State=#raw_state{socket=Socket, transport=Transport}, undefined,
+data(State=#raw_state{ref=StreamRef, socket=Socket, transport=Transport}, StreamRef,
 		_ReplyTo, _IsFin, Data, _EvHandler, EvHandlerState) ->
 	Transport:send(Socket, Data),
 	{State, EvHandlerState}.

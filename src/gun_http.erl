@@ -313,14 +313,15 @@ handle_head(Data, State0=#http_state{streams=[#stream{ref=StreamRef, authority=A
 handle_connect(Rest, State=#http_state{
 		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
 		EvHandler, EvHandlerState0, 'HTTP/1.1', Status, Headers) ->
+	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 	_ = case Stream of
 		#stream{is_alive=false} -> ok;
-		_ -> ReplyTo ! {gun_response, self(), stream_ref(State, StreamRef), fin, Status, Headers}
+		_ -> ReplyTo ! {gun_response, self(), RealStreamRef, fin, Status, Headers}
 	end,
 	%% @todo Figure out whether the event should trigger if the stream was cancelled.
 	EvHandlerState1 = EvHandler:response_headers(#{
-		stream_ref => StreamRef,
+		stream_ref => RealStreamRef,
 		reply_to => ReplyTo,
 		status => Status,
 		headers => Headers
@@ -334,23 +335,27 @@ handle_connect(Rest, State=#http_state{
 	case Destination of
 		#{transport := tls} ->
 			HandshakeEvent = #{
-				stream_ref => StreamRef,
+				stream_ref => RealStreamRef,
 				reply_to => ReplyTo,
 				tls_opts => maps:get(tls_opts, Destination, []),
 				timeout => maps:get(tls_handshake_timeout, Destination, infinity)
 			},
 			Protocols = maps:get(protocols, Destination, [http2, http]),
-%% @todo gun_tunnel_up when the protocol switch is complete
 			{handle_ret([
 				{origin, <<"https">>, NewHost, NewPort, connect},
 				{tls_handshake, HandshakeEvent, Protocols, ReplyTo}
 			], State), EvHandlerState1};
 		_ ->
-			[Protocol] = maps:get(protocols, Destination, [http]),
-%% @todo gun_tunnel_up
+			[NewProtocol0] = maps:get(protocols, Destination, [http]),
+			NewProtocol = {Protocol0, _} = case NewProtocol0 of
+				{P, POpts} -> {P, POpts#{stream_ref => RealStreamRef}};
+				P -> {P, #{stream_ref => RealStreamRef}}
+			end,
+			Protocol = gun:protocol_handler(Protocol0),
+			ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},
 			{handle_ret([
 				{origin, <<"http">>, NewHost, NewPort, connect},
-				{switch_protocol, Protocol, ReplyTo}
+				{switch_protocol, NewProtocol, ReplyTo}
 			], State), EvHandlerState1}
 	end.
 
@@ -537,6 +542,13 @@ keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}, _, Ev
 keepalive(State, _, EvHandlerState) ->
 	{State, EvHandlerState}.
 
+headers(State, StreamRef, ReplyTo, Method, Host, Port,
+		Path, Headers, InitialFlow, EvHandler, EvHandlerState)
+		when is_list(StreamRef) ->
+	%% Because we switch protocol we may receive a StreamRef as a list.
+	%% But we are always the final StreamRef as HTTP/1.1.
+	headers(State, lists:last(StreamRef), ReplyTo, Method, Host, Port,
+		Path, Headers, InitialFlow, EvHandler, EvHandlerState);
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
 		InitialFlow0, EvHandler, EvHandlerState0) ->
@@ -547,6 +559,13 @@ headers(State=#http_state{opts=Opts, out=head},
 	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo,
 		Method, Authority, Path, InitialFlow), EvHandlerState}.
 
+request(State, StreamRef, ReplyTo, Method, Host, Port,
+		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState)
+		when is_list(StreamRef) ->
+	%% Because we switch protocol we may receive a StreamRef as a list.
+	%% But we are always the final StreamRef as HTTP/1.1.
+	request(State, lists:last(StreamRef), ReplyTo, Method, Host, Port,
+		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState);
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
 		InitialFlow0, EvHandler, EvHandlerState0) ->
@@ -634,6 +653,11 @@ transform_header_names(#http_state{opts=Opts}, Headers) ->
 		Fun -> lists:keymap(Fun, 1, Headers)
 	end.
 
+data(State, StreamRef, ReplyTo, IsFin, Data, EvHandler, EvHandlerState)
+		when is_list(StreamRef) ->
+	%% Because we switch protocol we may receive a StreamRef as a list.
+	%% But we are always the final StreamRef as HTTP/1.1.
+	data(State, lists:last(StreamRef), ReplyTo, IsFin, Data, EvHandler, EvHandlerState);
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _, _, EvHandlerState) ->
 	{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
@@ -689,6 +713,11 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
 	end.
 
+connect(State, StreamRef, ReplyTo, Destination, TunnelInfo, Headers, InitialFlow)
+		when is_list(StreamRef) ->
+	%% Because we switch protocol we may receive a StreamRef as a list.
+	%% But we are always the final StreamRef as HTTP/1.1.
+	connect(State, lists:last(StreamRef), ReplyTo, Destination, TunnelInfo, Headers, InitialFlow);
 connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _) when Streams =/= [] ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}},
@@ -725,6 +754,11 @@ connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version
 	new_stream(State, {connect, StreamRef, Destination}, ReplyTo,
 		<<"CONNECT">>, Authority, <<>>, InitialFlow).
 
+cancel(State, StreamRef, ReplyTo, EvHandler, EvHandlerState)
+		when is_list(StreamRef) ->
+	%% Because we switch protocol we may receive a StreamRef as a list.
+	%% But we are always the final StreamRef as HTTP/1.1.
+	cancel(State, lists:last(StreamRef), ReplyTo, EvHandler, EvHandlerState);
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
 cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 	case is_stream(State0, StreamRef) of
@@ -741,6 +775,11 @@ cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 			{error_stream_not_found(State0, StreamRef, ReplyTo), EvHandlerState0}
 	end.
 
+stream_info(State, StreamRef)
+		when is_list(StreamRef) ->
+	%% Because we switch protocol we may receive a StreamRef as a list.
+	%% But we are always the final StreamRef as HTTP/1.1.
+	stream_info(State, lists:last(StreamRef));
 stream_info(#http_state{streams=Streams}, StreamRef) ->
 	case lists:keyfind(StreamRef, #stream.ref, Streams) of
 		#stream{reply_to=ReplyTo, is_alive=IsAlive} ->

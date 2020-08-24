@@ -668,10 +668,10 @@ connect(ServerPid, Destination, Headers) ->
 
 -spec connect(pid(), connect_destination(), req_headers(), req_opts()) -> reference().
 connect(ServerPid, Destination, Headers, ReqOpts) ->
-	StreamRef = make_ref(),
+	Tunnel = get_tunnel(ReqOpts),
+	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
-	%% @todo tunnel
 	gen_statem:cast(ServerPid, {connect, ReplyTo, StreamRef,
 		Destination, Headers, InitialFlow}),
 	StreamRef.
@@ -807,8 +807,6 @@ await_up(ServerPid, Timeout) ->
 await_up(ServerPid, Timeout, MRef) ->
 	receive
 		{gun_up, ServerPid, Protocol} ->
-			{ok, Protocol};
-		{gun_tunnel_up, ServerPid, Protocol} ->
 			{ok, Protocol};
 		{'DOWN', MRef, process, ServerPid, Reason} ->
 			{error, {down, Reason}}
@@ -1092,8 +1090,17 @@ ensure_alpn_sni(Protocols0, TransOpts0, OriginHost) ->
 %% Normal TLS handshake.
 tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
 		State0=#state{socket=Socket, transport=gun_tcp}) ->
+	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
-		{ok, TLSSocket, NewProtocol, State} ->
+		{ok, TLSSocket, NewProtocol0, State} ->
+			NewProtocol = {Protocol0, _} = case {StreamRef, NewProtocol0} of
+				{undefined, {_, _}} -> NewProtocol0;
+				{undefined, P} -> {P, #{}};
+				{_, {P, POpts}} -> {P, POpts#{stream_ref => StreamRef}};
+				{_, P} -> {P, #{stream_ref => StreamRef}}
+			end,
+			Protocol = gun:protocol_handler(Protocol0),
+			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 			commands([
 				{switch_transport, gun_tls, TLSSocket},
 				{switch_protocol, NewProtocol, ReplyTo}
@@ -1120,10 +1127,19 @@ tls_handshake(internal, {tls_handshake,
 %% the handshake succeeded and whether we need to switch to a different protocol.
 tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, Protocols, ReplyTo}},
 		State0=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	NewProtocol = protocol_negotiated(Negotiated, Protocols),
+	NewProtocol0 = protocol_negotiated(Negotiated, Protocols),
+	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
+	NewProtocol = {Protocol0, _} = case {StreamRef, NewProtocol0} of
+		{undefined, {_, _}} -> NewProtocol0;
+		{undefined, P} -> {P, #{}};
+		{_, {P, POpts}} -> {P, POpts#{stream_ref => StreamRef}};
+		{_, P} -> {P, #{stream_ref => StreamRef}}
+	end,
+	Protocol = gun:protocol_handler(Protocol0),
+	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		socket => Socket,
-		protocol => NewProtocol
+		protocol => Protocol:name()
 	}, EvHandlerState0),
 	commands([{switch_protocol, NewProtocol, ReplyTo}], State0#state{event_handler_state=EvHandlerState});
 tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeEvent, _, _}},
@@ -1578,18 +1594,13 @@ commands([{switch_transport, Transport, Socket}|Tail], State=#state{
 		messages=Transport:messages(), protocol_state=ProtoState,
 		event_handler_state=EvHandlerState}));
 commands([{switch_protocol, Protocol0, ReplyTo}], State0=#state{
-		opts=Opts, socket=Socket, transport=Transport, protocol=CurrentProtocol,
+		opts=Opts, socket=Socket, transport=Transport,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Protocol, ProtoOpts} = case Protocol0 of
 		{P, PO} -> {protocol_handler(P), PO};
 		P ->
 			Protocol1 = protocol_handler(P),
 			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
-	end,
-	%% When we switch_protocol from socks we must send a gun_tunnel_up message.
-	_ = case CurrentProtocol of
-		gun_socks -> ReplyTo ! {gun_tunnel_up, self(), Protocol:name()};
-		_ -> ok
 	end,
 	{StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),

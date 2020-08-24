@@ -371,13 +371,14 @@ tunnel_commands([{switch_protocol, Protocol0, ReplyTo}|Tail], Stream=#stream{ref
 		gun_socks -> ReplyTo ! {gun_tunnel_up, self(), stream_ref(State, StreamRef), Protocol:name()};
 		_ -> ok
 	end,
+	RealStreamRef = stream_ref(State, StreamRef),
 	OriginSocket = #{
 		gun_pid => self(),
 		reply_to => ReplyTo,
-		stream_ref => StreamRef
+		stream_ref => RealStreamRef
 	},
 	OriginTransport = gun_tcp_proxy,
-	{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport, ProtoOpts),
+	{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport, ProtoOpts#{stream_ref => RealStreamRef}),
 %% @todo	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 	tunnel_commands([{state, ProtoState}|Tail], Stream, Protocol, TunnelInfo, State);
 tunnel_commands([{active, true}|Tail], Stream, Protocol, TunnelInfo, State) ->
