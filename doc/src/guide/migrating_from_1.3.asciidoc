@@ -3,6 +3,13 @@
 
 The following patch versions were released since Gun 1.3:
 
+=== Gun 1.3.3
+
+This release updates Erlang.mk to include features useful
+to RabbitMQ.
+
+It also updates Cowlib to 2.7.0.
+
 === Gun 1.3.2
 
 This release backports a fix that will be included in the
