@@ -561,20 +561,40 @@ connect_cowboy_http_via_h2c(_) ->
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_cowboy(<<"http">>, tcp, http, <<"http">>, tcp).
 
+connect_cowboy_https_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"https">>, tls, http, <<"http">>, tcp).
+
 connect_cowboy_http_via_h2(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_cowboy(<<"http">>, tcp, http, <<"https">>, tls).
+
+connect_cowboy_https_via_h2(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"https">>, tls, http, <<"https">>, tls).
 
 connect_cowboy_h2c_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/2 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_cowboy(<<"http">>, tcp, http2, <<"http">>, tcp).
 
+connect_cowboy_h2_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/2 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"https">>, tls, http2, <<"http">>, tcp).
+
 connect_cowboy_h2c_via_h2(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/2 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_cowboy(<<"http">>, tcp, http2, <<"https">>, tls).
+
+connect_cowboy_h2_via_h2(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/2 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_cowboy(<<"https">>, tls, http2, <<"https">>, tls).
 
 do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, ProxyTransport) ->
 	{ok, Ref, OriginPort} = do_cowboy_origin(OriginTransport, OriginProtocol),
@@ -601,6 +621,7 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 			<<":authority">> := Authority
 		}} = receive_from(ProxyPid),
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+		{up, OriginProtocol} = gun:await(ConnPid, StreamRef),
 		ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
 		{response, nofin, 200, _} = gun:await(ConnPid, ProxiedStreamRef),
 		%% We can create more requests on the proxy as well.

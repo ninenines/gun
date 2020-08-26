@@ -875,6 +875,7 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 request(State, [StreamRef|Tail], ReplyTo, Method, _Host, _Port,
 		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
+		%% @todo We should send an error to the user if the stream isn't ready.
 		Stream=#stream{tunnel={Proto, ProtoState0, TunnelInfo=#{
 				origin_host := OriginHost, origin_port := OriginPort}}} ->
 			%% @todo So the event is probably not giving the right StreamRef?
