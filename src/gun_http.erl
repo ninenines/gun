@@ -41,10 +41,10 @@
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked | body_trailer.
 
 %% @todo Make that a record.
--type connect_info() :: {connect, reference(), gun:connect_destination()}.
+-type connect_info() :: {connect, gun:stream_ref(), gun:connect_destination()}.
 
 -record(websocket, {
-	ref :: reference(),
+	ref :: gun:stream_ref(),
 	reply_to :: pid(),
 	key :: binary(),
 	extensions :: [binary()],
@@ -52,7 +52,7 @@
 }).
 
 -record(stream, {
-	ref :: reference() | connect_info() | #websocket{},
+	ref :: gun:stream_ref() | connect_info() | #websocket{},
 	reply_to :: pid(),
 	flow :: integer() | infinity,
 	method :: binary(),
@@ -75,7 +75,7 @@
 
 	%% Base stream ref, defined when the protocol runs
 	%% inside an HTTP/2 CONNECT stream.
-	base_stream_ref = undefined :: undefined | reference() | [reference()],
+	base_stream_ref = undefined :: undefined | gun:stream_ref(),
 
 	streams = [] :: [#stream{}],
 	in = head :: io(),

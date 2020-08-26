@@ -19,6 +19,8 @@
 -export([handler_and_opts/2]).
 -export([negotiated/2]).
 
+-spec add_stream_ref(Protocol, undefined | gun:stream_ref())
+	-> Protocol when Protocol :: gun:protocol().
 add_stream_ref(Protocol, undefined) ->
 	Protocol;
 add_stream_ref({ProtocolName, ProtocolOpts}, StreamRef) ->
@@ -26,6 +28,7 @@ add_stream_ref({ProtocolName, ProtocolOpts}, StreamRef) ->
 add_stream_ref(ProtocolName, StreamRef) ->
 	{ProtocolName, #{stream_ref => StreamRef}}.
 
+-spec handler(gun:protocol()) -> module().
 handler(http) -> gun_http;
 handler({http, _}) -> gun_http;
 handler(http2) -> gun_http2;
@@ -37,12 +40,15 @@ handler({socks, _}) -> gun_socks;
 handler(ws) -> gun_ws;
 handler({ws, _}) -> gun_ws.
 
+-spec handler_and_opts(gun:protocol(), map()) -> {module(), map()}.
 handler_and_opts({ProtocolName, ProtocolOpts}, _) ->
 	{handler(ProtocolName), ProtocolOpts};
 handler_and_opts(ProtocolName, Opts) ->
 	Protocol = handler(ProtocolName),
 	{Protocol, maps:get(Protocol:opts_name(), Opts, #{})}.
 
+-spec negotiated({ok, binary()} | {error, protocol_not_negotiated}, gun:protocols())
+	-> http | http2 | raw | socks.
 negotiated({ok, <<"h2">>}, _) -> http2;
 negotiated({ok, <<"http/1.1">>}, _) -> http;
 negotiated({error, protocol_not_negotiated}, [Protocol]) -> Protocol;

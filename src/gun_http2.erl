@@ -41,6 +41,7 @@
 	id = undefined :: cow_http2:streamid(),
 
 	%% Reference used by the user of Gun to refer to this stream.
+	%% This may be only a part of a stream_ref() for tunneled streams.
 	ref :: reference(),
 
 	%% Process to send messages to.
@@ -72,7 +73,7 @@
 
 	%% Base stream ref, defined when the protocol runs
 	%% inside an HTTP/2 CONNECT stream.
-	base_stream_ref = undefined :: undefined | reference() | [reference()],
+	base_stream_ref = undefined :: undefined | gun:stream_ref(),
 
 	%% Current status of the connection. We use this to ensure we are
 	%% not sending the GOAWAY frame more than once, and to validate
@@ -1050,7 +1051,7 @@ connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	Authority = [Host, $:, integer_to_binary(Port)],
 	PseudoHeaders = #{
 		method => <<"CONNECT">>,
-		authority => Authority
+		authority => iolist_to_binary(Authority)
 	},
 	Headers1 =
 		lists:keydelete(<<"host">>, 1,

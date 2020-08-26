@@ -26,7 +26,7 @@
 %% @todo down
 
 -record(raw_state, {
-	ref :: reference() | undefined,
+	ref :: undefined | gun:stream_ref(),
 	reply_to :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module()

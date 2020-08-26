@@ -26,7 +26,7 @@
 %% @todo down
 
 -record(socks_state, {
-	ref :: undefined | reference(), %% @todo Need a proper stream_ref type.
+	ref :: undefined | gun:stream_ref(),
 	reply_to :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
