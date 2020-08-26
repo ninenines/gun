@@ -435,7 +435,10 @@ connect_http_via_h2c(_) ->
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_http(<<"http">>, tcp, http, <<"http">>, tcp).
 
-%% @todo https
+connect_https_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_http(<<"https">>, tls, http, <<"http">>, tcp).
 
 connect_http_via_h2(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
@@ -452,10 +455,20 @@ connect_h2c_via_h2c(_) ->
 		"to an HTTP/2 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_http(<<"http">>, tcp, http2, <<"http">>, tcp).
 
+connect_h2_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/2 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_http(<<"https">>, tls, http2, <<"http">>, tcp).
+
 connect_h2c_via_h2(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/2 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_http(<<"http">>, tcp, http2, <<"https">>, tls).
+
+connect_h2_via_h2(_) ->
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/2 server via a TLS HTTP/2 proxy. (RFC7540 8.3)"),
+	do_connect_http(<<"https">>, tls, http2, <<"https">>, tls).
 
 do_origin_fun(http) ->
 	fun(Parent, Socket, Transport) ->

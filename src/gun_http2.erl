@@ -366,11 +366,6 @@ tunnel_commands([{switch_protocol, Protocol0, ReplyTo}|Tail], Stream=#stream{ref
 			%% @todo We need to allow other protocol opts in http2_opts too.
 			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
 	end,
-	%% When we switch_protocol from socks we must send a gun_tunnel_up message.
-	_ = case CurrentProtocol of
-		gun_socks -> ReplyTo ! {gun_tunnel_up, self(), stream_ref(State, StreamRef), Protocol:name()};
-		_ -> ok
-	end,
 	RealStreamRef = stream_ref(State, StreamRef),
 	OriginSocket = #{
 		gun_pid => self(),
@@ -665,7 +660,7 @@ handle_continue(StreamRef, Msg, State, EvHandler, EvHandlerState0)
 				%% Data that was received and decrypted.
 				{tls_proxy, ProxyPid, Data} ->
 					{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState0, EvHandler, EvHandlerState0),
-					{tunnel_commands(Commands, Stream, Protocol, TunnelInfo, State), EvHandlerState};
+					{{state, tunnel_commands(Commands, Stream, Protocol, TunnelInfo, State)}, EvHandlerState};
 				%% @todo What to do about those?
 				{tls_proxy_closed, ProxyPid} ->
 					todo;
