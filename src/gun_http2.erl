@@ -98,6 +98,7 @@
 check_options(Opts) ->
 	do_check_options(maps:to_list(Opts)).
 
+%% @todo Accept http_opts, http2_opts, and so on.
 do_check_options([]) ->
 	ok;
 do_check_options([{closing_timeout, infinity}|Opts]) ->
@@ -357,15 +358,9 @@ tunnel_commands([{origin, _, NewHost, NewPort, Type}|Tail], Stream, Protocol, Tu
 			protocol => Protocol:name()
 		}|maps:get(intermediaries, TunnelInfo, [])]
 	}, State);
-tunnel_commands([{switch_protocol, Protocol0, ReplyTo}|Tail], Stream=#stream{ref=StreamRef},
-		CurrentProtocol, TunnelInfo, State=#http2_state{opts=Opts}) ->
-	{Protocol, ProtoOpts} = case Protocol0 of
-		{P, PO} -> {gun:protocol_handler(P), PO};
-		P ->
-			Protocol1 = gun:protocol_handler(P),
-			%% @todo We need to allow other protocol opts in http2_opts too.
-			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
-	end,
+tunnel_commands([{switch_protocol, NewProtocol, ReplyTo}|Tail], Stream=#stream{ref=StreamRef},
+		_CurrentProtocol, TunnelInfo, State=#http2_state{opts=Opts}) ->
+	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 	RealStreamRef = stream_ref(State, StreamRef),
 	OriginSocket = #{
 		gun_pid => self(),
@@ -415,7 +410,7 @@ data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 	end,
 	{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState}.
 
-headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Commands},
+headers_frame(State0=#http2_state{opts=Opts, content_handlers=Handlers0, commands_queue=Commands},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
 		EvHandler, EvHandlerState0) ->
 	Stream = get_stream_by_id(State0, StreamID),
@@ -489,13 +484,8 @@ headers_frame(State0=#http2_state{content_handlers=Handlers0, commands_queue=Com
 							tls_proxy_pid => ProxyPid}}}),
 						EvHandlerState};
 				_ ->
-					[Protocol0] = maps:get(protocols, Destination, [http]),
-					%% Options are either passed directly or #{} is used. Since the
-					%% protocol only applies to a stream we cannot use connection-wide options.
-					{Protocol, ProtoOpts} = case Protocol0 of
-						{P, PO} -> {gun:protocol_handler(P), PO};
-						P -> {gun:protocol_handler(P), #{}}
-					end,
+					[NewProtocol] = maps:get(protocols, Destination, [http]),
+					{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 					%% @todo What about the StateName returned?
 					{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts#{stream_ref => RealStreamRef}),
 					%% @todo EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
@@ -604,7 +594,7 @@ ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	end.
 
 %% Continue handling or sending the data.
-handle_continue(StreamRef, Msg, State, EvHandler, EvHandlerState0)
+handle_continue(StreamRef, Msg, State=#http2_state{opts=Opts}, EvHandler, EvHandlerState0)
 		when is_reference(StreamRef) ->
 	case get_stream_by_ref(State, StreamRef) of
 		Stream=#stream{id=StreamID, reply_to=ReplyTo,
@@ -614,7 +604,7 @@ handle_continue(StreamRef, Msg, State, EvHandler, EvHandlerState0)
 						{handle_continue, _, _HandshakeEvent, Protocols}} ->
 					#{host := DestHost, port := DestPort} = Destination,
 					RealStreamRef = stream_ref(State, StreamRef),
-					NewProtocol = gun:protocol_negotiated(Negotiated, Protocols),
+					NewProtocol = gun_protocols:negotiated(Negotiated, Protocols),
 %					EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 %						socket => Socket,
 %						protocol => NewProtocol
@@ -624,10 +614,7 @@ handle_continue(StreamRef, Msg, State, EvHandler, EvHandlerState0)
 						reply_to => ReplyTo,
 						stream_ref => RealStreamRef
 					},
-					{Protocol, ProtoOpts} = case NewProtocol of
-						{P, PO} -> {gun:protocol_handler(P), PO};
-						P -> {gun:protocol_handler(P), #{}}
-					end,
+					{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 					{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, gun_tcp_proxy,
 						ProtoOpts#{stream_ref => RealStreamRef}),
 					ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},

@@ -104,13 +104,11 @@
 -export([initial_tls_handshake/3]).
 -export([ensure_alpn_sni/3]).
 -export([tls_handshake/3]).
--export([protocol_negotiated/2]).
 -export([connected/3]).
 -export([connected_data_only/3]).
 -export([connected_no_input/3]).
 -export([connected_ws_only/3]).
 -export([closing/3]).
--export([protocol_handler/1]).
 -export([terminate/3]).
 
 -type req_headers() :: [{binary() | string() | atom(), iodata()}]
@@ -212,6 +210,7 @@
 }.
 -export_type([http_opts/0]).
 
+%% @todo Accept http_opts, http2_opts, and so on.
 -type http2_opts() :: #{
 	closing_timeout => timeout(),
 	flow => pos_integer(),
@@ -1093,13 +1092,8 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
 	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
 		{ok, TLSSocket, NewProtocol0, State} ->
-			NewProtocol = {Protocol0, _} = case {StreamRef, NewProtocol0} of
-				{undefined, {_, _}} -> NewProtocol0;
-				{undefined, P} -> {P, #{}};
-				{_, {P, POpts}} -> {P, POpts#{stream_ref => StreamRef}};
-				{_, P} -> {P, #{stream_ref => StreamRef}}
-			end,
-			Protocol = gun:protocol_handler(Protocol0),
+			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+			Protocol = gun_protocols:handler(NewProtocol),
 			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 			commands([
 				{switch_transport, gun_tls, TLSSocket},
@@ -1127,15 +1121,10 @@ tls_handshake(internal, {tls_handshake,
 %% the handshake succeeded and whether we need to switch to a different protocol.
 tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, Protocols, ReplyTo}},
 		State0=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	NewProtocol0 = protocol_negotiated(Negotiated, Protocols),
+	NewProtocol0 = gun_protocols:negotiated(Negotiated, Protocols),
 	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
-	NewProtocol = {Protocol0, _} = case {StreamRef, NewProtocol0} of
-		{undefined, {_, _}} -> NewProtocol0;
-		{undefined, P} -> {P, #{}};
-		{_, {P, POpts}} -> {P, POpts#{stream_ref => StreamRef}};
-		{_, P} -> {P, #{stream_ref => StreamRef}}
-	end,
-	Protocol = gun:protocol_handler(Protocol0),
+	NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+	Protocol = gun_protocols:handler(NewProtocol),
 	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		socket => Socket,
@@ -1162,7 +1151,7 @@ normal_tls_handshake(Socket, State=#state{
 	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 		{ok, TLSSocket} ->
-			Protocol = protocol_negotiated(ssl:negotiated_protocol(TLSSocket), Protocols),
+			Protocol = gun_protocols:negotiated(ssl:negotiated_protocol(TLSSocket), Protocols),
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 				socket => TLSSocket,
 				protocol => Protocol
@@ -1174,11 +1163,6 @@ normal_tls_handshake(Socket, State=#state{
 			}, EvHandlerState1),
 			{error, Reason, State#state{event_handler_state=EvHandlerState}}
 	end.
-
-protocol_negotiated({ok, <<"h2">>}, _) -> http2;
-protocol_negotiated({ok, <<"http/1.1">>}, _) -> http;
-protocol_negotiated({error, protocol_not_negotiated}, [Protocol]) -> Protocol;
-protocol_negotiated({error, protocol_not_negotiated}, _) -> http.
 
 connected_no_input(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
@@ -1210,16 +1194,9 @@ connected_ws_only(cast, Msg, _)
 connected_ws_only(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 
-connected(internal, {connected, Socket, Protocol0},
+connected(internal, {connected, Socket, NewProtocol},
 		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
-	%% Protocol options may have been given along the protocol name.
-	{Protocol, ProtoOpts} = case Protocol0 of
-		{P, PO} ->
-			{protocol_handler(P), PO};
-		_ ->
-			P = protocol_handler(Protocol0),
-			{P, maps:get(P:opts_name(), Opts, #{})}
-	end,
+	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 	{StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	Owner ! {gun_up, self(), Protocol:name()},
 	State = active(State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState}),
@@ -1593,15 +1570,10 @@ commands([{switch_transport, Transport, Socket}|Tail], State=#state{
 	commands(Tail, active(State#state{socket=Socket, transport=Transport,
 		messages=Transport:messages(), protocol_state=ProtoState,
 		event_handler_state=EvHandlerState}));
-commands([{switch_protocol, Protocol0, ReplyTo}], State0=#state{
+commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
 		opts=Opts, socket=Socket, transport=Transport,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Protocol, ProtoOpts} = case Protocol0 of
-		{P, PO} -> {protocol_handler(P), PO};
-		P ->
-			Protocol1 = protocol_handler(P),
-			{Protocol1, maps:get(Protocol1:opts_name(), Opts, #{})}
-	end,
+	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 	{StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 	%% We cancel the existing keepalive and, depending on the protocol,
@@ -1651,12 +1623,6 @@ disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
 	after 0 ->
 		ok
 	end.
-
-protocol_handler(http) -> gun_http;
-protocol_handler(http2) -> gun_http2;
-protocol_handler(raw) -> gun_raw;
-protocol_handler(socks) -> gun_socks;
-protocol_handler(ws) -> gun_ws.
 
 active(State=#state{active=false}) ->
 	State;

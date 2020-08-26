@@ -347,11 +347,8 @@ handle_connect(Rest, State=#http_state{
 			], State), EvHandlerState1};
 		_ ->
 			[NewProtocol0] = maps:get(protocols, Destination, [http]),
-			NewProtocol = {Protocol0, _} = case NewProtocol0 of
-				{P, POpts} -> {P, POpts#{stream_ref => RealStreamRef}};
-				P -> {P, #{stream_ref => RealStreamRef}}
-			end,
-			Protocol = gun:protocol_handler(Protocol0),
+			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, RealStreamRef),
+			Protocol = gun_protocols:handler(NewProtocol),
 			ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},
 			{handle_ret([
 				{origin, <<"http">>, NewHost, NewPort, connect},

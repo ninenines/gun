@@ -152,13 +152,8 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{ref=StreamRef, reply_to=ReplyTo, op
 				{tls_handshake, HandshakeEvent, maps:get(protocols, Opts, [http2, http]), ReplyTo}];
 		_ ->
 			[NewProtocol0] = maps:get(protocols, Opts, [http]),
-			NewProtocol = {Protocol0, _} = case {StreamRef, NewProtocol0} of
-				{undefined, {_, _}} -> NewProtocol0;
-				{undefined, P} -> {P, #{}};
-				{_, {P, POpts}} -> {P, POpts#{stream_ref => StreamRef}};
-				{_, P} -> {P, #{stream_ref => StreamRef}}
-			end,
-			Protocol = gun:protocol_handler(Protocol0),
+			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+			Protocol = gun_protocols:handler(NewProtocol),
 			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
 				{switch_protocol, NewProtocol, ReplyTo}]
