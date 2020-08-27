@@ -362,14 +362,13 @@ tunnel_commands([{origin, _, NewHost, NewPort, Type}|Tail], Stream, Protocol, Tu
 tunnel_commands([{switch_protocol, NewProtocol, ReplyTo}|Tail], Stream=#stream{ref=StreamRef},
 		_CurrentProtocol, TunnelInfo, State=#http2_state{opts=Opts}) ->
 	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
-	RealStreamRef = stream_ref(State, StreamRef),
 	OriginSocket = #{
 		gun_pid => self(),
 		reply_to => ReplyTo,
-		stream_ref => RealStreamRef
+		stream_ref => stream_ref(State, StreamRef)
 	},
 	OriginTransport = gun_tcp_proxy,
-	{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport, ProtoOpts#{stream_ref => RealStreamRef}),
+	{_, ProtoState} = Protocol:init(ReplyTo, OriginSocket, OriginTransport, ProtoOpts),
 %% @todo	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 	tunnel_commands([{state, ProtoState}|Tail], Stream, Protocol, TunnelInfo, State);
 tunnel_commands([{active, true}|Tail], Stream, Protocol, TunnelInfo, State) ->
@@ -1043,7 +1042,8 @@ reset_stream(State0=#http2_state{socket=Socket, transport=Transport},
 
 connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo,
-		Destination=#{host := Host0}, TunnelInfo, Headers0, InitialFlow0) ->
+		Destination=#{host := Host0}, TunnelInfo, Headers0, InitialFlow0)
+		when is_reference(StreamRef) ->
 	Host = case Host0 of
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host0
@@ -1074,7 +1074,22 @@ connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	InitialFlow = initial_flow(InitialFlow0, Opts),
 	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
 		authority=Authority, path= <<>>, tunnel={setup, Destination, TunnelInfo}},
-	create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream).
+	create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream);
+%% Tunneled request.
+connect(State, [StreamRef|Tail], ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow) ->
+	case get_stream_by_ref(State, StreamRef) of
+		%% @todo We should send an error to the user if the stream isn't ready.
+		Stream=#stream{tunnel={Proto, ProtoState0, ProtoTunnelInfo}} ->
+			ProtoState = Proto:connect(ProtoState0, normalize_stream_ref(Tail),
+				ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow),
+			store_stream(State, Stream#stream{tunnel={Proto, ProtoState, ProtoTunnelInfo}});
+		#stream{tunnel=undefined} ->
+			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+				"The stream is not a tunnel."}},
+			State;
+		error ->
+			error_stream_not_found(State, StreamRef, ReplyTo)
+	end.
 
 cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP2Machine0},
 		StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->

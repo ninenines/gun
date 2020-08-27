@@ -648,3 +648,55 @@ do_cowboy_origin(OriginTransport, OriginProtocol) ->
 		tls -> gun_test:init_cowboy_tls(Ref, ProtoOpts, [])
 	end,
 	{ok, Ref, Port}.
+
+connect_http_via_http_via_h2c(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to an HTTP/1.1 server via a tunnel going through both "
+		"an HTTP/2 and an HTTP/1.1 proxy. (RFC7231 4.3.6)"),
+	do_connect_via_multiple_proxies(tcp, http, tcp, http, tcp).
+
+do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
+		Proxy2Transport, Proxy2Protocol, Proxy1Transport) ->
+	{ok, Ref, OriginPort} = do_cowboy_origin(OriginTransport, OriginProtocol),
+	try
+		{ok, Proxy1Pid, Proxy1Port} = do_proxy_start(Proxy1Transport, [
+			#proxy_stream{id=1, status=200}
+		]),
+		{ok, Proxy2Pid, Proxy2Port} = rfc7231_SUITE:do_proxy_start(Proxy2Transport),
+		%% First proxy.
+		{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
+			protocols => [http2]
+		}),
+		{ok, http2} = gun:await_up(ConnPid),
+		%% Second proxy.
+		StreamRef1 = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => Proxy2Port,
+			protocols => [Proxy2Protocol]
+		}, []),
+		handshake_completed = receive_from(Proxy1Pid),
+		Authority1 = iolist_to_binary(["localhost:", integer_to_binary(Proxy2Port)]),
+		{request, #{
+			<<":method">> := <<"CONNECT">>,
+			<<":authority">> := Authority1
+		}} = receive_from(Proxy1Pid),
+		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
+		{up, Proxy2Protocol} = gun:await(ConnPid, StreamRef1),
+		%% Origin.
+		StreamRef2 = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => OriginPort,
+			protocols => [OriginProtocol]
+		}, [], #{tunnel => StreamRef1}),
+		Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+		{request, <<"CONNECT">>, Authority2, 'HTTP/1.1', _} = receive_from(Proxy2Pid),
+		%% @todo OK there's a mismatch between HTTP/1.1 (fin) and HTTP/2 (nofin).
+		{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
+		{up, OriginProtocol} = gun:await(ConnPid, StreamRef2),
+		%% Tunneled request to the origin.
+		ProxiedStreamRef = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef2}),
+		{response, nofin, 200, _} = gun:await(ConnPid, ProxiedStreamRef),
+		gun:close(ConnPid)
+	after
+		cowboy:stop_listener(Ref)
+	end.
