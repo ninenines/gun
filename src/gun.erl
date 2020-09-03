@@ -210,6 +210,7 @@
 
 -type http_opts() :: #{
 	closing_timeout => timeout(),
+	content_handlers => gun_content_handler:opt(),
 	flow => pos_integer(),
 	keepalive => timeout(),
 	transform_header_name => fun((binary()) -> binary()),
@@ -223,6 +224,7 @@
 %% @todo Accept http_opts, http2_opts, and so on.
 -type http2_opts() :: #{
 	closing_timeout => timeout(),
+	content_handlers => gun_content_handler:opt(),
 	flow => pos_integer(),
 	keepalive => timeout(),
 
