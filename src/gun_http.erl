@@ -546,36 +546,38 @@ close_streams(State, [#stream{ref=StreamRef, reply_to=ReplyTo}|Tail], Reason) ->
 	close_streams(State, Tail, Reason).
 
 %% We don't send a keep-alive when a CONNECT request was initiated.
-keepalive(State=#http_state{streams=[#stream{ref={connect, _, _}}]}, _, EvHandlerState) ->
-	{State, EvHandlerState};
+keepalive(#http_state{streams=[#stream{ref={connect, _, _}}]}, _, EvHandlerState) ->
+	{[], EvHandlerState};
 %% We can only keep-alive by sending an empty line in-between streams.
-keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}, _, EvHandlerState) ->
-	Transport:send(Socket, <<"\r\n">>),
-	{State, EvHandlerState};
-keepalive(State, _, EvHandlerState) ->
-	{State, EvHandlerState}.
+keepalive(#http_state{socket=Socket, transport=Transport, out=head}, _, EvHandlerState) ->
+	case Transport:send(Socket, <<"\r\n">>) of
+		ok -> {[], EvHandlerState};
+		Error={error, _} -> {Error, EvHandlerState}
+	end;
+keepalive(_State, _, EvHandlerState) ->
+	{[], EvHandlerState}.
 
 headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
-	{State, CookieStore, EvHandlerState};
-headers(State=#http_state{opts=Opts, out=head},
+	{[], CookieStore, EvHandlerState};
+headers(State0=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
 		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
-	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State0,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, undefined,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	InitialFlow = initial_flow(InitialFlow0, Opts),
-	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo,
-		Method, Authority, Path, InitialFlow),
-		CookieStore, EvHandlerState}.
+	State = new_stream(State0#http_state{connection=Conn, out=Out}, StreamRef,
+		ReplyTo, Method, Authority, Path, InitialFlow),
+	{{state, State}, CookieStore, EvHandlerState}.
 
 request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
-	{State, CookieStore, EvHandlerState};
+	{[], CookieStore, EvHandlerState};
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
 		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
@@ -583,8 +585,8 @@ request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	InitialFlow = initial_flow(InitialFlow0, Opts),
-	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo,
-		Method, Authority, Path, InitialFlow),
+	{{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
+		ReplyTo, Method, Authority, Path, InitialFlow)},
 		CookieStore, EvHandlerState}.
 
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;
@@ -631,6 +633,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		headers => Headers
 	},
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
+	%% @todo Handle send errors.
 	Transport:send(Socket, [
 		cow_http:request(Method, Path, Version, Headers),
 		[Body || Body =/= undefined]]),
@@ -689,41 +692,52 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			DataLength = iolist_size(Data),
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
-					case Data of
+					DataToSend = case Data of
 						<<>> ->
-							Transport:send(Socket, cow_http_te:last_chunk());
+							cow_http_te:last_chunk();
 						_ ->
-							Transport:send(Socket, [
+							[
 								cow_http_te:chunk(Data),
 								cow_http_te:last_chunk()
-							])
+							]
 					end,
-					RequestEndEvent = #{
-						stream_ref => stream_ref(State, StreamRef),
-						reply_to => ReplyTo
-					},
-					EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState0),
-					{State#http_state{out=head}, EvHandlerState};
+					case Transport:send(Socket, DataToSend) of
+						ok ->
+							RequestEndEvent = #{
+								stream_ref => stream_ref(State, StreamRef),
+								reply_to => ReplyTo
+							},
+							EvHandlerState = EvHandler:request_end(RequestEndEvent,
+								EvHandlerState0),
+							{{state, State#http_state{out=head}}, EvHandlerState};
+						Error={error, _} ->
+							{Error, EvHandlerState0}
+					end;
 				body_chunked when Version =:= 'HTTP/1.1' ->
-					Transport:send(Socket, cow_http_te:chunk(Data)),
-					{State, EvHandlerState0};
+					case Transport:send(Socket, cow_http_te:chunk(Data)) of
+						ok -> {[], EvHandlerState0};
+						Error={error, _} -> {Error, EvHandlerState0}
+					end;
 				{body, Length} when DataLength =< Length ->
-					Transport:send(Socket, Data),
 					Length2 = Length - DataLength,
-					if
-						Length2 =:= 0, IsFin =:= fin ->
+					case Transport:send(Socket, Data) of
+						ok when Length2 =:= 0, IsFin =:= fin ->
 							RequestEndEvent = #{
 								stream_ref => stream_ref(State, StreamRef),
 								reply_to => ReplyTo
 							},
 							EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState0),
-							{State#http_state{out=head}, EvHandlerState};
-						Length2 > 0, IsFin =:= nofin ->
-							{State#http_state{out={body, Length2}}, EvHandlerState0}
+							{{state, State#http_state{out=head}}, EvHandlerState};
+						ok when Length2 > 0, IsFin =:= nofin ->
+							{{state, State#http_state{out={body, Length2}}}, EvHandlerState0};
+						Error={error, _} ->
+							{Error, EvHandlerState0}
 					end;
 				body_chunked -> %% HTTP/1.0
-					Transport:send(Socket, Data),
-					{State, EvHandlerState0}
+					case Transport:send(Socket, Data) of
+						ok -> {[], EvHandlerState0};
+						Error={error, _} -> {Error, EvHandlerState0}
+					end
 			end;
 		_ ->
 			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
@@ -733,12 +747,12 @@ connect(State, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
-	{State, EvHandlerState};
+	{[], EvHandlerState};
 connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
 		when Streams =/= [] ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}},
-	{State, EvHandlerState};
+	{[], EvHandlerState};
 connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version=Version},
 		StreamRef, ReplyTo, Destination=#{host := Host0}, _TunnelInfo, Headers0, InitialFlow0,
 		EvHandler, EvHandlerState0) ->
@@ -775,19 +789,22 @@ connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version
 		headers => Headers
 	},
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
-	Transport:send(Socket, [
-		cow_http:request(<<"CONNECT">>, Authority, Version, Headers)
-	]),
-	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	RequestEndEvent = #{
-		stream_ref => RealStreamRef,
-		reply_to => ReplyTo
-	},
-	EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	{new_stream(State, {connect, StreamRef, Destination}, ReplyTo,
-		<<"CONNECT">>, Authority, <<>>, InitialFlow),
-		EvHandlerState}.
+	case Transport:send(Socket, cow_http:request(<<"CONNECT">>,
+			Authority, Version, Headers)) of
+		ok ->
+			EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+			RequestEndEvent = #{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo
+			},
+			EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			{{state, new_stream(State, {connect, StreamRef, Destination},
+				ReplyTo, <<"CONNECT">>, Authority, <<>>, InitialFlow)},
+				EvHandlerState};
+		Error={error, _} ->
+			{Error, EvHandlerState1}
+	end.
 
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
 cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
@@ -800,7 +817,7 @@ cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 				endpoint => local,
 				reason => cancel
 			}, EvHandlerState0),
-			{State, EvHandlerState};
+			{{state, State}, EvHandlerState};
 		false ->
 			{error_stream_not_found(State0, StreamRef, ReplyTo), EvHandlerState0}
 	end.
@@ -830,12 +847,12 @@ down(#http_state{streams=Streams}) ->
 error_stream_closed(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"The stream has already been closed."}},
-	State.
+	{state, State}.
 
 error_stream_not_found(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"The stream cannot be found."}},
-	State.
+	{state, State}.
 
 %% Headers information retrieval.
 
@@ -926,12 +943,12 @@ ws_upgrade(State, StreamRef, ReplyTo, _, _, _, _, _, CookieStore, _, EvHandlerSt
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
-	{State, CookieStore, EvHandlerState};
+	{[], CookieStore, EvHandlerState};
 ws_upgrade(State=#http_state{version='HTTP/1.0'},
 		StreamRef, ReplyTo, _, _, _, _, _, CookieStore, _, EvHandlerState) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"Websocket cannot be used over an HTTP/1.0 connection."}},
-	{State, CookieStore, EvHandlerState};
+	{[], CookieStore, EvHandlerState};
 ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		Host, Port, Path, Headers0, WsOpts, CookieStore0, EvHandler, EvHandlerState0) ->
 	{Headers1, GunExtensions} = case maps:get(compress, WsOpts, false) of
@@ -959,9 +976,9 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		StreamRef, ReplyTo, <<"GET">>, Host, Port, Path, Headers, undefined,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	InitialFlow = maps:get(flow, WsOpts, infinity),
-	{new_stream(State#http_state{connection=Conn, out=Out},
+	{{state, new_stream(State#http_state{connection=Conn, out=Out},
 		#websocket{ref=StreamRef, reply_to=ReplyTo, key=Key, extensions=GunExtensions, opts=WsOpts},
-		ReplyTo, <<"GET">>, Authority, Path, InitialFlow),
+		ReplyTo, <<"GET">>, Authority, Path, InitialFlow)},
 		CookieStore, EvHandlerState}.
 
 ws_handshake(Buffer, State, Ws=#websocket{key=Key}, Headers) ->
