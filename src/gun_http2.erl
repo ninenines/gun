@@ -182,11 +182,14 @@ init(ReplyTo, Socket, Transport, Opts0) ->
 	BaseStreamRef = maps:get(stream_ref, Opts, undefined),
 	TunnelTransport = maps:get(tunnel_transport, Opts, undefined),
 	{ok, Preface, HTTP2Machine} = cow_http2_machine:init(client, Opts#{message_tag => BaseStreamRef}),
-	State = #http2_state{reply_to=ReplyTo, socket=Socket, transport=Transport,
-		opts=Opts, base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
-		content_handlers=Handlers, http2_machine=HTTP2Machine},
-	Transport:send(Socket, Preface),
-	{ok, connected, State}.
+	case Transport:send(Socket, Preface) of
+		ok ->
+			{ok, connected, #http2_state{reply_to=ReplyTo, socket=Socket, transport=Transport,
+				opts=Opts, base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
+				content_handlers=Handlers, http2_machine=HTTP2Machine}};
+		Error={error, _Reason} ->
+			Error
+	end.
 
 switch_transport(Transport, Socket, State) ->
 	State#http2_state{socket=Socket, transport=Transport}.
@@ -239,8 +242,12 @@ parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, strea
 					parse(Rest, State, CookieStore0, EvHandler, EvHandlerState0)
 			end;
 		{stream_error, StreamID, Reason, Human, Rest} ->
-			parse(Rest, reset_stream(State0, StreamID, {stream_error, Reason, Human}),
-				CookieStore0, EvHandler, EvHandlerState0);
+			case reset_stream(State0, StreamID, {stream_error, Reason, Human}) of
+				Error={error, _} ->
+					Error;
+				State ->
+					parse(Rest, State, CookieStore0, EvHandler, EvHandlerState0)
+			end;
 		Error = {connection_error, _, _} ->
 			{connection_error(State0, Error), CookieStore0, EvHandlerState0};
 		%% If we both received and sent a GOAWAY frame and there are no streams
@@ -330,39 +337,45 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 	end.
 
 maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
-		transport=Transport, opts=Opts, http2_machine=HTTP2Machine}, Frame) ->
-	case Frame of
-		{settings, _} ->
-			%% We notify remote settings changes only if the user requested it.
-			_ = case Opts of
-				#{notify_settings_changed := true} ->
-					ReplyTo ! {gun_notify, self(), settings_changed,
-						cow_http2_machine:get_remote_settings(HTTP2Machine)};
-				_ ->
-					ok
-			end,
-			Transport:send(Socket, cow_http2:settings_ack());
-		{ping, Opaque} ->
-			Transport:send(Socket, cow_http2:ping_ack(Opaque));
+		transport=Transport, opts=Opts, http2_machine=HTTP2Machine},
+		{settings, _}) ->
+	%% We notify remote settings changes only if the user requested it.
+	_ = case Opts of
+		#{notify_settings_changed := true} ->
+			ReplyTo ! {gun_notify, self(), settings_changed,
+				   cow_http2_machine:get_remote_settings(HTTP2Machine)};
 		_ ->
 			ok
 	end,
+	case Transport:send(Socket, cow_http2:settings_ack()) of
+		ok -> State;
+		Error={error, _} -> Error
+	end;
+maybe_ack_or_notify(State=#http2_state{socket=Socket, transport=Transport},
+		{ping, Opaque}) ->
+	case Transport:send(Socket, cow_http2:ping_ack(Opaque)) of
+		ok -> State;
+		Error={error, _} -> Error
+	end;
+maybe_ack_or_notify(State, _Frame) ->
 	State.
 
-data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
-	case get_stream_by_id(State0, StreamID) of
+data_frame(State, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
+	case get_stream_by_id(State, StreamID) of
 		Stream=#stream{tunnel=undefined} ->
-			{State, EvHandlerState} = data_frame1(State0,
+			{StateOrError, EvHandlerState} = data_frame1(State,
 				StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream),
-			{State, CookieStore0, EvHandlerState};
+			{StateOrError, CookieStore0, EvHandlerState};
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 %			%% @todo What about IsFin?
 			{Commands, CookieStore, EvHandlerState1} = Proto:handle(Data,
 				ProtoState0, CookieStore0, EvHandler, EvHandlerState0),
-			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
-			{State, CookieStore, EvHandlerState}
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands, Stream,
+				State, EvHandler, EvHandlerState1),
+			{StateOrError, CookieStore, EvHandlerState}
 	end.
 
+%% Send errors are returned. Other errors cause the stream to be deleted.
 tunnel_commands(Command, Stream, State, EvHandler, EvHandlerState)
 		when not is_list(Command) ->
 	tunnel_commands([Command], Stream, State, EvHandler, EvHandlerState);
@@ -370,9 +383,12 @@ tunnel_commands([], Stream, State, _EvHandler, EvHandlerState) ->
 	{store_stream(State, Stream), EvHandlerState};
 tunnel_commands([{send, IsFin, Data}|Tail], Stream=#stream{id=StreamID},
 		State0, EvHandler, EvHandlerState0) ->
-	{State, EvHandlerState} = maybe_send_data(State0, StreamID,
-		IsFin, Data, EvHandler, EvHandlerState0),
-	tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState);
+	case maybe_send_data(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0) of
+		ErrorRet={{error, _}, _EvHandlerState} ->
+			ErrorRet;
+		{State, EvHandlerState} ->
+			tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState)
+	end;
 tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
 		State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}},
@@ -403,7 +419,7 @@ data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 		_ -> Flow0 - Dec
 	end,
 	State1 = store_stream(State0, Stream#stream{flow=Flow, handler_state=Handlers}),
-	{State, EvHandlerState} = case byte_size(Data) of
+	{StateOrError0, EvHandlerState} = case byte_size(Data) of
 		%% We do not send a WINDOW_UPDATE if the DATA frame was of size 0.
 		0 when IsFin =:= fin ->
 			EvHandlerState1 = EvHandler:response_end(#{
@@ -429,7 +445,11 @@ data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 					{update_window(State1), EvHandlerState1}
 			end
 	end,
-	{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState}.
+	StateOrError = case StateOrError0 of
+		Error={error, _} -> Error;
+		State -> maybe_delete_stream(State, StreamID, remote, IsFin)
+	end,
+	{StateOrError, EvHandlerState}.
 
 headers_frame(State0=#http2_state{opts=Opts},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
@@ -484,17 +504,17 @@ headers_frame_connect(State0=#http2_state{http2_machine=HTTP2Machine0},
 		close ->
 			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
 			State1 = State0#http2_state{http2_machine=HTTP2Machine},
-			State = reset_stream(State1, StreamID, {stream_error, cancel,
+			StateOrError = reset_stream(State1, StreamID, {stream_error, cancel,
 				'The sec-websocket-extensions header is invalid. (RFC6455 9.1, RFC7692 7)'}),
-			{State, EvHandlerState};
+			{StateOrError, EvHandlerState};
 		Extensions ->
 			case gun_ws:select_protocol(Headers, WsOpts) of
 				close ->
 					{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
 					State1 = State0#http2_state{http2_machine=HTTP2Machine},
-					State = reset_stream(State1, StreamID, {stream_error, cancel,
+					StateOrError = reset_stream(State1, StreamID, {stream_error, cancel,
 						'The sec-websocket-protocol header is invalid. (RFC6455 4.1)'}),
-					{State, EvHandlerState};
+					{StateOrError, EvHandlerState};
 				Handler ->
 					headers_frame_connect_websocket(State0, Stream, Headers,
 						EvHandler, EvHandlerState, Extensions, Handler)
@@ -707,8 +727,12 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 		%% We cancel the push_promise immediately when we are shutting down.
 		_ ->
 			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(PromisedStreamID, HTTP2Machine0),
-			Transport:send(Socket, cow_http2:rst_stream(PromisedStreamID, cancel)),
-			{State#http2_state{http2_machine=HTTP2Machine}, EvHandlerState}
+			case Transport:send(Socket, cow_http2:rst_stream(PromisedStreamID, cancel)) of
+				ok ->
+					{State#http2_state{http2_machine=HTTP2Machine}, EvHandlerState};
+				Error={error, _} ->
+					{Error, EvHandlerState}
+			end
 	end.
 
 ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
@@ -720,25 +744,26 @@ ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	end.
 
 %% We always pass handle_continue messages to the tunnel.
-handle_continue(ContinueStreamRef, Msg, State0, CookieStore0, EvHandler, EvHandlerState0) ->
+handle_continue(ContinueStreamRef, Msg, State, CookieStore0, EvHandler, EvHandlerState0) ->
 	StreamRef = case ContinueStreamRef of
 		[SR|_] -> SR;
 		_ -> ContinueStreamRef
 	end,
-	case get_stream_by_ref(State0, StreamRef) of
+	case get_stream_by_ref(State, StreamRef) of
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, CookieStore, EvHandlerState1} = Proto:handle_continue(ContinueStreamRef,
 				Msg, ProtoState0, CookieStore0, EvHandler, EvHandlerState0),
-			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
-			{{state, State}, CookieStore, EvHandlerState}
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands, Stream,
+				State, EvHandler, EvHandlerState1),
+			{state_or_error_command(StateOrError), CookieStore, EvHandlerState}
 		%% The stream may have ended while TLS was being decoded. @todo What should we do?
 %		error ->
 %                       error_stream_not_found(State, StreamRef, ReplyTo),
 %			{[], EvHandlerState0}
 	end.
 
-update_flow(State, _ReplyTo, StreamRef, Inc) ->
-	case get_stream_by_ref(State, StreamRef) of
+update_flow(State0, _ReplyTo, StreamRef, Inc) ->
+	case get_stream_by_ref(State0, StreamRef) of
 		Stream=#stream{id=StreamID, flow=Flow0} ->
 			Flow = case Flow0 of
 				infinity -> infinity;
@@ -747,28 +772,36 @@ update_flow(State, _ReplyTo, StreamRef, Inc) ->
 			if
 				%% Flow is active again, update the stream's window.
 				Flow0 =< 0, Flow > 0 ->
-					{state, update_window(store_stream(State,
-						Stream#stream{flow=Flow}), StreamID)};
+					State1 = store_stream(State0, Stream#stream{flow=Flow}),
+					case update_window(State1, StreamID) of
+						Error={error, _} -> Error;
+						State2 -> {state, State2}
+					end;
 				true ->
-					{state, store_stream(State, Stream#stream{flow=Flow})}
+					{state, store_stream(State0, Stream#stream{flow=Flow})}
 			end;
 		error ->
 			[]
 	end.
 
 %% Only update the connection's window.
+-spec update_window(#http2_state{}) -> #http2_state{} | {error, any()}.
 update_window(State=#http2_state{socket=Socket, transport=Transport,
 		opts=#{initial_connection_window_size := ConnWindow}, http2_machine=HTTP2Machine0}) ->
 	case cow_http2_machine:ensure_window(ConnWindow, HTTP2Machine0) of
 		ok ->
 			State;
 		{ok, Increment, HTTP2Machine} ->
-			Transport:send(Socket, cow_http2:window_update(Increment)),
-			State#http2_state{http2_machine=HTTP2Machine}
+			case Transport:send(Socket, cow_http2:window_update(
+					Increment)) of
+				ok -> State#http2_state{http2_machine=HTTP2Machine};
+				Error={error, _} -> Error
+			end
 	end.
 
 %% Update both the connection and the stream's window.
-update_window(State=#http2_state{socket=Socket, transport=Transport,
+-spec update_window(#http2_state{}, cow_http2:streamid()) -> #http2_state{} | {error, any()}.
+update_window(State0=#http2_state{socket=Socket, transport=Transport,
 		opts=#{initial_connection_window_size := ConnWindow, initial_stream_window_size := StreamWindow},
 		http2_machine=HTTP2Machine0}, StreamID) ->
 	{Data1, HTTP2Machine2} = case cow_http2_machine:ensure_window(ConnWindow, HTTP2Machine0) of
@@ -779,11 +812,15 @@ update_window(State=#http2_state{socket=Socket, transport=Transport,
 		ok -> {<<>>, HTTP2Machine2};
 		{ok, Increment2, HTTP2Machine3} -> {cow_http2:window_update(StreamID, Increment2), HTTP2Machine3}
 	end,
+	State = State0#http2_state{http2_machine=HTTP2Machine},
 	case {Data1, Data2} of
-		{<<>>, <<>>} -> ok;
-		_ -> Transport:send(Socket, [Data1, Data2])
-	end,
-	State#http2_state{http2_machine=HTTP2Machine}.
+		{<<>>, <<>>} -> State;
+		_ ->
+			case Transport:send(Socket, [Data1, Data2]) of
+				ok -> State;
+				Error={error, _} -> Error
+			end
+	end.
 
 %% We may have to cancel streams even if we receive multiple
 %% GOAWAY frames as the LastStreamID value may be lower than
@@ -798,10 +835,12 @@ goaway(State0=#http2_state{socket=Socket, transport=Transport, http2_machine=HTT
 	},
 	case Status of
 		connected ->
-			Transport:send(Socket, cow_http2:goaway(
-				cow_http2_machine:get_last_streamid(HTTP2Machine),
-				no_error, <<>>)),
-			State#http2_state{status=goaway};
+			case Transport:send(Socket, cow_http2:goaway(
+					cow_http2_machine:get_last_streamid(HTTP2Machine),
+					no_error, <<>>)) of
+				ok -> State#http2_state{status=goaway};
+				Error={error, _} -> Error
+			end;
 		_ ->
 			State
 	end.
@@ -826,13 +865,17 @@ closing(Reason0, State=#http2_state{socket=Socket, transport=Transport,
 		owner_down -> no_error;
 		_ -> internal_error
 	end,
-	Transport:send(Socket, cow_http2:goaway(
-		cow_http2_machine:get_last_streamid(HTTP2Machine),
-		Reason, <<>>)),
-	{[
-		{state, State#http2_state{status=closing}},
-		closing(State)
-	], EvHandlerState}.
+	case Transport:send(Socket, cow_http2:goaway(
+			cow_http2_machine:get_last_streamid(HTTP2Machine),
+			Reason, <<>>)) of
+		ok ->
+			{[
+				{state, State#http2_state{status=closing}},
+				closing(State)
+			], EvHandlerState};
+		Error={error, _} ->
+			{Error, EvHandlerState}
+	end.
 
 closing(#http2_state{opts=Opts}) ->
 	Timeout = maps:get(closing_timeout, Opts, 15000),
@@ -854,8 +897,10 @@ close_stream(State, #stream{ref=StreamRef, reply_to=ReplyTo}, Reason) ->
 	ok.
 
 keepalive(#http2_state{socket=Socket, transport=Transport}, _, EvHandlerState) ->
-	Transport:send(Socket, cow_http2:ping(0)),
-	{[], EvHandlerState}.
+	case Transport:send(Socket, cow_http2:ping(0)) of
+		ok -> {[], EvHandlerState};
+		Error={error, _} -> {Error, EvHandlerState}
+	end.
 
 headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo, Method, Host, Port,
@@ -878,13 +923,19 @@ headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
 		StreamID, HTTP2Machine1, nofin, PseudoHeaders, Headers),
-	Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)),
-	EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
-		authority=Authority, path=Path},
-	{{state, create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream)},
-		CookieStore, EvHandlerState};
+	case Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)) of
+		ok ->
+			EvHandlerState = EvHandler:request_headers(RequestEvent,
+				EvHandlerState1),
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo,
+				flow=InitialFlow, authority=Authority, path=Path},
+			{{state, create_stream(State#http2_state{
+				http2_machine=HTTP2Machine}, Stream)}, CookieStore,
+				EvHandlerState};
+		Error={error, _} ->
+			{Error, CookieStore, EvHandlerState1}
+	end;
 %% Tunneled request.
 headers(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 		Path, Headers, InitialFlow, CookieStore0, EvHandler, EvHandlerState0) ->
@@ -895,9 +946,9 @@ headers(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 			{Commands, CookieStore, EvHandlerState1} = Proto:headers(ProtoState0, RealStreamRef,
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers,
 				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands, Stream,
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands, Stream,
 				State, EvHandler, EvHandlerState1),
-			{{state, State1}, CookieStore, EvHandlerState};
+			{state_or_error_command(StateOrError), CookieStore, EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -935,23 +986,29 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	end,
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
 		StreamID, HTTP2Machine1, IsFin0, PseudoHeaders, Headers),
-	Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)),
-	EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
-		authority=Authority, path=Path},
-	State = create_stream(State0#http2_state{http2_machine=HTTP2Machine}, Stream),
-	case IsFin of
-		fin ->
-			RequestEndEvent = #{
-				stream_ref => RealStreamRef,
-				reply_to => ReplyTo
-			},
-			{{state, State}, CookieStore, EvHandler:request_end(RequestEndEvent, EvHandlerState)};
-		nofin ->
-			{StateRet, EvHandlerStateRet} = maybe_send_data(
-				State, StreamID, fin, Body, EvHandler, EvHandlerState),
-			{{state, StateRet}, CookieStore, EvHandlerStateRet}
+	case Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)) of
+		ok ->
+			EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
+				authority=Authority, path=Path},
+			State = create_stream(State0#http2_state{http2_machine=HTTP2Machine}, Stream),
+			case IsFin of
+				fin ->
+					RequestEndEvent = #{
+						stream_ref => RealStreamRef,
+						reply_to => ReplyTo
+					},
+					{{state, State}, CookieStore, EvHandler:request_end(
+						RequestEndEvent, EvHandlerState)};
+				nofin ->
+					{StateOrError, EvHandlerStateRet} = maybe_send_data(State,
+						StreamID, fin, Body, EvHandler, EvHandlerState),
+					{state_or_error_command(StateOrError), CookieStore,
+						EvHandlerStateRet}
+			end;
+		Error={error, _} ->
+			{Error, CookieStore, EvHandlerState1}
 	end;
 %% Tunneled request.
 request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
@@ -963,9 +1020,9 @@ request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 			{Commands, CookieStore, EvHandlerState1} = Proto:request(ProtoState0, RealStreamRef,
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
 				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, CookieStore, EvHandlerState};
+			{state_or_error_command(StateOrError), CookieStore, EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1026,16 +1083,16 @@ data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, 
 					error_stream_closed(State, StreamRef, ReplyTo),
 					{[], EvHandlerState};
 				{ok, _, _} when Tunnel =:= undefined ->
-					{State1, EvHandlerStateRet} = maybe_send_data(State,
+					{StateOrError, EvHandlerStateRet} = maybe_send_data(State,
 						StreamID, IsFin, Data, EvHandler, EvHandlerState),
-					{{state, State1}, EvHandlerStateRet};
+					{state_or_error_command(StateOrError), EvHandlerStateRet};
 				{ok, _, _} ->
 					#tunnel{protocol=Proto, protocol_state=ProtoState0} = Tunnel,
 					{Commands, EvHandlerState1} = Proto:data(ProtoState0, StreamRef,
 						ReplyTo, IsFin, Data, EvHandler, EvHandlerState),
-					{State1, EvHandlerStateRet} = tunnel_commands(Commands,
+					{StateOrError, EvHandlerState} = tunnel_commands(Commands,
 						Stream, State, EvHandler, EvHandlerState1),
-					{{state, State1}, EvHandlerStateRet}
+					{state_or_error_command(StateOrError), EvHandlerState}
 			end;
 		error ->
 			error_stream_not_found(State, StreamRef, ReplyTo),
@@ -1047,9 +1104,9 @@ data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHand
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, EvHandlerState1} = Proto:data(ProtoState0, RealStreamRef,
 				ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, EvHandlerState};
+			{state_or_error_command(StateOrError), EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1059,6 +1116,8 @@ data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHand
 			{[], EvHandlerState0}
 	end.
 
+-spec maybe_send_data(#http2_state{}, cow_http2:streamid(), fin|nofin, iodata(), module(), _) ->
+	{#http2_state{} | {error, _}, _}.
 maybe_send_data(State=#http2_state{http2_machine=HTTP2Machine0}, StreamID, IsFin, Data0,
 		EvHandler, EvHandlerState) ->
 	Data = case is_tuple(Data0) of
@@ -1073,14 +1132,29 @@ maybe_send_data(State=#http2_state{http2_machine=HTTP2Machine0}, StreamID, IsFin
 				EvHandler, EvHandlerState)
 	end.
 
+send_data(Error={error, _}, _, _, EvHandlerState) ->
+	{Error, EvHandlerState};
 send_data(State, [], _, EvHandlerState) ->
 	{State, EvHandlerState};
 send_data(State0, [{StreamID, IsFin, SendData}|Tail], EvHandler, EvHandlerState0) ->
-	{State, EvHandlerState} = send_data(State0, StreamID, IsFin, SendData, EvHandler, EvHandlerState0),
-	send_data(State, Tail, EvHandler, EvHandlerState).
+	{StateOrError, EvHandlerState} = send_data(State0, StreamID, IsFin, SendData,
+		EvHandler, EvHandlerState0),
+	send_data(StateOrError, Tail, EvHandler, EvHandlerState).
 
+send_data(Error={error, _}, _, _, _, _, EvHandlerState) ->
+	{Error, EvHandlerState};
 send_data(State0, StreamID, IsFin, [Data], EvHandler, EvHandlerState0) ->
-	State = send_data_frame(State0, StreamID, IsFin, Data),
+	StateOrError = send_data_frame(State0, StreamID, IsFin, Data),
+	after_send_data(StateOrError, StreamID, IsFin, EvHandler, EvHandlerState0);
+send_data(State0, StreamID, IsFin, [Data|Tail], EvHandler, EvHandlerState) ->
+	State = send_data_frame(State0, StreamID, nofin, Data),
+	send_data(State, StreamID, IsFin, Tail, EvHandler, EvHandlerState).
+
+-spec after_send_data(#http2_state{} | {error, any()}, cow_http2:streamid(), fin|nofin, module(), any()) ->
+	{#http2_state{} | {error, any()}, any()}.
+after_send_data(Error={error, _}, _, _, _, EvHandlerState) ->
+	{Error, EvHandlerState};
+after_send_data(State, StreamID, IsFin, EvHandler, EvHandlerState0) ->
 	EvHandlerState = case IsFin of
 		nofin ->
 			EvHandlerState0;
@@ -1092,15 +1166,14 @@ send_data(State0, StreamID, IsFin, [Data], EvHandler, EvHandlerState0) ->
 			},
 			EvHandler:request_end(RequestEndEvent, EvHandlerState0)
 	end,
-	{maybe_delete_stream(State, StreamID, local, IsFin), EvHandlerState};
-send_data(State0, StreamID, IsFin, [Data|Tail], EvHandler, EvHandlerState) ->
-	State = send_data_frame(State0, StreamID, nofin, Data),
-	send_data(State, StreamID, IsFin, Tail, EvHandler, EvHandlerState).
+	{maybe_delete_stream(State, StreamID, local, IsFin), EvHandlerState}.
 
 send_data_frame(State=#http2_state{socket=Socket, transport=Transport},
 		StreamID, IsFin, {data, Data}) ->
-	Transport:send(Socket, cow_http2:data(StreamID, IsFin, Data)),
-	State;
+	case Transport:send(Socket, cow_http2:data(StreamID, IsFin, Data)) of
+		ok -> State;
+		Error={error, _} -> Error
+	end;
 %% @todo Uncomment this once sendfile is supported.
 %send_data_frame(State=#http2_state{socket=Socket, transport=Transport},
 %		StreamID, IsFin, {sendfile, Offset, Bytes, Path}) ->
@@ -1112,18 +1185,25 @@ send_data_frame(State=#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine0}, StreamID, nofin, {trailers, Trailers}) ->
 	{ok, HeaderBlock, HTTP2Machine}
 		= cow_http2_machine:prepare_trailers(StreamID, HTTP2Machine0, Trailers),
-	Transport:send(Socket, cow_http2:headers(StreamID, fin, HeaderBlock)),
-	State#http2_state{http2_machine=HTTP2Machine}.
+	case Transport:send(Socket, cow_http2:headers(StreamID, fin, HeaderBlock)) of
+		ok -> State#http2_state{http2_machine=HTTP2Machine};
+		Error={error, _} -> Error
+	end.
 
 reset_stream(State0=#http2_state{socket=Socket, transport=Transport},
 		StreamID, StreamError={stream_error, Reason, _}) ->
-	Transport:send(Socket, cow_http2:rst_stream(StreamID, Reason)),
-	case take_stream(State0, StreamID) of
-		{#stream{ref=StreamRef, reply_to=ReplyTo}, State} ->
-			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), StreamError},
-			State;
-		error ->
-			State0
+	case Transport:send(Socket, cow_http2:rst_stream(StreamID, Reason)) of
+		ok ->
+			case take_stream(State0, StreamID) of
+				{#stream{ref=StreamRef, reply_to=ReplyTo}, State} ->
+					ReplyTo ! {gun_error, self(), stream_ref(
+						State, StreamRef), StreamError},
+					State;
+				error ->
+					State0
+			end;
+		Error={error, _} ->
+			Error
 	end.
 
 connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
@@ -1167,18 +1247,23 @@ connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
 	{ok, nofin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
 		StreamID, HTTP2Machine1, nofin, PseudoHeaders, Headers),
-	Transport:send(Socket, cow_http2:headers(StreamID, nofin, HeaderBlock)),
-	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	RequestEndEvent = #{
-		stream_ref => RealStreamRef,
-		reply_to => ReplyTo
-	},
-	EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
-		authority=Authority, path= <<>>, tunnel=#tunnel{destination=Destination, info=TunnelInfo}},
-	{{state, create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream)},
-		EvHandlerState};
+	case Transport:send(Socket, cow_http2:headers(StreamID, nofin, HeaderBlock)) of
+		ok ->
+			EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+			RequestEndEvent = #{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo
+			},
+			EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo,
+				flow=InitialFlow, authority=Authority, path= <<>>,
+				tunnel=#tunnel{destination=Destination, info=TunnelInfo}},
+			{{state, create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream)},
+				EvHandlerState};
+		Error={error, _} ->
+			{Error, EvHandlerState1}
+	end;
 %% Tunneled request.
 connect(State, RealStreamRef=[StreamRef|_], ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow,
 		EvHandler, EvHandlerState0) ->
@@ -1188,9 +1273,9 @@ connect(State, RealStreamRef=[StreamRef|_], ReplyTo, Destination, TunnelInfo, He
 			{Commands, EvHandlerState1} = Proto:connect(ProtoState0, RealStreamRef,
 				ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow,
 				EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, EvHandlerState};
+			{state_or_error_command(StateOrError), EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1206,15 +1291,19 @@ cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP
 	case get_stream_by_ref(State, StreamRef) of
 		#stream{id=StreamID} ->
 			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
-			Transport:send(Socket, cow_http2:rst_stream(StreamID, cancel)),
-			EvHandlerState = EvHandler:cancel(#{
-				stream_ref => stream_ref(State, StreamRef),
-				reply_to => ReplyTo,
-				endpoint => local,
-				reason => cancel
-			}, EvHandlerState0),
-			{{state, delete_stream(State#http2_state{http2_machine=HTTP2Machine}, StreamID)},
-				EvHandlerState};
+			case Transport:send(Socket, cow_http2:rst_stream(StreamID, cancel)) of
+				ok ->
+					EvHandlerState = EvHandler:cancel(#{
+						stream_ref => stream_ref(State, StreamRef),
+						reply_to => ReplyTo,
+						endpoint => local,
+						reason => cancel
+					}, EvHandlerState0),
+					{{state, delete_stream(State#http2_state{http2_machine=HTTP2Machine},
+						StreamID)}, EvHandlerState};
+				Error={error, _} ->
+					{Error, EvHandlerState0}
+			end;
 		error ->
 			error_stream_not_found(State, StreamRef, ReplyTo),
 			{[], EvHandlerState0}
@@ -1225,9 +1314,9 @@ cancel(State, RealStreamRef=[StreamRef|_], ReplyTo, EvHandler, EvHandlerState0) 
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, EvHandlerState1} = Proto:cancel(ProtoState0,
 				RealStreamRef, ReplyTo, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, EvHandlerState};
+			{state_or_error_command(StateOrError), EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1257,7 +1346,9 @@ timeout(State, {cow_http2_machine, RealStreamRef, Name}, TRef) ->
 					{state, store_stream(State, Stream#stream{
 						tunnel=Tunnel#tunnel{protocol_state=ProtoState}})};
 				{error, {connection_error, Reason, Human}} ->
-					{state, reset_stream(State, StreamID, {stream_error, Reason, Human})}
+					StateOrError = reset_stream(State, StreamID,
+						{stream_error, Reason, Human}),
+					state_or_error_command(StateOrError)
 			end;
 		%% We ignore timeout events for streams that no longer exist.
 		error ->
@@ -1355,19 +1446,26 @@ ws_upgrade(State=#http2_state{socket=Socket, transport=Transport,
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
 		StreamID, HTTP2Machine1, nofin, PseudoHeaders#{protocol => <<"websocket">>}, Headers),
-	Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)),
-	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	RequestEndEvent = #{
-		stream_ref => RealStreamRef,
-		reply_to => ReplyTo
-	},
-	EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
-	InitialFlow = maps:get(flow, WsOpts, infinity),
-	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
-		authority=Authority, path=Path, tunnel=#tunnel{info=#websocket_info{
-			extensions=GunExtensions, opts=WsOpts}}},
-	{{state, create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream)},
-		CookieStore, EvHandlerState};
+	case Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)) of
+		ok ->
+			EvHandlerState2 = EvHandler:request_headers(RequestEvent,
+				EvHandlerState1),
+			RequestEndEvent = #{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo
+			},
+			EvHandlerState = EvHandler:request_end(RequestEndEvent,
+				EvHandlerState2),
+			InitialFlow = maps:get(flow, WsOpts, infinity),
+			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo,
+				flow=InitialFlow, authority=Authority, path=Path,
+				tunnel=#tunnel{info=#websocket_info{
+					extensions=GunExtensions, opts=WsOpts}}},
+			{{state, create_stream(State#http2_state{http2_machine=HTTP2Machine},
+				Stream)}, CookieStore, EvHandlerState};
+		Error={error, _} ->
+			{Error, EvHandlerState1}
+	end;
 ws_upgrade(State, RealStreamRef=[StreamRef|_], ReplyTo,
 		Host, Port, Path, Headers, WsOpts, CookieStore0, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
@@ -1376,23 +1474,24 @@ ws_upgrade(State, RealStreamRef=[StreamRef|_], ReplyTo,
 				ProtoState0, RealStreamRef, ReplyTo,
 				Host, Port, Path, Headers, WsOpts,
 				CookieStore0, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, CookieStore, EvHandlerState}
+			{state_or_error_command(StateOrError), CookieStore, EvHandlerState}
 		%% @todo Error conditions?
 	end.
 
-ws_send(Frames, State0, RealStreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
+ws_send(Frames, State, RealStreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 	StreamRef = case RealStreamRef of
 		[SR|_] -> SR;
 		_ -> RealStreamRef
 	end,
-	case get_stream_by_ref(State0, StreamRef) of
+	case get_stream_by_ref(State, StreamRef) of
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState}} ->
 			{Commands, EvHandlerState1} = Proto:ws_send(Frames, ProtoState,
 				RealStreamRef, ReplyTo, EvHandler, EvHandlerState0),
-			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
-			{{state, State}, EvHandlerState}
+			{StateOrError, EvHandlerState} = tunnel_commands(Commands,
+				Stream, State, EvHandler, EvHandlerState1),
+			{state_or_error_command(StateOrError), EvHandlerState}
 		%% @todo Error conditions?
 	end.
 
@@ -1407,6 +1506,9 @@ connection_error(#http2_state{socket=Socket, transport=Transport,
 		cow_http2_machine:get_last_streamid(HTTP2Machine),
 		Reason, <<>>)),
 	{error, Error}.
+
+state_or_error_command(Error={error, _}) -> Error;
+state_or_error_command(State=#http2_state{}) -> {state, State}.
 
 %% Stream functions.
 

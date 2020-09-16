@@ -59,5 +59,7 @@ close(_, _, _, EvHandlerState) ->
 %% @todo Initiate closing on IsFin=fin.
 data(#raw_state{ref=StreamRef, socket=Socket, transport=Transport}, StreamRef,
 		_ReplyTo, _IsFin, Data, _EvHandler, EvHandlerState) ->
-	Transport:send(Socket, Data),
-	{[], EvHandlerState}.
+	case Transport:send(Socket, Data) of
+		ok -> {[], EvHandlerState};
+		Error={error, _} -> {Error, EvHandlerState}
+	end.

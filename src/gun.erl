@@ -1237,17 +1237,25 @@ connected_ws_only(Type, Event, State) ->
 connected(internal, {connected, Socket, NewProtocol},
 		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
 	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
-	%% @todo Handle error result from Protocol:init/4
-	{ok, StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),
-	Owner ! {gun_up, self(), Protocol:name()},
-	case active(State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState}) of
-		{ok, State} ->
-			case Protocol:has_keepalive() of
-				true -> {next_state, StateName, keepalive_timeout(State)};
-				false -> {next_state, StateName, State}
-			end;
-		Disconnect ->
-			Disconnect
+	case Protocol:init(Owner, Socket, Transport, ProtoOpts) of
+		Error={error, _} ->
+			%% @todo Don't send gun_up and gun_down if Protocol:init/4 failes here.
+			Owner ! {gun_up, self(), Protocol:name()},
+			disconnect(State0, Error);
+		{ok, StateName, ProtoState} ->
+			%% @todo Don't send gun_up and gun_down if active/1 failes here.
+			Owner ! {gun_up, self(), Protocol:name()},
+			State1 = State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState},
+			case active(State1) of
+				{ok, State2} ->
+					State = case Protocol:has_keepalive() of
+						true -> keepalive_timeout(State2);
+						false -> State2
+					end,
+					{next_state, StateName, State};
+				Disconnect ->
+					Disconnect
+			end
 	end;
 %% Public HTTP interface.
 %%

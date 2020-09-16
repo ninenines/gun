@@ -92,10 +92,14 @@ init(ReplyTo, Socket, Transport, Opts) ->
 		{username_password, _, _} -> <<2>>;
 		none -> <<0>>
 	end || A <- Auth>>,
-	Transport:send(Socket, [<<5, (length(Auth))>>, Methods]),
-	{ok, connected_no_input, #socks_state{ref=StreamRef, reply_to=ReplyTo,
-		socket=Socket, transport=Transport,
-		opts=Opts, version=Version, status=auth_method_select}}.
+	case Transport:send(Socket, [<<5, (length(Auth))>>, Methods]) of
+		ok ->
+			{ok, connected_no_input, #socks_state{ref=StreamRef, reply_to=ReplyTo,
+				socket=Socket, transport=Transport,
+				opts=Opts, version=Version, status=auth_method_select}};
+		Error={error, _Reason} ->
+			Error
+	end.
 
 switch_transport(Transport, Socket, State) ->
 	State#socks_state{socket=Socket, transport=Transport}.

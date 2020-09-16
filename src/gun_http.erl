@@ -550,8 +550,10 @@ keepalive(#http_state{streams=[#stream{ref={connect, _, _}}]}, _, EvHandlerState
 	{[], EvHandlerState};
 %% We can only keep-alive by sending an empty line in-between streams.
 keepalive(#http_state{socket=Socket, transport=Transport, out=head}, _, EvHandlerState) ->
-	Transport:send(Socket, <<"\r\n">>),
-	{[], EvHandlerState};
+	case Transport:send(Socket, <<"\r\n">>) of
+		ok -> {[], EvHandlerState};
+		Error={error, _} -> {Error, EvHandlerState}
+	end;
 keepalive(_State, _, EvHandlerState) ->
 	{[], EvHandlerState}.
 
@@ -632,6 +634,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		headers => Headers
 	},
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
+	%% @todo Handle send errors.
 	Transport:send(Socket, [
 		cow_http:request(Method, Path, Version, Headers),
 		[Body || Body =/= undefined]]),
@@ -692,41 +695,52 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			DataLength = iolist_size(Data),
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
-					if
+					DataToSend = if
 						DataLength =:= 0 ->
-							Transport:send(Socket, cow_http_te:last_chunk());
+							cow_http_te:last_chunk();
 						true ->
-							Transport:send(Socket, [
+							[
 								cow_http_te:chunk(Data),
 								cow_http_te:last_chunk()
-							])
+							]
 					end,
-					RequestEndEvent = #{
-						stream_ref => stream_ref(State, StreamRef),
-						reply_to => ReplyTo
-					},
-					EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState0),
-					{{state, State#http_state{out=head}}, EvHandlerState};
+					case Transport:send(Socket, DataToSend) of
+						ok ->
+							RequestEndEvent = #{
+								stream_ref => stream_ref(State, StreamRef),
+								reply_to => ReplyTo
+							},
+							EvHandlerState = EvHandler:request_end(RequestEndEvent,
+								EvHandlerState0),
+							{{state, State#http_state{out=head}}, EvHandlerState};
+						Error={error, _} ->
+							{Error, EvHandlerState0}
+					end;
 				body_chunked when Version =:= 'HTTP/1.1' ->
-					Transport:send(Socket, cow_http_te:chunk(Data)),
-					{[], EvHandlerState0};
+					case Transport:send(Socket, cow_http_te:chunk(Data)) of
+						ok -> {[], EvHandlerState0};
+						Error={error, _} -> {Error, EvHandlerState0}
+					end;
 				{body, Length} when DataLength =< Length ->
-					Transport:send(Socket, Data),
 					Length2 = Length - DataLength,
-					if
-						Length2 =:= 0, IsFin =:= fin ->
+					case Transport:send(Socket, Data) of
+						ok when Length2 =:= 0, IsFin =:= fin ->
 							RequestEndEvent = #{
 								stream_ref => stream_ref(State, StreamRef),
 								reply_to => ReplyTo
 							},
 							EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState0),
 							{{state, State#http_state{out=head}}, EvHandlerState};
-						Length2 > 0, IsFin =:= nofin ->
-							{{state, State#http_state{out={body, Length2}}}, EvHandlerState0}
+						ok when Length2 > 0, IsFin =:= nofin ->
+							{{state, State#http_state{out={body, Length2}}}, EvHandlerState0};
+						Error={error, _} ->
+							{Error, EvHandlerState0}
 					end;
 				body_chunked -> %% HTTP/1.0
-					Transport:send(Socket, Data),
-					{[], EvHandlerState0}
+					case Transport:send(Socket, Data) of
+						ok -> {[], EvHandlerState0};
+						Error={error, _} -> {Error, EvHandlerState0}
+					end
 			end;
 		_ ->
 			error_stream_not_found(State, StreamRef, ReplyTo),
@@ -779,19 +793,22 @@ connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version
 		headers => Headers
 	},
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
-	Transport:send(Socket, [
-		cow_http:request(<<"CONNECT">>, Authority, Version, Headers)
-	]),
-	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	RequestEndEvent = #{
-		stream_ref => RealStreamRef,
-		reply_to => ReplyTo
-	},
-	EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	{{state, new_stream(State, {connect, StreamRef, Destination}, ReplyTo,
-		<<"CONNECT">>, Authority, <<>>, InitialFlow)},
-		EvHandlerState}.
+	case Transport:send(Socket, cow_http:request(<<"CONNECT">>,
+			Authority, Version, Headers)) of
+		ok ->
+			EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+			RequestEndEvent = #{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo
+			},
+			EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			{{state, new_stream(State, {connect, StreamRef, Destination},
+				ReplyTo, <<"CONNECT">>, Authority, <<>>, InitialFlow)},
+				EvHandlerState};
+		Error={error, _} ->
+			{Error, EvHandlerState1}
+	end.
 
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
 cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
