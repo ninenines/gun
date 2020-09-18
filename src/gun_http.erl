@@ -378,6 +378,7 @@ handle_inform(Rest, State=#http_state{
 				{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
 				Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
 				ReplyTo ! {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers},
+				%% @todo We probably need to add_stream_ref?
 				{handle_ret({switch_protocol, raw, ReplyTo}, State), EvHandlerState0}
 			catch _:_ ->
 				%% When the Upgrade header is missing or invalid we treat
@@ -781,7 +782,7 @@ stream_info(#http_state{streams=Streams}, StreamRef) ->
 	case lists:keyfind(StreamRef, #stream.ref, Streams) of
 		#stream{reply_to=ReplyTo, is_alive=IsAlive} ->
 			{ok, #{
-				ref => StreamRef,
+				ref => StreamRef, %% @todo Wrong stream_ref? base_stream_ref it?
 				reply_to => ReplyTo,
 				state => case IsAlive of
 					true -> running;

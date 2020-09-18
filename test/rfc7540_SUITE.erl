@@ -557,6 +557,15 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 	gun:close(ConnPid).
 
 connect_cowboy_http_via_h2c(_) ->
+
+%dbg:tracer(),
+%dbg:tpl(gun_http, []),
+%dbg:tpl(gun_http2, []),
+%dbg:tpl(gun_tunnel, []),
+%dbg:tpl(gun_tcp_proxy, []),
+%dbg:tpl(gun, []),
+%dbg:p(all, c),
+
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_cowboy(<<"http">>, tcp, http, <<"http">>, tcp).
@@ -623,6 +632,7 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 		{up, OriginProtocol} = gun:await(ConnPid, StreamRef),
 		ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
+		timer:sleep(1000),
 		{response, nofin, 200, _} = gun:await(ConnPid, ProxiedStreamRef),
 		%% We can create more requests on the proxy as well.
 		ProxyStreamRef = gun:get(ConnPid, "/"),
@@ -652,8 +662,22 @@ do_cowboy_origin(OriginTransport, OriginProtocol) ->
 connect_http_via_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through both "
-		"an HTTP/2 and an HTTP/1.1 proxy. (RFC7231 4.3.6)"),
+		"a TCP HTTP/2 and a TCP HTTP/1.1 proxy. (RFC7540 8.3)"),
 	do_connect_via_multiple_proxies(tcp, http, tcp, http, tcp).
+
+connect_https_via_https_via_h2(_) ->
+
+%dbg:tracer(),
+%dbg:tpl(?MODULE, []),
+%dbg:tpl(gun, []),
+%dbg:tpl(gun_http, []),
+%dbg:tpl(gun_http2, []),
+%dbg:p(all, c),
+
+	doc("CONNECT can be used to establish a TLS connection "
+		"to an HTTP/1.1 server via a tunnel going through both "
+		"a TLS HTTP/2 and a TLS HTTP/1.1 proxy. (RFC7540 8.3)"),
+	do_connect_via_multiple_proxies(tls, http, tls, http, tls).
 
 do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 		Proxy2Transport, Proxy2Protocol, Proxy1Transport) ->
@@ -665,16 +689,18 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 		{ok, Proxy2Pid, Proxy2Port} = rfc7231_SUITE:do_proxy_start(Proxy2Transport),
 		%% First proxy.
 		{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
+			transport => Proxy1Transport,
 			protocols => [http2]
 		}),
 		{ok, http2} = gun:await_up(ConnPid),
+		handshake_completed = receive_from(Proxy1Pid),
 		%% Second proxy.
 		StreamRef1 = gun:connect(ConnPid, #{
 			host => "localhost",
 			port => Proxy2Port,
+			transport => Proxy2Transport,
 			protocols => [Proxy2Protocol]
 		}, []),
-		handshake_completed = receive_from(Proxy1Pid),
 		Authority1 = iolist_to_binary(["localhost:", integer_to_binary(Proxy2Port)]),
 		{request, #{
 			<<":method">> := <<"CONNECT">>,
@@ -686,6 +712,7 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 		StreamRef2 = gun:connect(ConnPid, #{
 			host => "localhost",
 			port => OriginPort,
+			transport => OriginTransport,
 			protocols => [OriginProtocol]
 		}, [], #{tunnel => StreamRef1}),
 		Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
@@ -697,6 +724,7 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 		ProxiedStreamRef = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef2}),
 		{response, nofin, 200, _} = gun:await(ConnPid, ProxiedStreamRef),
 		gun:close(ConnPid)
+		%% @todo Also test stream_info.
 	after
 		cowboy:stop_listener(Ref)
 	end.

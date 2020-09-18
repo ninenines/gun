@@ -186,10 +186,7 @@
 	origin_port => inet:port_number(),
 
 	%% Non-stream intermediaries (for example SOCKS).
-	intermediaries => [intermediary()],
-
-	%% TLS proxy.
-	tls_proxy_pid => pid()
+	intermediaries => [intermediary()]
 }.
 -export_type([tunnel_info/0]).
 

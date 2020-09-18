@@ -95,6 +95,7 @@
 	extra :: any()
 }).
 
+%-define(DEBUG_PROXY,1).
 -ifdef(DEBUG_PROXY).
 -define(DEBUG_LOG(Format, Args),
 	io:format(user, "(~p) ~p:~p/~p:" ++ Format ++ "~n",
@@ -269,17 +270,17 @@ connected({call, From}, Msg={send, Data}, State=#state{proxy_socket=Socket}) ->
 %% of the data isn't yet complete. We wrap the message in a handle_continue
 %% tuple and provide the StreamRef for further processing.
 connected(info, Msg={ssl, Socket, Data}, State=#state{owner_pid=OwnerPid, proxy_socket=Socket,
-		out_socket=#{stream_ref := StreamRef}}) ->
+		out_socket=#{handle_continue_stream_ref := StreamRef}}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
 	OwnerPid ! {handle_continue, StreamRef, {tls_proxy, self(), Data}},
 	keep_state_and_data;
 connected(info, Msg={ssl_closed, Socket}, State=#state{owner_pid=OwnerPid, proxy_socket=Socket,
-		out_socket=#{stream_ref := StreamRef}}) ->
+		out_socket=#{handle_continue_stream_ref := StreamRef}}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
 	OwnerPid ! {handle_continue, StreamRef, {tls_proxy_closed, self()}},
 	keep_state_and_data;
 connected(info, Msg={ssl_error, Socket, Reason}, State=#state{owner_pid=OwnerPid, proxy_socket=Socket,
-		out_socket=#{stream_ref := StreamRef}}) ->
+		out_socket=#{handle_continue_stream_ref := StreamRef}}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
 	OwnerPid ! {handle_continue, StreamRef, {tls_proxy_error, self(), Reason}},
 	keep_state_and_data;
@@ -340,8 +341,9 @@ handle_common(cast, Msg={send_result, From, Result}, State) ->
 	gen_statem:reply(From, Result),
 	keep_state_and_data;
 %% Messages from the real socket.
-handle_common(info, Msg={OK, Socket, Data}, State=#state{proxy_pid=ProxyPid,
-		out_socket=Socket, out_messages={OK, _, _}}) ->
+%% @todo Make _Socket and __Socket match again.
+handle_common(info, Msg={OK, _Socket, Data}, State=#state{proxy_pid=ProxyPid,
+		out_socket=__Socket, out_messages={OK, _, _}}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
 	ProxyPid ! {tls_proxy, self(), Data},
 	keep_state_and_data;

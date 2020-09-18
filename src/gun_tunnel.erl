@@ -1,0 +1,414 @@
+%% Copyright (c) 2020, Loïc Hoguin <essen@ninenines.eu>
+%%
+%% Permission to use, copy, modify, and/or distribute this software for any
+%% purpose with or without fee is hereby granted, provided that the above
+%% copyright notice and this permission notice appear in all copies.
+%%
+%% THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+%% WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+%% MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+%% ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+%% WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+%% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+%% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+%% This module is used when a tunnel is established and either
+%% StreamRef dereference or a TLS proxy process must be handled
+%% by the tunnel layer.
+-module(gun_tunnel).
+
+-export([init/4]).
+-export([handle/4]).
+-export([handle_continue/5]).
+-export([update_flow/4]).
+-export([closing/4]).
+-export([close/4]).
+-export([keepalive/3]).
+-export([headers/11]).
+-export([request/12]).
+-export([data/7]).
+-export([connect/7]).
+-export([cancel/5]).
+-export([timeout/3]).
+-export([stream_info/2]).
+-export([tunneled_name/1]).
+-export([down/1]).
+%-export([ws_upgrade/10]).
+
+-record(tunnel_state, {
+	%% Fake socket and transport.
+	socket = undefined :: #{
+		gun_pid := pid(),
+		reply_to := pid(),
+		stream_ref := gun:stream_ref(),
+		handle_continue_stream_ref := gun:stream_ref()
+	} | pid(),
+	transport = undefined :: gun_tcp_proxy | gun_tls_proxy,
+
+	%% The stream_ref from which the stream was created. When
+	%% the tunnel exists as a result of HTTP/2 CONNECT -> HTTP/1.1 CONNECT
+	%% the stream_ref is the same as the HTTP/1.1 CONNECT one.
+	stream_ref = undefined :: gun:stream_ref(),
+
+	%% When the tunnel is a 'connect' tunnel we must dereference the
+	%% stream_ref. When it is 'socks' we must not as there was no
+	%% stream involved in creating the tunnel.
+	type = undefined :: connect | socks,
+
+	%% Tunnel information.
+	info = undefined :: gun:tunnel_info(),
+
+	%% The origin socket of the TLS proxy, if any. This is used to forward
+	%% messages to the proxy process in order to decrypt the data.
+	tls_origin_socket = undefined :: undefined | #{
+		gun_pid := pid(),
+		reply_to := pid(),
+		stream_ref := gun:stream_ref(),
+		handle_continue_stream_ref => gun:stream_ref()
+	},
+
+	opts = undefined :: undefined | any(), %% @todo Opts type.
+
+	%% Protocol module and state of the outer layer. Only initialized
+	%% after the TLS handshake has completed when TLS is involved.
+	protocol = undefined :: module(),
+	protocol_state = undefined :: any()
+}).
+
+%% Socket is the "origin socket" and Transport the "origin transport".
+%% When the Transport indicate a TLS handshake was requested, the socket
+%% and transport are given to the intermediary TLS proxy process.
+%%
+%% Opts is the options for the underlying HTTP/2 connection,
+%% with some extra information added for the tunnel.
+%%
+%% @todo Mark the tunnel options as reserved.
+init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tunnel := Tunnel}) ->
+	#{
+		type := TunnelType,
+		info := TunnelInfo
+	} = Tunnel,
+	State = #tunnel_state{stream_ref=StreamRef, type=TunnelType, info=TunnelInfo,
+		opts=maps:without([stream_ref, tunnel], Opts)},
+	case Tunnel of
+		%% Initialize the protocol.
+		#{new_protocol := NewProtocol} ->
+			{Proto, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
+			{_, ProtoState} = Proto:init(ReplyTo, OriginSocket, OriginTransport,
+				ProtoOpts#{stream_ref => StreamRef}),
+%% @todo	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
+			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
+			{tunnel, State#tunnel_state{socket=OriginSocket, transport=OriginTransport,
+				protocol=Proto, protocol_state=ProtoState}};
+		%% We can't initialize the protocol until the TLS handshake has completed.
+		#{handshake_event := HandshakeEvent, protocols := Protocols} ->
+			#{handle_continue_stream_ref := ContinueStreamRef} = OriginSocket,
+		%% @todo FIX THIS!!
+		%	#{
+		%		origin_host := DestHost,
+		%		origin_port := DestPort
+		%	} = TunnelInfo,
+%% @todo OK so Protocol:init/4 will need to have EvHandler/EvHandlerState!
+%% Otherwise we can't do the TLS events.
+			#{
+				tls_opts := TLSOpts,
+				timeout := TLSTimeout
+			} = HandshakeEvent,
+			{ok, ProxyPid} = gun_tls_proxy:start_link("fake", 12345,% @todo FIX THIS!! DestHost, DestPort,
+				TLSOpts, TLSTimeout, OriginSocket, gun_tls_proxy_http2_connect,
+				{handle_continue, ContinueStreamRef, HandshakeEvent, Protocols}),
+			{tunnel, State#tunnel_state{socket=ProxyPid, transport=gun_tls_proxy,
+				tls_origin_socket=OriginSocket}}
+	end.
+
+%% When we receive data we pass it forward directly for TCP;
+%% or we decrypt it and pass it via handle_continue for TLS.
+handle(Data, State=#tunnel_state{transport=gun_tcp_proxy,
+		protocol=Proto, protocol_state=ProtoState0},
+		EvHandler, EvHandlerState0) ->
+	{Commands, EvHandlerState} = Proto:handle(Data, ProtoState0, EvHandler, EvHandlerState0),
+	{{state, commands(Commands, State)}, EvHandlerState};
+handle(Data, State=#tunnel_state{transport=gun_tls_proxy,
+		socket=ProxyPid, tls_origin_socket=OriginSocket},
+		_EvHandler, EvHandlerState) ->
+	%% When we receive a DATA frame that contains TLS-encoded data,
+	%% we must first forward it to the ProxyPid to be decoded. The
+	%% Gun process will receive it back as a tls_proxy_http2_connect
+	%% message and forward it to the right stream via the handle_continue
+	%% callback.
+	ProxyPid ! {tls_proxy_http2_connect, OriginSocket, Data},
+	{{state, State}, EvHandlerState}.
+
+%% This callback will only be called for TLS.
+%%
+%% The StreamRef in this callback is special because it includes
+%% a reference() for Socks layers as well.
+handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {ok, Negotiated},
+		{handle_continue, _, HandshakeEvent, Protocols}},
+		State=#tunnel_state{socket=ProxyPid, stream_ref=StreamRef, opts=Opts},
+		_EvHandler, EvHandlerState0)
+		when is_reference(ContinueStreamRef) ->
+	#{reply_to := ReplyTo} = HandshakeEvent,
+	NewProtocol = gun_protocols:negotiated(Negotiated, Protocols),
+	{Proto, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
+%					EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+%						socket => Socket,
+%						protocol => NewProtocol
+%					}, EvHandlerState0),
+	%% @todo Terminate the current protocol or something?
+	OriginSocket = #{
+		gun_pid => self(),
+		reply_to => ReplyTo,
+		stream_ref => StreamRef%,
+%		handle_continue_stream_ref => ContinueStreamRef
+	},
+	{_, ProtoState} = Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
+		ProtoOpts#{stream_ref => StreamRef}),
+	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
+	{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}}, EvHandlerState0};
+handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {error, _Reason},
+		{handle_continue, _, _HandshakeEvent, _}},
+		#tunnel_state{socket=ProxyPid}, _EvHandler, EvHandlerState0)
+		when is_reference(ContinueStreamRef) ->
+%%	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+%%		error => Reason
+%%	}, EvHandlerState0),
+%%% @todo
+%%   The TCP connection can be closed by either peer.  The END_STREAM flag
+%%   on a DATA frame is treated as being equivalent to the TCP FIN bit.  A
+%%   client is expected to send a DATA frame with the END_STREAM flag set
+%%   after receiving a frame bearing the END_STREAM flag.  A proxy that
+%%   receives a DATA frame with the END_STREAM flag set sends the attached
+%%   data with the FIN bit set on the last TCP segment.  A proxy that
+%%   receives a TCP segment with the FIN bit set sends a DATA frame with
+%%   the END_STREAM flag set.  Note that the final TCP segment or DATA
+%%   frame could be empty.
+	{[], EvHandlerState0};
+%% Send the data. This causes TLS to encrypt the data and send it to the inner layer.
+handle_continue(ContinueStreamRef, {data, _ReplyTo, _StreamRef, IsFin, Data},
+		#tunnel_state{socket=Socket, transport=Transport}, _EvHandler, EvHandlerState)
+		when is_reference(ContinueStreamRef) ->
+	{[{send, IsFin, Data}], EvHandlerState};
+handle_continue(ContinueStreamRef, {tls_proxy, ProxyPid, Data},
+		State=#tunnel_state{socket=ProxyPid, protocol=Proto, protocol_state=ProtoState},
+		EvHandler, EvHandlerState0)
+		when is_reference(ContinueStreamRef) ->
+	{Commands, EvHandlerState} = Proto:handle(Data, ProtoState, EvHandler, EvHandlerState0),
+	{{state, commands(Commands, State)}, EvHandlerState};
+%% @todo What to do about those? Does it matter which one closes/errors out?
+handle_continue(ContinueStreamRef, {tls_proxy_closed, ProxyPid},
+		#tunnel_state{socket=ProxyPid}, _EvHandler, _EvHandlerState0)
+		when is_reference(ContinueStreamRef) ->
+	todo;
+handle_continue(ContinueStreamRef, {tls_proxy_error, ProxyPid, _Reason},
+		#tunnel_state{socket=ProxyPid}, _EvHandler, _EvHandlerState0)
+		when is_reference(ContinueStreamRef) ->
+	todo;
+%% We always dereference the ContinueStreamRef because it includes a
+%% reference() for Socks layers too.
+%%
+%% @todo Assert StreamRef to be our reference().
+handle_continue([_StreamRef|ContinueStreamRef0], Msg,
+		State=#tunnel_state{protocol=Proto, protocol_state=ProtoState},
+		EvHandler, EvHandlerState0) ->
+	ContinueStreamRef = case ContinueStreamRef0 of
+		[CSR] -> CSR;
+		_ -> ContinueStreamRef0
+	end,
+	{Commands, EvHandlerState} = Proto:handle_continue(ContinueStreamRef,
+		Msg, ProtoState, EvHandler, EvHandlerState0),
+	{{state, commands(Commands, State)}, EvHandlerState}.
+
+%% @todo Probably just pass it forward?
+update_flow(_State, _ReplyTo, _StreamRef, _Inc) ->
+	todo.
+
+%% @todo ?
+closing(_Reason, _State, _EvHandler, _EvHandlerState) ->
+	todo.
+
+%% @todo ?
+close(_Reason, _State, _EvHandler, _EvHandlerState) ->
+	todo.
+
+%% @todo ?
+keepalive(_State, _EvHandler, _EvHandlerState) ->
+	todo.
+
+%% We pass the headers forward and optionally dereference StreamRef.
+headers(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
+		StreamRef0, ReplyTo, Method, Host, Port, Path, Headers,
+		InitialFlow, EvHandler, EvHandlerState0) ->
+	StreamRef = maybe_dereference(State, StreamRef0),
+	{ProtoState, EvHandlerState} = Proto:headers(ProtoState0, StreamRef,
+		ReplyTo, Method, Host, Port, Path, Headers,
+		InitialFlow, EvHandler, EvHandlerState0),
+	{State#tunnel_state{protocol_state=ProtoState}, EvHandlerState}.
+
+%% We pass the request forward and optionally dereference StreamRef.
+request(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
+		StreamRef0, ReplyTo, Method, Host, Port, Path, Headers, Body,
+		InitialFlow, EvHandler, EvHandlerState0) ->
+	StreamRef = maybe_dereference(State, StreamRef0),
+	{ProtoState, EvHandlerState} = Proto:request(ProtoState0, StreamRef,
+		ReplyTo, Method, Host, Port, Path, Headers, Body,
+		InitialFlow, EvHandler, EvHandlerState0),
+	{State#tunnel_state{protocol_state=ProtoState}, EvHandlerState}.
+
+%% We pass the data forward and optionally dereference StreamRef.
+data(State=#tunnel_state{socket=Socket, transport=Transport,
+		stream_ref=TunnelStreamRef0, protocol=Proto, protocol_state=ProtoState0},
+		StreamRef0, ReplyTo, IsFin, Data, EvHandler, EvHandlerState0) ->
+	TunnelStreamRef = if
+		is_list(TunnelStreamRef0) -> lists:last(TunnelStreamRef0);
+		true -> TunnelStreamRef0
+	end,
+	case StreamRef0 of
+		TunnelStreamRef ->
+			ok = Transport:send(Socket, Data),
+			{State, EvHandlerState0};
+		_ ->
+			StreamRef = maybe_dereference(State, StreamRef0),
+			{ProtoState, EvHandlerState} = Proto:data(ProtoState0, StreamRef,
+				ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
+			{State#tunnel_state{protocol_state=ProtoState}, EvHandlerState}
+	end.
+
+%% We pass the CONNECT request forward and optionally dereference StreamRef.
+connect(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
+		StreamRef0, ReplyTo, Destination, TunnelInfo, Headers, InitialFlow) ->
+	StreamRef = maybe_dereference(State, StreamRef0),
+	ProtoState = Proto:connect(ProtoState0, StreamRef,
+		ReplyTo, Destination, TunnelInfo, Headers, InitialFlow),
+	State#tunnel_state{protocol_state=ProtoState}.
+
+%% @todo ?
+cancel(_State, _StreamRef, _ReplyTo, _EvHandler, _EvHandlerState) ->
+	todo.
+
+%% @todo ?
+%% ... we might have to do update Cowlib there...
+timeout(_State, {cow_http2_machine, _Name}, _TRef) ->
+	todo.
+
+stream_info(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState}, StreamRef0) ->
+	StreamRef = maybe_dereference(State, StreamRef0),
+	Proto:stream_info(ProtoState, StreamRef).
+
+tunneled_name(#tunnel_state{protocol=Proto}) ->
+	Proto:name().
+
+%% @todo ?
+down(_State) ->
+	todo.
+
+%% Internal.
+
+commands(Command, State) when not is_list(Command) ->
+	commands([Command], State);
+commands([], State) ->
+	State;
+commands([{state, ProtoState}|Tail], State) ->
+	commands(Tail, State#tunnel_state{protocol_state=ProtoState});
+%% @todo We must pass down the set_cookie commands. Have a commands_queue.
+commands([_SetCookie={set_cookie, _, _, _, _}|Tail], State=#tunnel_state{}) ->
+	commands(Tail, State);
+commands([{send, IsFin, Data}|Tail], State=#tunnel_state{socket=Socket, transport=Transport}) ->
+	Transport:send(Socket, Data),
+	commands(Tail, State);
+%% @todo How to handle origin changes?
+commands([{origin, _, _NewHost, _NewPort, _Type}|Tail], State) ->
+	commands(Tail, State);
+commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
+		State=#tunnel_state{stream_ref=TunnelStreamRef, opts=Opts, protocol=CurrentProto}) ->
+	Type = case CurrentProto:name() of
+		socks -> socks;
+		_ -> connect
+	end,
+	StreamRef = case Type of
+		socks -> TunnelStreamRef;
+		connect -> gun_protocols:stream_ref(NewProtocol)
+	end,
+	ContinueStreamRef0 = continue_stream_ref(State),
+	ContinueStreamRef = case Type of
+		socks -> ContinueStreamRef0 ++ [make_ref()];
+		connect -> ContinueStreamRef0 ++ [if is_list(StreamRef) -> lists:last(StreamRef); true -> StreamRef end]
+	end,
+	OriginSocket = #{
+		gun_pid => self(),
+		reply_to => ReplyTo,
+		stream_ref => StreamRef,
+		handle_continue_stream_ref => ContinueStreamRef
+	},
+	ProtoOpts = Opts#{
+		stream_ref => StreamRef,
+		tunnel => #{
+			type => Type,
+			info => #{}, %% @todo
+			new_protocol => NewProtocol
+		}
+	},
+	Proto = gun_tunnel,
+	{_, ProtoState} = Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts),
+%% @todo	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
+	commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState});
+commands([{tls_handshake, HandshakeEvent, Protocols, ReplyTo}|Tail],
+		State=#tunnel_state{opts=Opts, protocol=CurrentProto}) ->
+	Type = case CurrentProto:name() of
+		socks -> socks;
+		_ -> connect
+	end,
+	#{
+		stream_ref := StreamRef
+	} = HandshakeEvent,
+	ContinueStreamRef0 = continue_stream_ref(State),
+	ContinueStreamRef = case Type of
+		socks -> ContinueStreamRef0 ++ [make_ref()];
+		connect -> ContinueStreamRef0 ++ [lists:last(StreamRef)]
+	end,
+	OriginSocket = #{
+		gun_pid => self(),
+		reply_to => ReplyTo,
+		stream_ref => StreamRef,
+		handle_continue_stream_ref => ContinueStreamRef
+	},
+	ProtoOpts = Opts#{
+		stream_ref => StreamRef,
+		tunnel => #{
+			type => Type,
+			info => #{}, %% @todo
+			handshake_event => HandshakeEvent,
+			protocols => Protocols
+		}
+	},
+	Proto = gun_tunnel,
+	{_, ProtoState} = Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts),
+	commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState});
+commands([{active, true}|Tail], State) ->
+	commands(Tail, State).
+
+continue_stream_ref(#tunnel_state{socket=#{handle_continue_stream_ref := ContinueStreamRef}}) ->
+	if
+		is_list(ContinueStreamRef) -> ContinueStreamRef;
+		true -> [ContinueStreamRef]
+	end;
+continue_stream_ref(#tunnel_state{tls_origin_socket=#{handle_continue_stream_ref := ContinueStreamRef}}) ->
+	if
+		is_list(ContinueStreamRef) -> ContinueStreamRef;
+		true -> [ContinueStreamRef]
+	end.
+
+maybe_dereference(#tunnel_state{stream_ref=RealStreamRef,
+		type=connect, protocol=gun_tunnel}, [_StreamRef|Tail]) ->
+	%% @todo Assert that we got the right stream.
+%	StreamRef = if is_list(RealStreamRef) -> lists:last(RealStreamRef); true -> RealStreamRef end,
+	case Tail of
+		[Ref] -> Ref;
+		_ -> Tail
+	end;
+%% We do not dereference when we are the target.
+%% For example when creating a new stream on the origin via tunnel(s).
+maybe_dereference(#tunnel_state{type=connect}, StreamRef) ->
+	StreamRef;
+maybe_dereference(#tunnel_state{type=socks}, StreamRef) ->
+	StreamRef.

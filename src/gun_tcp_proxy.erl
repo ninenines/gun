@@ -24,8 +24,14 @@
 -export([close/1]).
 
 -type socket() :: #{
+	%% The pid of the Gun connection.
+	gun_pid := pid(),
+
+	%% The pid of the process that gets replies for this tunnel.
 	reply_to := pid(),
-	stream_ref := reference() | [reference()]
+
+	%% The full stream reference for this tunnel.
+	stream_ref := gun:stream_ref()
 }.
 
 name() -> tcp_proxy.
@@ -41,10 +47,17 @@ connect(_, _, _, _) ->
 	error(not_implemented).
 
 -spec send(socket(), iodata()) -> ok.
+send(#{gun_pid := GunPid, reply_to := ReplyTo, stream_ref := StreamRef,
+		handle_continue_stream_ref := ContinueStreamRef}, Data) ->
+	GunPid ! {handle_continue, ContinueStreamRef, {data, ReplyTo, StreamRef, nofin, Data}},
+	ok;
 send(#{reply_to := ReplyTo, stream_ref := StreamRef}, Data) ->
 	gen_statem:cast(self(), {data, ReplyTo, StreamRef, nofin, Data}).
 
 -spec setopts(_, _) -> no_return().
+setopts(#{handle_continue_stream_ref := _}, _) ->
+	%% We send messages automatically regardless of active mode.
+	ok;
 setopts(_, _) ->
 	error(not_implemented).
 

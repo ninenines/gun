@@ -31,7 +31,10 @@
 	reply_to := pid(),
 
 	%% The full stream reference for this tunnel.
-	stream_ref := reference() | [reference()]
+	stream_ref := gun:stream_ref(),
+
+	%% The full stream reference for the responsible HTTP/2 stream.
+	handle_continue_stream_ref := gun:stream_ref()
 }.
 
 name() -> tls_proxy_http2_connect.
@@ -47,8 +50,9 @@ connect(_, _, _, _) ->
 	error(not_implemented).
 
 -spec send(socket(), iodata()) -> ok.
-send(#{gun_pid := GunPid, reply_to := ReplyTo, stream_ref := StreamRef}, Data) ->
-	GunPid ! {handle_continue, StreamRef, {data, ReplyTo, StreamRef, nofin, Data}},
+send(S=#{gun_pid := GunPid, reply_to := ReplyTo, stream_ref := DataStreamRef,
+		handle_continue_stream_ref := StreamRef}, Data) ->
+	GunPid ! {handle_continue, StreamRef, {data, ReplyTo, DataStreamRef, nofin, Data}},
 	ok.
 
 -spec setopts(_, _) -> no_return().

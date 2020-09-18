@@ -18,6 +18,7 @@
 -export([handler/1]).
 -export([handler_and_opts/2]).
 -export([negotiated/2]).
+-export([stream_ref/1]).
 
 -spec add_stream_ref(Protocol, undefined | gun:stream_ref())
 	-> Protocol when Protocol :: gun:protocol().
@@ -53,3 +54,7 @@ negotiated({ok, <<"h2">>}, _) -> http2;
 negotiated({ok, <<"http/1.1">>}, _) -> http;
 negotiated({error, protocol_not_negotiated}, [Protocol]) -> Protocol;
 negotiated({error, protocol_not_negotiated}, _) -> http.
+
+-spec stream_ref(gun:protocol()) -> undefined | gun:stream_ref().
+stream_ref({_, ProtocolOpts}) -> maps:get(stream_ref, ProtocolOpts, undefined);
+stream_ref(_) -> undefined.
