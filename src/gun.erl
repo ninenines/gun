@@ -186,6 +186,7 @@
 	origin_port => inet:port_number(),
 
 	%% Non-stream intermediaries (for example SOCKS).
+	%% @todo I think this is not used anymore.
 	intermediaries => [intermediary()]
 }.
 -export_type([tunnel_info/0]).

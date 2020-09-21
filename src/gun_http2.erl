@@ -418,7 +418,6 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 			#tunnel{destination=Destination, info=TunnelInfo0} = Tunnel,
 			#{host := DestHost, port := DestPort} = Destination,
 			TunnelInfo = TunnelInfo0#{
-				transport => maps:get(transport, Destination, tcp),
 				origin_host => DestHost,
 				origin_port => DestPort
 			},
@@ -1040,8 +1039,10 @@ timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, Nam
 
 stream_info(State, StreamRef) when is_reference(StreamRef) ->
 	case get_stream_by_ref(State, StreamRef) of
-		#stream{reply_to=ReplyTo, tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState,
-				info=#{transport := Transport, origin_host := OriginHost, origin_port := OriginPort}}} ->
+		#stream{reply_to=ReplyTo, tunnel=#tunnel{destination=Destination,
+				info=#{origin_host := OriginHost, origin_port := OriginPort},
+				protocol=Proto, protocol_state=ProtoState}} ->
+			Transport = maps:get(transport, Destination, tcp),
 			{ok, #{
 				ref => StreamRef,
 				reply_to => ReplyTo,
@@ -1072,10 +1073,6 @@ stream_info(State, StreamRefList=[StreamRef|Tail]) ->
 		#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState}} ->
 			%% We must return the real StreamRef as seen by the user.
 			%% We therefore set it on return, with the outer layer "winning".
-			%%
-			%% We also add intermediaries which are prepended to the list and
-			%% therefore are ultimately given from outer to inner layer just
-			%% like gun:info/1 intermediaries.
 			case Proto:stream_info(ProtoState, normalize_stream_ref(Tail)) of
 				{ok, undefined} ->
 					{ok, undefined};

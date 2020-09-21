@@ -50,7 +50,7 @@ connect(_, _, _, _) ->
 	error(not_implemented).
 
 -spec send(socket(), iodata()) -> ok.
-send(S=#{gun_pid := GunPid, reply_to := ReplyTo, stream_ref := DataStreamRef,
+send(#{gun_pid := GunPid, reply_to := ReplyTo, stream_ref := DataStreamRef,
 		handle_continue_stream_ref := StreamRef}, Data) ->
 	GunPid ! {handle_continue, StreamRef, {data, ReplyTo, DataStreamRef, nofin, Data}},
 	ok.

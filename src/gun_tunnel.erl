@@ -37,13 +37,14 @@
 
 -record(tunnel_state, {
 	%% Fake socket and transport.
+	%% We accept 'undefined' only to simplify the init code.
 	socket = undefined :: #{
 		gun_pid := pid(),
 		reply_to := pid(),
 		stream_ref := gun:stream_ref(),
 		handle_continue_stream_ref := gun:stream_ref()
-	} | pid(),
-	transport = undefined :: gun_tcp_proxy | gun_tls_proxy,
+	} | pid() | undefined,
+	transport = undefined :: gun_tcp_proxy | gun_tls_proxy | undefined,
 
 	%% The stream_ref from which the stream was created. When
 	%% the tunnel exists as a result of HTTP/2 CONNECT -> HTTP/1.1 CONNECT
@@ -82,7 +83,7 @@
 	%% We keep the new information to provide it in TunnelInfo of
 	%% the new protocol when the switch occurs.
 	protocol_origin = undefined :: undefined
-		| {origin, binary(), binary(), binary(), connect | socks5}
+		| {origin, binary(), inet:hostname() | inet:ip_address(), inet:port_number(), connect | socks5}
 }).
 
 %% Socket is the "origin socket" and Transport the "origin transport".
@@ -116,18 +117,17 @@ init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tun
 		%% We can't initialize the protocol until the TLS handshake has completed.
 		#{handshake_event := HandshakeEvent, protocols := Protocols} ->
 			#{handle_continue_stream_ref := ContinueStreamRef} = OriginSocket,
-		%% @todo FIX THIS!!
-		%	#{
-		%		origin_host := DestHost,
-		%		origin_port := DestPort
-		%	} = TunnelInfo,
+			#{
+				origin_host := DestHost,
+				origin_port := DestPort
+			} = TunnelInfo,
 %% @todo OK so Protocol:init/4 will need to have EvHandler/EvHandlerState!
 %% Otherwise we can't do the TLS events.
 			#{
 				tls_opts := TLSOpts,
 				timeout := TLSTimeout
 			} = HandshakeEvent,
-			{ok, ProxyPid} = gun_tls_proxy:start_link("fake", 12345,% @todo FIX THIS!! DestHost, DestPort,
+			{ok, ProxyPid} = gun_tls_proxy:start_link(DestHost, DestPort,
 				TLSOpts, TLSTimeout, OriginSocket, gun_tls_proxy_http2_connect,
 				{handle_continue, ContinueStreamRef, HandshakeEvent, Protocols}),
 			{tunnel, State#tunnel_state{socket=ProxyPid, transport=gun_tls_proxy,
@@ -199,7 +199,7 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {error, _Reason},
 	{[], EvHandlerState0};
 %% Send the data. This causes TLS to encrypt the data and send it to the inner layer.
 handle_continue(ContinueStreamRef, {data, _ReplyTo, _StreamRef, IsFin, Data},
-		#tunnel_state{socket=Socket, transport=Transport}, _EvHandler, EvHandlerState)
+		#tunnel_state{}, _EvHandler, EvHandlerState)
 		when is_reference(ContinueStreamRef) ->
 	{[{send, IsFin, Data}], EvHandlerState};
 handle_continue(ContinueStreamRef, {tls_proxy, ProxyPid, Data},
@@ -305,7 +305,7 @@ cancel(_State, _StreamRef, _ReplyTo, _EvHandler, _EvHandlerState) ->
 timeout(_State, {cow_http2_machine, _Name}, _TRef) ->
 	todo.
 
-stream_info(State=#tunnel_state{transport=Transport, type=Type,
+stream_info(State=#tunnel_state{type=Type,
 		tunnel_transport=IntermediaryTransport, tunnel_protocol=IntermediaryProtocol,
 		info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}, StreamRef0) ->
 	StreamRef = maybe_dereference(State, StreamRef0),
@@ -350,7 +350,8 @@ commands([{state, ProtoState}|Tail], State) ->
 %% @todo We must pass down the set_cookie commands. Have a commands_queue.
 commands([_SetCookie={set_cookie, _, _, _, _}|Tail], State=#tunnel_state{}) ->
 	commands(Tail, State);
-commands([{send, IsFin, Data}|Tail], State=#tunnel_state{socket=Socket, transport=Transport}) ->
+%% @todo What to do about IsFin?
+commands([{send, _IsFin, Data}|Tail], State=#tunnel_state{socket=Socket, transport=Transport}) ->
 	Transport:send(Socket, Data),
 	commands(Tail, State);
 commands([Origin={origin, _Scheme, _NewHost, _NewPort, _Type}|Tail], State) ->
@@ -450,7 +451,7 @@ continue_stream_ref(#tunnel_state{tls_origin_socket=#{handle_continue_stream_ref
 		true -> [ContinueStreamRef]
 	end.
 
-maybe_dereference(#tunnel_state{stream_ref=RealStreamRef,
+maybe_dereference(#tunnel_state{stream_ref=_RealStreamRef,
 		type=connect, protocol=gun_tunnel}, [_StreamRef|Tail]) ->
 	%% @todo Assert that we got the right stream.
 %	StreamRef = if is_list(RealStreamRef) -> lists:last(RealStreamRef); true -> RealStreamRef end,
