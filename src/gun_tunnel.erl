@@ -273,10 +273,7 @@ request(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0,
 data(State=#tunnel_state{socket=Socket, transport=Transport,
 		stream_ref=TunnelStreamRef0, protocol=Proto, protocol_state=ProtoState0},
 		StreamRef0, ReplyTo, IsFin, Data, EvHandler, EvHandlerState0) ->
-	TunnelStreamRef = if
-		is_list(TunnelStreamRef0) -> lists:last(TunnelStreamRef0);
-		true -> TunnelStreamRef0
-	end,
+	TunnelStreamRef = outer_stream_ref(TunnelStreamRef0),
 	case StreamRef0 of
 		TunnelStreamRef ->
 			ok = Transport:send(Socket, Data),
@@ -367,7 +364,7 @@ commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
 	ContinueStreamRef0 = continue_stream_ref(State),
 	ContinueStreamRef = case Type of
 		socks5 -> ContinueStreamRef0 ++ [make_ref()];
-		connect -> ContinueStreamRef0 ++ [if is_list(StreamRef) -> lists:last(StreamRef); true -> StreamRef end]
+		connect -> ContinueStreamRef0 ++ [lists:last(StreamRef)]
 	end,
 	OriginSocket = #{
 		gun_pid => self(),
@@ -451,17 +448,17 @@ continue_stream_ref(#tunnel_state{tls_origin_socket=#{handle_continue_stream_ref
 		true -> [ContinueStreamRef]
 	end.
 
-maybe_dereference(#tunnel_state{stream_ref=_RealStreamRef,
-		type=connect, protocol=gun_tunnel}, [_StreamRef|Tail]) ->
-	%% @todo Assert that we got the right stream.
-%	StreamRef = if is_list(RealStreamRef) -> lists:last(RealStreamRef); true -> RealStreamRef end,
+maybe_dereference(#tunnel_state{stream_ref=RealStreamRef, type=connect}, [StreamRef|Tail]) ->
+	%% We ensure that the stream_ref is correct.
+	StreamRef = outer_stream_ref(RealStreamRef),
 	case Tail of
 		[Ref] -> Ref;
 		_ -> Tail
 	end;
-%% We do not dereference when we are the target.
-%% For example when creating a new stream on the origin via tunnel(s).
-maybe_dereference(#tunnel_state{type=connect}, StreamRef) ->
-	StreamRef;
 maybe_dereference(#tunnel_state{type=socks5}, StreamRef) ->
+	StreamRef.
+
+outer_stream_ref(StreamRef) when is_list(StreamRef) ->
+	lists:last(StreamRef);
+outer_stream_ref(StreamRef) ->
 	StreamRef.

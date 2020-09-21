@@ -799,14 +799,13 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 %% directly. The 'data' cast contains the tunnel for the StreamRef.
 %% The tunnel is given as the socket and the gun_tls_proxy out_socket
 %% is always a gun_tcp_proxy that sends a 'data' cast.
-request(State, [StreamRef|Tail], ReplyTo, Method, _Host, _Port,
+request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
 		%% @todo We should send an error to the user if the stream isn't ready.
 		Stream=#stream{tunnel=Tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0, info=#{
 				origin_host := OriginHost, origin_port := OriginPort}}} ->
-			%% @todo So the event is probably not giving the right StreamRef?
-			{ProtoState, EvHandlerState} = Proto:request(ProtoState0, normalize_stream_ref(Tail),
+			{ProtoState, EvHandlerState} = Proto:request(ProtoState0, RealStreamRef,
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
 				InitialFlow, EvHandler, EvHandlerState0),
 			{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}}),
@@ -850,9 +849,6 @@ prepare_headers(#http2_state{transport=Transport}, Method, Host0, Port, Path, He
 	},
 	{ok, PseudoHeaders, Headers}.
 
-normalize_stream_ref([StreamRef]) -> StreamRef;
-normalize_stream_ref(StreamRef) -> StreamRef.
-
 %% @todo Make all calls go through this clause.
 data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, Data,
 		EvHandler, EvHandlerState) when is_reference(StreamRef) ->
@@ -876,10 +872,10 @@ data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, 
 			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState}
 	end;
 %% Tunneled data.
-data(State, [StreamRef|Tail], ReplyTo, IsFin, Data, EvHandler, EvHandlerState0) ->
+data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
 		Stream=#stream{tunnel=Tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
-			{ProtoState, EvHandlerState} = Proto:data(ProtoState0, normalize_stream_ref(Tail),
+			{ProtoState, EvHandlerState} = Proto:data(ProtoState0, RealStreamRef,
 				ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
 			{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}}),
 				EvHandlerState};
@@ -994,11 +990,11 @@ connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		authority=Authority, path= <<>>, tunnel=#tunnel{destination=Destination, info=TunnelInfo}},
 	create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream);
 %% Tunneled request.
-connect(State, [StreamRef|Tail], ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow) ->
+connect(State, RealStreamRef=[StreamRef|_], ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow) ->
 	case get_stream_by_ref(State, StreamRef) of
 		%% @todo Should we send an error to the user if the stream isn't ready.
 		Stream=#stream{tunnel=Tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
-			ProtoState = Proto:connect(ProtoState0, normalize_stream_ref(Tail),
+			ProtoState = Proto:connect(ProtoState0, RealStreamRef,
 				ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow),
 			store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}});
 		#stream{tunnel=undefined} ->
@@ -1068,16 +1064,16 @@ stream_info(State, StreamRef) when is_reference(StreamRef) ->
 			{ok, undefined}
 	end;
 %% Tunneled streams.
-stream_info(State, StreamRefList=[StreamRef|Tail]) ->
+stream_info(State, RealStreamRef=[StreamRef|_]) ->
 	case get_stream_by_ref(State, StreamRef) of
 		#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState}} ->
-			%% We must return the real StreamRef as seen by the user.
+			%% We must return the real stream_ref as seen by the user.
 			%% We therefore set it on return, with the outer layer "winning".
-			case Proto:stream_info(ProtoState, normalize_stream_ref(Tail)) of
+			case Proto:stream_info(ProtoState, RealStreamRef) of
 				{ok, undefined} ->
 					{ok, undefined};
 				{ok, Info} ->
-					{ok, Info#{ref => StreamRefList}}
+					{ok, Info#{ref => RealStreamRef}}
 			end;
 		error ->
 			{ok, undefined}
