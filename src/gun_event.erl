@@ -264,7 +264,7 @@
 %% origin_changed.
 
 -type origin_changed_event() :: #{
-	type := connect,
+	type := connect, %% @todo socks?
 	origin_scheme := binary(),
 	origin_host := inet:hostname() | inet:ip_address(),
 	origin_port := inet:port_number()

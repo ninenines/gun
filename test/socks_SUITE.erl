@@ -421,7 +421,7 @@ socks5_tcp_through_h2_connect_tcp_to_tcp_origin(_) ->
 		"a TCP HTTP/2 proxy followed by a Socks5 proxy."),
 	do_socks5_through_h2_connect_proxy(<<"http">>, tcp, <<"http">>, tcp).
 
-do_socks5_through_h2_connect_proxy(OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
+do_socks5_through_h2_connect_proxy(_OriginScheme, OriginTransport, ProxyScheme, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, http),
 	{ok, Proxy1Pid, Proxy1Port} = rfc7540_SUITE:do_proxy_start(ProxyTransport, [
 		{proxy_stream, 1, 200, [], 0, undefined}
@@ -475,17 +475,26 @@ do_socks5_through_h2_connect_proxy(OriginScheme, OriginTransport, ProxyScheme, P
 		reply_to := Self,
 		state := running,
 		tunnel := #{
-			transport := OriginTransport,
+			transport := ProxyTransport,
 			protocol := http,
-			origin_scheme := OriginScheme,
+			%% @todo They're not necessarily the origin. Should be named scheme/host/port.
+			origin_scheme := ProxyScheme,
 			origin_host := "localhost",
-			origin_port := OriginPort
+			origin_port := Proxy2Port
 		}
 	}} = gun:stream_info(ConnPid, StreamRef),
 	{ok, #{
 		ref := ProxiedStreamRef,
 		reply_to := Self,
 		state := running,
+%% @todo Add "authority" when the stream is not a tunnel.
+%		authority := #{
+%			scheme := OriginScheme
+%			transport :=
+%			protocol :=
+%			host :=
+%			port :=
+%		},
 		intermediaries := [#{
 			type := connect,
 			host := "localhost",

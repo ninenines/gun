@@ -53,7 +53,11 @@
 	%% When the tunnel is a 'connect' tunnel we must dereference the
 	%% stream_ref. When it is 'socks' we must not as there was no
 	%% stream involved in creating the tunnel.
-	type = undefined :: connect | socks,
+	type = undefined :: connect | socks5,
+
+	%% Transport and protocol name of the tunnel layer.
+	tunnel_transport = undefined :: tcp | tls,
+	tunnel_protocol = undefined :: http | http2 | socks,
 
 	%% Tunnel information.
 	info = undefined :: gun:tunnel_info(),
@@ -72,7 +76,13 @@
 	%% Protocol module and state of the outer layer. Only initialized
 	%% after the TLS handshake has completed when TLS is involved.
 	protocol = undefined :: module(),
-	protocol_state = undefined :: any()
+	protocol_state = undefined :: any(),
+
+	%% When the protocol is being switched the origin may change.
+	%% We keep the new information to provide it in TunnelInfo of
+	%% the new protocol when the switch occurs.
+	protocol_origin = undefined :: undefined
+		| {origin, binary(), binary(), binary(), connect | socks5}
 }).
 
 %% Socket is the "origin socket" and Transport the "origin transport".
@@ -86,10 +96,13 @@
 init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tunnel := Tunnel}) ->
 	#{
 		type := TunnelType,
+		transport_name := TunnelTransport,
+		protocol_name := TunnelProtocol,
 		info := TunnelInfo
 	} = Tunnel,
-	State = #tunnel_state{stream_ref=StreamRef, type=TunnelType, info=TunnelInfo,
-		opts=maps:without([stream_ref, tunnel], Opts)},
+	State = #tunnel_state{stream_ref=StreamRef, type=TunnelType,
+		tunnel_transport=TunnelTransport, tunnel_protocol=TunnelProtocol,
+		info=TunnelInfo, opts=maps:without([stream_ref, tunnel], Opts)},
 	case Tunnel of
 		%% Initialize the protocol.
 		#{new_protocol := NewProtocol} ->
@@ -246,12 +259,13 @@ headers(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
 	{State#tunnel_state{protocol_state=ProtoState}, EvHandlerState}.
 
 %% We pass the request forward and optionally dereference StreamRef.
-request(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
-		StreamRef0, ReplyTo, Method, Host, Port, Path, Headers, Body,
+request(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0,
+		info=#{origin_host := OriginHost, origin_port := OriginPort}},
+		StreamRef0, ReplyTo, Method, _Host, _Port, Path, Headers, Body,
 		InitialFlow, EvHandler, EvHandlerState0) ->
 	StreamRef = maybe_dereference(State, StreamRef0),
 	{ProtoState, EvHandlerState} = Proto:request(ProtoState0, StreamRef,
-		ReplyTo, Method, Host, Port, Path, Headers, Body,
+		ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
 		InitialFlow, EvHandler, EvHandlerState0),
 	{State#tunnel_state{protocol_state=ProtoState}, EvHandlerState}.
 
@@ -291,10 +305,33 @@ cancel(_State, _StreamRef, _ReplyTo, _EvHandler, _EvHandlerState) ->
 timeout(_State, {cow_http2_machine, _Name}, _TRef) ->
 	todo.
 
-stream_info(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState}, StreamRef0) ->
+stream_info(State=#tunnel_state{transport=Transport, type=Type,
+		tunnel_transport=IntermediaryTransport, tunnel_protocol=IntermediaryProtocol,
+		info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}, StreamRef0) ->
 	StreamRef = maybe_dereference(State, StreamRef0),
-	Proto:stream_info(ProtoState, StreamRef).
+	case Proto:stream_info(ProtoState, StreamRef) of
+		{ok, undefined} ->
+			{ok, undefined};
+		{ok, Info} ->
+			#{
+				host := IntermediateHost,
+				port := IntermediatePort
+			} = TunnelInfo,
+			IntermediaryInfo = #{
+				type => Type,
+				host => IntermediateHost,
+				port => IntermediatePort,
+				transport => IntermediaryTransport,
+				protocol => IntermediaryProtocol
+			},
+			Intermediaries = maps:get(intermediaries, Info, []),
+			{ok, Info#{
+				intermediaries => [IntermediaryInfo|Intermediaries]
+			}}
+	end.
 
+tunneled_name(#tunnel_state{protocol=Proto=gun_tunnel, protocol_state=ProtoState}) ->
+	Proto:tunneled_name(ProtoState);
 tunneled_name(#tunnel_state{protocol=Proto}) ->
 	Proto:name().
 
@@ -316,22 +353,19 @@ commands([_SetCookie={set_cookie, _, _, _, _}|Tail], State=#tunnel_state{}) ->
 commands([{send, IsFin, Data}|Tail], State=#tunnel_state{socket=Socket, transport=Transport}) ->
 	Transport:send(Socket, Data),
 	commands(Tail, State);
-%% @todo How to handle origin changes?
-commands([{origin, _, _NewHost, _NewPort, _Type}|Tail], State) ->
-	commands(Tail, State);
+commands([Origin={origin, _Scheme, _NewHost, _NewPort, _Type}|Tail], State) ->
+	commands(Tail, State#tunnel_state{protocol_origin=Origin});
 commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
-		State=#tunnel_state{stream_ref=TunnelStreamRef, opts=Opts, protocol=CurrentProto}) ->
-	Type = case CurrentProto:name() of
-		socks -> socks;
-		_ -> connect
-	end,
+		State=#tunnel_state{transport=Transport, stream_ref=TunnelStreamRef,
+		info=#{origin_host := Host, origin_port := Port}, opts=Opts, protocol=CurrentProto,
+		protocol_origin={origin, _Scheme, OriginHost, OriginPort, Type}}) ->
 	StreamRef = case Type of
-		socks -> TunnelStreamRef;
+		socks5 -> TunnelStreamRef;
 		connect -> gun_protocols:stream_ref(NewProtocol)
 	end,
 	ContinueStreamRef0 = continue_stream_ref(State),
 	ContinueStreamRef = case Type of
-		socks -> ContinueStreamRef0 ++ [make_ref()];
+		socks5 -> ContinueStreamRef0 ++ [make_ref()];
 		connect -> ContinueStreamRef0 ++ [if is_list(StreamRef) -> lists:last(StreamRef); true -> StreamRef end]
 	end,
 	OriginSocket = #{
@@ -344,7 +378,17 @@ commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
 		stream_ref => StreamRef,
 		tunnel => #{
 			type => Type,
-			info => #{}, %% @todo
+			transport_name => case Transport of
+				gun_tcp_proxy -> tcp;
+				gun_tls_proxy -> tls
+			end,
+			protocol_name => CurrentProto:name(),
+			info => #{
+				host => Host,
+				port => Port,
+				origin_host => OriginHost,
+				origin_port => OriginPort
+			},
 			new_protocol => NewProtocol
 		}
 	},
@@ -353,17 +397,15 @@ commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
 %% @todo	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 	commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState});
 commands([{tls_handshake, HandshakeEvent, Protocols, ReplyTo}|Tail],
-		State=#tunnel_state{opts=Opts, protocol=CurrentProto}) ->
-	Type = case CurrentProto:name() of
-		socks -> socks;
-		_ -> connect
-	end,
+		State=#tunnel_state{transport=Transport,
+		info=#{origin_host := Host, origin_port := Port}, opts=Opts, protocol=CurrentProto,
+		protocol_origin={origin, _Scheme, OriginHost, OriginPort, Type}}) ->
 	#{
 		stream_ref := StreamRef
 	} = HandshakeEvent,
 	ContinueStreamRef0 = continue_stream_ref(State),
 	ContinueStreamRef = case Type of
-		socks -> ContinueStreamRef0 ++ [make_ref()];
+		socks5 -> ContinueStreamRef0 ++ [make_ref()];
 		connect -> ContinueStreamRef0 ++ [lists:last(StreamRef)]
 	end,
 	OriginSocket = #{
@@ -376,7 +418,17 @@ commands([{tls_handshake, HandshakeEvent, Protocols, ReplyTo}|Tail],
 		stream_ref => StreamRef,
 		tunnel => #{
 			type => Type,
-			info => #{}, %% @todo
+			transport_name => case Transport of
+				gun_tcp_proxy -> tcp;
+				gun_tls_proxy -> tls
+			end,
+			protocol_name => CurrentProto:name(),
+			info => #{
+				host => Host,
+				port => Port,
+				origin_host => OriginHost,
+				origin_port => OriginPort
+			},
 			handshake_event => HandshakeEvent,
 			protocols => Protocols
 		}
@@ -410,5 +462,5 @@ maybe_dereference(#tunnel_state{stream_ref=RealStreamRef,
 %% For example when creating a new stream on the origin via tunnel(s).
 maybe_dereference(#tunnel_state{type=connect}, StreamRef) ->
 	StreamRef;
-maybe_dereference(#tunnel_state{type=socks}, StreamRef) ->
+maybe_dereference(#tunnel_state{type=socks5}, StreamRef) ->
 	StreamRef.

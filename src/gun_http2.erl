@@ -391,7 +391,8 @@ data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 	{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState}.
 
 %% @todo Make separate functions for inform/connect/normal.
-headers_frame(State0=#http2_state{opts=Opts, content_handlers=Handlers0, commands_queue=Commands},
+headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
+		content_handlers=Handlers0, commands_queue=Commands},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
 		EvHandler, EvHandlerState0) ->
 	Stream = get_stream_by_id(State0, StreamID),
@@ -463,6 +464,8 @@ headers_frame(State0=#http2_state{opts=Opts, content_handlers=Handlers0, command
 						stream_ref => RealStreamRef,
 						tunnel => #{
 							type => connect,
+							transport_name => Transport:name(),
+							protocol_name => http2,
 							info => TunnelInfo,
 							handshake_event => HandshakeEvent,
 							protocols => Protocols
@@ -474,6 +477,8 @@ headers_frame(State0=#http2_state{opts=Opts, content_handlers=Handlers0, command
 						stream_ref => RealStreamRef,
 						tunnel => #{
 							type => connect,
+							transport_name => Transport:name(),
+							protocol_name => http2,
 							info => TunnelInfo,
 							new_protocol => NewProtocol
 						}
@@ -1062,10 +1067,9 @@ stream_info(State, StreamRef) when is_reference(StreamRef) ->
 			{ok, undefined}
 	end;
 %% Tunneled streams.
-stream_info(State=#http2_state{transport=Transport}, StreamRefList=[StreamRef|Tail]) ->
+stream_info(State, StreamRefList=[StreamRef|Tail]) ->
 	case get_stream_by_ref(State, StreamRef) of
-		#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState,
-				info=TunnelInfo=#{host := TunnelHost, port := TunnelPort}}} ->
+		#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState}} ->
 			%% We must return the real StreamRef as seen by the user.
 			%% We therefore set it on return, with the outer layer "winning".
 			%%
@@ -1076,23 +1080,7 @@ stream_info(State=#http2_state{transport=Transport}, StreamRefList=[StreamRef|Ta
 				{ok, undefined} ->
 					{ok, undefined};
 				{ok, Info} ->
-					%% @todo Double check intermediaries.
-					Intermediaries1 = maps:get(intermediaries, TunnelInfo, []),
-					Intermediaries2 = maps:get(intermediaries, Info, []),
-					{ok, Info#{
-						ref => StreamRefList,
-						intermediaries => [#{
-							type => connect,
-							host => TunnelHost,
-							port => TunnelPort,
-							transport => case Transport:name() of
-								tcp_proxy -> tcp;
-								tls_proxy -> tls;
-								TransportName -> TransportName
-							end,
-							protocol => http2
-						}|Intermediaries1 ++ Intermediaries2]
-					}}
+					{ok, Info#{ref => StreamRefList}}
 			end;
 		error ->
 			{ok, undefined}
