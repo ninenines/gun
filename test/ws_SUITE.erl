@@ -70,6 +70,17 @@ error_http10_upgrade(Config) ->
 		error(timeout)
 	end.
 
+headers_normalized_upgrade(Config) ->
+	doc("Headers passed to ws_upgrade are normalized before being used."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", #{
+		atom_header_name => <<"value">>,
+		"string_header_name" => <<"value">>
+	}),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 error_http_request(Config) ->
 	doc("Ensure that requests are rejected while using Websocket."),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
