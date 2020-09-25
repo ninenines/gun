@@ -141,6 +141,7 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{ref=StreamRef, reply_to=ReplyTo, op
 	case Opts of
 		#{transport := tls} ->
 			HandshakeEvent0 = #{
+				reply_to => ReplyTo,
 				tls_opts => maps:get(tls_opts, Opts, []),
 				timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 			},

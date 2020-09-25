@@ -457,7 +457,10 @@ info(ServerPid) ->
 			<<"http">> -> tcp;
 			<<"https">> -> tls
 		end,
-		origin_scheme => OriginScheme,
+		origin_scheme => case Protocol of
+			gun_raw -> undefined;
+			_ -> OriginScheme
+		end,
 		origin_host => OriginHost,
 		origin_port => OriginPort,
 		intermediaries => intermediaries_info(Intermediaries, []),
@@ -1096,7 +1099,11 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
 	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
 		{ok, TLSSocket, NewProtocol0, State} ->
-			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+			NewProtocol1 = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+			NewProtocol = case NewProtocol1 of
+				{NewProtocolName, NewProtocolOpts} -> {NewProtocolName, NewProtocolOpts#{tunnel_transport => tls}};
+				NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
+			end,
 			Protocol = gun_protocols:handler(NewProtocol),
 			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 			commands([
@@ -1127,7 +1134,11 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, P
 		State0=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	NewProtocol0 = gun_protocols:negotiated(Negotiated, Protocols),
 	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
-	NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+	NewProtocol1 = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+	NewProtocol = case NewProtocol1 of
+		{NewProtocolName, NewProtocolOpts} -> {NewProtocolName, NewProtocolOpts#{tunnel_transport => tls}};
+		NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
+	end,
 	Protocol = gun_protocols:handler(NewProtocol),
 	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
@@ -1218,7 +1229,8 @@ connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers0, InitialFlo
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Headers, State} = add_cookie_header(Path, Headers0, State0),
 	{ProtoState2, EvHandlerState} = Protocol:headers(ProtoState,
-		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
+		dereference_stream_ref(StreamRef, State), ReplyTo,
+		Method, Host, Port, Path, Headers,
 		InitialFlow, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, InitialFlow},
@@ -1227,14 +1239,16 @@ connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, Init
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Headers, State} = add_cookie_header(Path, Headers0, State0),
 	{ProtoState2, EvHandlerState} = Protocol:request(ProtoState,
-		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
+		dereference_stream_ref(StreamRef, State), ReplyTo,
+		Method, Host, Port, Path, Headers, Body,
 		InitialFlow, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState}) ->
 	%% @todo No events are currently handled for the CONNECT request?
-	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo,
+	ProtoState2 = Protocol:connect(ProtoState,
+		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Destination, #{host => Host, port => Port},
 		Headers, InitialFlow),
 	{keep_state, State#state{protocol_state=ProtoState2}};
@@ -1302,6 +1316,24 @@ add_cookie_header(PathWithQs, Headers0, State=#state{
 	end,
 	{Headers, State#state{cookie_store=Store}}.
 
+%% When the origin is using raw we do not dereference the stream_ref
+%% because it expects the full stream_ref to function (there's no
+%% other stream involved for this connection).
+dereference_stream_ref(StreamRef, #state{protocol=gun_raw}) ->
+	StreamRef;
+dereference_stream_ref(StreamRef, #state{intermediaries=Intermediaries}) ->
+	%% @todo It would be better to validate with the intermediary's stream_refs.
+	case length([http || #{protocol := http} <- Intermediaries]) of
+		0 ->
+			StreamRef;
+		N ->
+			{_, Tail} = lists:split(N, StreamRef),
+			case Tail of
+				[SR] -> SR;
+				_ -> Tail
+			end
+	end.
+
 %% Switch to the graceful connection close state.
 closing(State=#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason) ->
@@ -1329,7 +1361,8 @@ handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{ProtoState2, EvHandlerState} = Protocol:data(ProtoState,
-		StreamRef, ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
+		dereference_stream_ref(StreamRef, State),
+		ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 handle_common_connected(info, {timeout, TRef, Name}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
@@ -1364,8 +1397,9 @@ handle_common_connected_no_input(info,
 		Msg={gun_tls_proxy, _, _, {handle_continue, StreamRef, _, _}}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:handle_continue(StreamRef, Msg,
-		ProtoState, EvHandler, EvHandlerState0),
+	{Commands, EvHandlerState} = Protocol:handle_continue(
+		dereference_stream_ref(StreamRef, State0),
+		Msg, ProtoState, EvHandler, EvHandlerState0),
 	case commands(Commands, State0#state{event_handler_state=EvHandlerState}) of
 		{keep_state, State} ->
 			{keep_state, active(State)};
@@ -1390,8 +1424,9 @@ handle_common_connected_no_input(info,
 handle_common_connected_no_input(info, {handle_continue, StreamRef, Msg}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:handle_continue(StreamRef, Msg,
-		ProtoState, EvHandler, EvHandlerState0),
+	{Commands, EvHandlerState} = Protocol:handle_continue(
+		dereference_stream_ref(StreamRef, State0),
+		Msg, ProtoState, EvHandler, EvHandlerState0),
 	case commands(Commands, State0#state{event_handler_state=EvHandlerState}) of
 		{keep_state, State} ->
 			{keep_state, active(State)};
@@ -1426,10 +1461,92 @@ handle_common_connected_no_input(cast, {cancel, ReplyTo, StreamRef}, _,
 		StreamRef, ReplyTo, EvHandler, EvHandlerState0),
 	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
 handle_common_connected_no_input({call, From}, {stream_info, StreamRef}, _,
-		#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	{keep_state_and_data, {reply, From, Protocol:stream_info(ProtoState, StreamRef)}};
+		State=#state{intermediaries=Intermediaries0, protocol=Protocol, protocol_state=ProtoState}) ->
+	Intermediaries = [I || I=#{protocol := http} <- Intermediaries0],
+	{keep_state_and_data, {reply, From,
+		if
+			%% The stream_ref refers to an intermediary.
+			%% @todo This is probably wrong.
+			length(StreamRef) =< length(Intermediaries) ->
+				Intermediary = lists:nth(length(StreamRef), lists:reverse(Intermediaries)),
+				{Intermediaries1, Tail} = lists:splitwith(
+					fun(Int) -> Int =/= Intermediary end,
+					lists:reverse(Intermediaries0)),
+				Tunnel = tunnel_info_from_intermediaries(State, Tail),
+				{ok, #{
+					ref => StreamRef,
+					reply_to => undefined, %% @todo
+					state => running,
+					intermediaries => intermediaries_info(lists:reverse(Intermediaries1), []),
+					tunnel => Tunnel
+				}};
+			is_reference(StreamRef), Intermediaries =/= [] ->
+				%% We take all intermediaries up to the first CONNECT intermediary.
+				{Intermediaries1, Tail} = lists:splitwith(
+					fun(#{protocol := P}) -> P =:= socks end,
+					lists:reverse(Intermediaries0)),
+				Tunnel = tunnel_info_from_intermediaries(State, Tail),
+				{ok, #{
+					ref => StreamRef,
+					reply_to => undefined, %% @todo
+					state => running,
+					intermediaries => intermediaries_info(lists:reverse(Intermediaries1), []),
+					tunnel => Tunnel
+				}};
+			true ->
+				{ok, Info0} = Protocol:stream_info(ProtoState, dereference_stream_ref(StreamRef, State)),
+				Info = Info0#{ref => StreamRef},
+				case Intermediaries0 of
+					[] ->
+						{ok, Info};
+					_ ->
+						Tail = maps:get(intermediaries, Info, []),
+						{ok, Info#{
+							intermediaries => intermediaries_info(Intermediaries0, []) ++ Tail
+						}}
+				end
+		end
+	}};
 handle_common_connected_no_input(Type, Event, StateName, State) ->
 	handle_common(Type, Event, StateName, State).
+
+tunnel_info_from_intermediaries(State, Tail) ->
+	case Tail of
+		%% If the next endpoint is an intermediary take its infos.
+		[_, Intermediary|_] ->
+			#{
+				host := IntermediaryHost,
+				port := IntermediaryPort,
+				transport := IntermediaryTransport,
+				protocol := IntermediaryProtocol
+			} = Intermediary,
+			#{
+				transport => IntermediaryTransport,
+				protocol => IntermediaryProtocol,
+				origin_scheme => case IntermediaryTransport of
+					tcp -> <<"http">>;
+					tls -> <<"https">>
+				end,
+				origin_host => IntermediaryHost,
+				origin_port => IntermediaryPort
+			};
+		%% Otherwise take the infos from the state.
+		_ ->
+			tunnel_info_from_state(State)
+	end.
+
+tunnel_info_from_state(#state{origin_scheme=OriginScheme,
+		origin_host=OriginHost, origin_port=OriginPort, protocol=Proto}) ->
+	#{
+		transport => case OriginScheme of
+			<<"http">> -> tcp;
+			<<"https">> -> tls
+		end,
+		protocol => Proto:name(),
+		origin_scheme => OriginScheme,
+		origin_host => OriginHost,
+		origin_port => OriginPort
+	}.
 
 %% Common events.
 handle_common(cast, {set_owner, CurrentOwner, NewOwner}, _,
@@ -1544,7 +1661,7 @@ commands([{set_cookie, Authority, PathWithQs, _, Headers}|Tail], State=#state{
 %% the transport and/or protocol in order to keep track
 %% of the intermediaries properly.
 commands([{origin, Scheme, Host, Port, Type}|Tail],
-		State=#state{transport=Transport, protocol=Protocol,
+		State=#state{protocol=Protocol, origin_scheme=IntermediateScheme,
 			origin_host=IntermediateHost, origin_port=IntermediatePort, intermediaries=Intermediaries,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState = EvHandler:origin_changed(#{
@@ -1557,7 +1674,10 @@ commands([{origin, Scheme, Host, Port, Type}|Tail],
 		type => Type,
 		host => IntermediateHost,
 		port => IntermediatePort,
-		transport => Transport:name(),
+		transport => case IntermediateScheme of
+			<<"http">> -> tcp;
+			<<"https">> -> tls
+		end,
 		protocol => Protocol:name()
 	},
 	commands(Tail, State#state{origin_scheme=Scheme,
@@ -1577,7 +1697,11 @@ commands([{switch_transport, Transport, Socket}|Tail], State=#state{
 commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
 		opts=Opts, socket=Socket, transport=Transport,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
+	{Protocol, ProtoOpts0} = gun_protocols:handler_and_opts(NewProtocol, Opts),
+	ProtoOpts = case ProtoOpts0 of
+		#{tunnel_transport := _} -> ProtoOpts0;
+		_ -> ProtoOpts0#{tunnel_transport => tcp}
+	end,
 	{StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),
 	EvHandlerState = EvHandler:protocol_changed(#{protocol => Protocol:name()}, EvHandlerState0),
 	%% We cancel the existing keepalive and, depending on the protocol,

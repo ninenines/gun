@@ -90,6 +90,10 @@
 	%% inside an HTTP/2 CONNECT stream.
 	base_stream_ref = undefined :: undefined | gun:stream_ref(),
 
+	%% Real transport for the HTTP/2 layer, defined when we are
+	%% in a non-HTTP/2 tunnel.
+	tunnel_transport = undefined :: undefined | tcp | tls,
+
 	%% Current status of the connection. We use this to ensure we are
 	%% not sending the GOAWAY frame more than once, and to validate
 	%% the server connection preface.
@@ -172,10 +176,11 @@ init(_ReplyTo, Socket, Transport, Opts0) ->
 	{ok, Preface, HTTP2Machine} = cow_http2_machine:init(client, Opts),
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	BaseStreamRef = maps:get(stream_ref, Opts, undefined),
+	TunnelTransport = maps:get(tunnel_transport, Opts, undefined),
 	%% @todo Better validate the preface being received.
 	State = #http2_state{socket=Socket, transport=Transport, opts=Opts,
-		base_stream_ref=BaseStreamRef, content_handlers=Handlers,
-		http2_machine=HTTP2Machine},
+		base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
+		content_handlers=Handlers, http2_machine=HTTP2Machine},
 	Transport:send(Socket, Preface),
 	{connected, State}.
 
@@ -350,7 +355,10 @@ tunnel_commands([SetCookie={set_cookie, _, _, _, _}|Tail], Stream, State=#http2_
 	tunnel_commands(Tail, Stream, State#http2_state{commands_queue=[SetCookie|Queue]}).
 
 continue_stream_ref(#http2_state{socket=#{handle_continue_stream_ref := ContinueStreamRef}}, StreamRef) ->
-	ContinueStreamRef ++ [StreamRef];
+	case ContinueStreamRef of
+		[_|_] -> ContinueStreamRef ++ [StreamRef];
+		_ -> [ContinueStreamRef|StreamRef]
+	end;
 continue_stream_ref(State, StreamRef) ->
 	stream_ref(State, StreamRef).
 
@@ -391,8 +399,8 @@ data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 	{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState}.
 
 %% @todo Make separate functions for inform/connect/normal.
-headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
-		content_handlers=Handlers0, commands_queue=Commands},
+headers_frame(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
+		tunnel_transport=TunnelTransport, content_handlers=Handlers0, commands_queue=Commands},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
 		EvHandler, EvHandlerState0) ->
 	Stream = get_stream_by_id(State0, StreamID),
@@ -463,7 +471,10 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 						stream_ref => RealStreamRef,
 						tunnel => #{
 							type => connect,
-							transport_name => Transport:name(),
+							transport_name => case TunnelTransport of
+								undefined -> Transport:name();
+								_ -> TunnelTransport
+							end,
 							protocol_name => http2,
 							info => TunnelInfo,
 							handshake_event => HandshakeEvent,
@@ -476,7 +487,10 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 						stream_ref => RealStreamRef,
 						tunnel => #{
 							type => connect,
-							transport_name => Transport:name(),
+							transport_name => case TunnelTransport of
+								undefined -> Transport:name();
+								_ -> TunnelTransport
+							end,
 							protocol_name => http2,
 							info => TunnelInfo,
 							new_protocol => NewProtocol
@@ -1045,7 +1059,7 @@ stream_info(State, StreamRef) when is_reference(StreamRef) ->
 				state => running,
 				tunnel => #{
 					transport => Transport,
-					protocol => Proto:tunneled_name(ProtoState),
+					protocol => Proto:tunneled_name(ProtoState, true),
 					origin_scheme => case Transport of
 						tcp -> <<"http">>;
 						tls -> <<"https">>

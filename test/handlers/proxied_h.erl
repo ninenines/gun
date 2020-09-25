@@ -4,8 +4,8 @@
 
 -export([init/2]).
 
-init(Req, State) ->
-	{ok, cowboy_req:reply(200,
-		#{<<"content-type">> => <<"text/plain">>},
-		<<"TODO">>,
-		Req), State}.
+-spec init(cowboy_req:req(), _) -> no_return().
+init(Req, _) ->
+	_ = cowboy_req:stream_reply(200, #{<<"content-type">> => <<"text/plain">>}, Req),
+	%% We never return to allow querying the stream_info.
+	receive after infinity -> ok end.

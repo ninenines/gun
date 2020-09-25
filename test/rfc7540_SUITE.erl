@@ -632,7 +632,7 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 		{up, OriginProtocol} = gun:await(ConnPid, StreamRef),
 		ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
-		timer:sleep(1000),
+		timer:sleep(1000), %% @todo Why?
 		{response, nofin, 200, _} = gun:await(ConnPid, ProxiedStreamRef),
 		%% We can create more requests on the proxy as well.
 		ProxyStreamRef = gun:get(ConnPid, "/"),

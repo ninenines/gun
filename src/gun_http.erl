@@ -557,6 +557,7 @@ headers(State=#http_state{opts=Opts, out=head},
 	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo,
 		Method, Authority, Path, InitialFlow), EvHandlerState}.
 
+%% @todo I don't think this clause is hit anymore. Same in other related callbacks.
 request(State, StreamRef, ReplyTo, Method, Host, Port,
 		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState)
 		when is_list(StreamRef) ->
