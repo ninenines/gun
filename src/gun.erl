@@ -1176,11 +1176,17 @@ connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, Init
 		State0=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Headers, State} = add_cookie_header(Path, Headers0, State0),
-	{ProtoState2, EvHandlerState} = Protocol:request(ProtoState,
-		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
-		InitialFlow, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+	case Protocol:check_max_concurrent_streams(ProtoState) of
+		true ->
+			{Headers, State} = add_cookie_header(Path, Headers0, State0),
+			{ProtoState2, EvHandlerState} = Protocol:request(ProtoState,
+			StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
+			InitialFlow, EvHandler, EvHandlerState0),
+			{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+		false ->
+			ReplyTo ! {gun_error, self(), {stream_error, max_concurrent_streams}},
+			keep_state_and_data
+	end;
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	ProtoState2 = Protocol:connect(ProtoState, StreamRef, ReplyTo, Destination, Headers, InitialFlow),

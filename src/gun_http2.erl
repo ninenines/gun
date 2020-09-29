@@ -33,6 +33,7 @@
 -export([timeout/3]).
 -export([stream_info/2]).
 -export([down/1]).
+-export([check_max_concurrent_streams/1]).
 
 -record(stream, {
 	id = undefined :: cow_http2:streamid(),
@@ -784,6 +785,11 @@ stream_info(State, StreamRef) ->
 
 down(#http2_state{stream_refs=Refs}) ->
 	maps:keys(Refs).
+
+check_max_concurrent_streams(#http2_state{streams=Streams, opts=#{max_concurrent_streams := MaxConcurrentStreams}}) ->
+	maps:size(Streams) < MaxConcurrentStreams;
+check_max_concurrent_streams(_) ->
+	true.
 
 connection_error(#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine, streams=Streams},
