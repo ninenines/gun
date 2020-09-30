@@ -423,7 +423,7 @@ info(ServerPid) ->
 		origin_port=OriginPort,
 		intermediaries=Intermediaries,
 		cookie_store=CookieStore
-	}} = sys:get_state(ServerPid),
+	} = State } = sys:get_state(ServerPid),
 	Info0 = #{
 		owner => Owner,
 		socket => Socket,
@@ -454,6 +454,12 @@ info(ServerPid) ->
 	end,
 	case Protocol of
 		undefined -> Info;
+		gun_http2 ->
+			RemoteSettings = gun_http2:get_remote_settings(State#state.protocol_state),
+			Info#{
+				protocol => Protocol:name(),
+				http2 => #{remote_settings => RemoteSettings}
+			};
 		_ -> Info#{protocol => Protocol:name()}
 	end.
 
