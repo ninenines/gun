@@ -33,6 +33,7 @@
 -export([timeout/3]).
 -export([stream_info/2]).
 -export([down/1]).
+-export([get_remote_settings/1]).
 
 -record(stream, {
 	id = undefined :: cow_http2:streamid(),
@@ -790,6 +791,9 @@ stream_info(State, StreamRef) ->
 
 down(#http2_state{stream_refs=Refs}) ->
 	maps:keys(Refs).
+
+get_remote_settings(#http2_state{http2_machine=HTTP2Machine}) ->
+	cow_http2_machine:get_remote_settings(HTTP2Machine).
 
 connection_error(#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine, streams=Streams},
