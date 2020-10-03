@@ -1494,16 +1494,20 @@ handle_common_connected_no_input({call, From}, {stream_info, StreamRef}, _,
 					tunnel => Tunnel
 				}};
 			true ->
-				{ok, Info0} = Protocol:stream_info(ProtoState, dereference_stream_ref(StreamRef, State)),
-				Info = Info0#{ref => StreamRef},
-				case Intermediaries0 of
-					[] ->
-						{ok, Info};
-					_ ->
-						Tail = maps:get(intermediaries, Info, []),
-						{ok, Info#{
-							intermediaries => intermediaries_info(Intermediaries0, []) ++ Tail
-						}}
+				case Protocol:stream_info(ProtoState, dereference_stream_ref(StreamRef, State)) of
+					{ok, undefined} ->
+						{ok, undefined};
+					{ok, Info0} ->
+						Info = Info0#{ref => StreamRef},
+						case Intermediaries0 of
+							[] ->
+								{ok, Info};
+							_ ->
+								Tail = maps:get(intermediaries, Info, []),
+								{ok, Info#{
+									intermediaries => intermediaries_info(Intermediaries0, []) ++ Tail
+								}}
+						end
 				end
 		end
 	}};

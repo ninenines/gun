@@ -95,16 +95,6 @@ do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
 			inet:setopts(OriginSocket, [{active, true}]),
 			do_proxy_loop(Transport, ClientSocket, OriginSocket);
 		true ->
-			%% We send a 501 to the subsequent request.
-			{ok, _} = case Transport of
-				gun_tcp ->
-					gen_tcp:recv(ClientSocket, 0, 1000);
-				gun_tls ->
-					ssl:recv(ClientSocket, 0, 1000)
-			end,
-			ok = Transport:send(ClientSocket, <<
-				"HTTP/1.1 501 Not Implemented\r\n"
-				"content-length: 0\r\n\r\n">>),
 			timer:sleep(2000)
 	end.
 
@@ -171,7 +161,7 @@ do_connect_http(OriginScheme, OriginTransport, ProxyTransport) ->
 	%% @todo Do we still need these handshake_completed messages?
 	handshake_completed = receive_from(OriginPid),
 	{up, http} = gun:await(ConnPid, StreamRef),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
@@ -226,7 +216,7 @@ do_connect_h2(OriginScheme, OriginTransport, ProxyTransport) ->
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, http2} = gun:await(ConnPid, StreamRef),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
 	<<_:24, 1:8, _/bits>> = receive_from(OriginPid),
 	#{
 		transport := OriginTransport,
@@ -282,7 +272,7 @@ do_connect_through_multiple_proxies(OriginScheme, OriginTransport, ProxiesTransp
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
 	handshake_completed = receive_from(OriginPid),
 	{up, http} = gun:await(ConnPid, StreamRef2),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef2}),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority2/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
@@ -323,7 +313,7 @@ connect_delay(_) ->
 	{response, fin, 201, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, http} = gun:await(ConnPid, StreamRef),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
@@ -358,7 +348,7 @@ connect_response_201(_) ->
 	{response, fin, 201, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, http} = gun:await(ConnPid, StreamRef),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
@@ -405,8 +395,9 @@ do_connect_failure(Status) ->
 	}),
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
 	{response, fin, Status, Headers} = gun:await(ConnPid, StreamRef),
-	FailedStreamRef = gun:get(ConnPid, "/proxied"),
-	{response, fin, 501, _} = gun:await(ConnPid, FailedStreamRef),
+	%% We cannot do a request because the StreamRef is not a tunnel.
+	FailedStreamRef = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
+	{error, {stream_error, {badstate, _}}} = gun:await(ConnPid, FailedStreamRef),
 	#{
 		transport := tcp,
 		protocol := http,
@@ -500,7 +491,7 @@ connect_response_ignore_transfer_encoding(_) ->
 	{response, fin, 200, Headers} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, http} = gun:await(ConnPid, StreamRef),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
@@ -523,7 +514,7 @@ connect_response_ignore_content_length(_) ->
 	{response, fin, 200, Headers} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, http} = gun:await(ConnPid, StreamRef),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],

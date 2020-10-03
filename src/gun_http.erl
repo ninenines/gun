@@ -540,13 +540,11 @@ keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}, _, Ev
 keepalive(State, _, EvHandlerState) ->
 	{State, EvHandlerState}.
 
-headers(State, StreamRef, ReplyTo, Method, Host, Port,
-		Path, Headers, InitialFlow, EvHandler, EvHandlerState)
+headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, EvHandlerState)
 		when is_list(StreamRef) ->
-	%% Because we switch protocol we may receive a StreamRef as a list.
-	%% But we are always the final StreamRef as HTTP/1.1.
-	headers(State, lists:last(StreamRef), ReplyTo, Method, Host, Port,
-		Path, Headers, InitialFlow, EvHandler, EvHandlerState);
+	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
+		{badstate, "The stream is not a tunnel."}},
+	{State, EvHandlerState};
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
 		InitialFlow0, EvHandler, EvHandlerState0) ->
@@ -557,14 +555,11 @@ headers(State=#http_state{opts=Opts, out=head},
 	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo,
 		Method, Authority, Path, InitialFlow), EvHandlerState}.
 
-%% @todo I don't think this clause is hit anymore. Same in other related callbacks.
-request(State, StreamRef, ReplyTo, Method, Host, Port,
-		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState)
+request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, _, EvHandlerState)
 		when is_list(StreamRef) ->
-	%% Because we switch protocol we may receive a StreamRef as a list.
-	%% But we are always the final StreamRef as HTTP/1.1.
-	request(State, lists:last(StreamRef), ReplyTo, Method, Host, Port,
-		Path, Headers, Body, InitialFlow, EvHandler, EvHandlerState);
+	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
+		{badstate, "The stream is not a tunnel."}},
+	{State, EvHandlerState};
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
 		InitialFlow0, EvHandler, EvHandlerState0) ->
@@ -652,11 +647,6 @@ transform_header_names(#http_state{opts=Opts}, Headers) ->
 		Fun -> lists:keymap(Fun, 1, Headers)
 	end.
 
-data(State, StreamRef, ReplyTo, IsFin, Data, EvHandler, EvHandlerState)
-		when is_list(StreamRef) ->
-	%% Because we switch protocol we may receive a StreamRef as a list.
-	%% But we are always the final StreamRef as HTTP/1.1.
-	data(State, lists:last(StreamRef), ReplyTo, IsFin, Data, EvHandler, EvHandlerState);
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _, _, EvHandlerState) ->
 	{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
@@ -712,11 +702,11 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
 	end.
 
-connect(State, StreamRef, ReplyTo, Destination, TunnelInfo, Headers, InitialFlow)
+connect(State, StreamRef, ReplyTo, _, _, _, _)
 		when is_list(StreamRef) ->
-	%% Because we switch protocol we may receive a StreamRef as a list.
-	%% But we are always the final StreamRef as HTTP/1.1.
-	connect(State, lists:last(StreamRef), ReplyTo, Destination, TunnelInfo, Headers, InitialFlow);
+	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
+		{badstate, "The stream is not a tunnel."}},
+	State;
 connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _) when Streams =/= [] ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}},
@@ -753,11 +743,6 @@ connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version
 	new_stream(State, {connect, StreamRef, Destination}, ReplyTo,
 		<<"CONNECT">>, Authority, <<>>, InitialFlow).
 
-cancel(State, StreamRef, ReplyTo, EvHandler, EvHandlerState)
-		when is_list(StreamRef) ->
-	%% Because we switch protocol we may receive a StreamRef as a list.
-	%% But we are always the final StreamRef as HTTP/1.1.
-	cancel(State, lists:last(StreamRef), ReplyTo, EvHandler, EvHandlerState);
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
 cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 	case is_stream(State0, StreamRef) of
@@ -774,11 +759,6 @@ cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 			{error_stream_not_found(State0, StreamRef, ReplyTo), EvHandlerState0}
 	end.
 
-stream_info(State, StreamRef)
-		when is_list(StreamRef) ->
-	%% Because we switch protocol we may receive a StreamRef as a list.
-	%% But we are always the final StreamRef as HTTP/1.1.
-	stream_info(State, lists:last(StreamRef));
 stream_info(#http_state{streams=Streams}, StreamRef) ->
 	case lists:keyfind(StreamRef, #stream.ref, Streams) of
 		#stream{reply_to=ReplyTo, is_alive=IsAlive} ->

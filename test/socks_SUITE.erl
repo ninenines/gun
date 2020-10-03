@@ -390,7 +390,7 @@ do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) -
 	{connect, <<"localhost">>, OriginPort} = receive_from(Proxy2Pid),
 	handshake_completed = receive_from(OriginPid),
 	Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
-	_ = gun:get(ConnPid, "/proxied"),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
 	Data = receive_from(OriginPid),
 	Lines = binary:split(Data, <<"\r\n">>, [global]),
 	[<<"host: ", Authority2/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
@@ -476,7 +476,7 @@ do_socks5_through_h2_connect_proxy(_OriginScheme, OriginTransport, ProxyScheme, 
 		state := running,
 		tunnel := #{
 			transport := ProxyTransport,
-			protocol := http,
+			protocol := socks,
 			%% @todo They're not necessarily the origin. Should be named scheme/host/port.
 			origin_scheme := ProxyScheme,
 			origin_host := "localhost",
