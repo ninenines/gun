@@ -191,7 +191,10 @@
 }.
 -export_type([tunnel_info/0]).
 
--type raw_opts() :: #{}.
+-type raw_opts() :: #{
+	%% Internal.
+	tunnel_transport => tcp | tls
+}.
 -export_type([raw_opts/0]).
 
 %% @todo When/if HTTP/2 CONNECT gets implemented, we will want an option here
@@ -210,7 +213,10 @@
 	flow => pos_integer(),
 	keepalive => timeout(),
 	transform_header_name => fun((binary()) -> binary()),
-	version => 'HTTP/1.1' | 'HTTP/1.0'
+	version => 'HTTP/1.1' | 'HTTP/1.0',
+
+	%% Internal.
+	tunnel_transport => tcp | tls
 }.
 -export_type([http_opts/0]).
 
@@ -237,7 +243,10 @@
 	preface_timeout => timeout(),
 	settings_timeout => timeout(),
 	stream_window_margin_size => 0..16#7fffffff,
-	stream_window_update_threshold => 0..16#7fffffff
+	stream_window_update_threshold => 0..16#7fffffff,
+
+	%% Internal.
+	tunnel_transport => tcp | tls
 }.
 -export_type([http2_opts/0]).
 
@@ -249,7 +258,10 @@
 	protocols => protocols(),
 	transport => tcp | tls,
 	tls_opts => [ssl:tls_client_option()],
-	tls_handshake_timeout => timeout()
+	tls_handshake_timeout => timeout(),
+
+	%% Internal.
+	tunnel_transport => tcp | tls
 }.
 -export_type([socks_opts/0]).
 

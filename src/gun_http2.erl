@@ -357,7 +357,7 @@ tunnel_commands([SetCookie={set_cookie, _, _, _, _}|Tail], Stream, State=#http2_
 continue_stream_ref(#http2_state{socket=#{handle_continue_stream_ref := ContinueStreamRef}}, StreamRef) ->
 	case ContinueStreamRef of
 		[_|_] -> ContinueStreamRef ++ [StreamRef];
-		_ -> [ContinueStreamRef|StreamRef]
+		_ -> [ContinueStreamRef, StreamRef]
 	end;
 continue_stream_ref(State, StreamRef) ->
 	stream_ref(State, StreamRef).
@@ -399,7 +399,7 @@ data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 	{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState}.
 
 %% @todo Make separate functions for inform/connect/normal.
-headers_frame(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
+headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 		tunnel_transport=TunnelTransport, content_handlers=Handlers0, commands_queue=Commands},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
 		EvHandler, EvHandlerState0) ->
@@ -444,7 +444,6 @@ headers_frame(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 				gun_pid => self(),
 				reply_to => ReplyTo,
 				stream_ref => RealStreamRef,
-				%% @todo That's wrong when we are already in a tunnel?
 				handle_continue_stream_ref => ContinueStreamRef
 			},
 			Proto = gun_tunnel,
