@@ -189,7 +189,7 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {ok, Negotiated},
 		ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}),
 	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
 	{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}}, EvHandlerState0};
-handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {error, _Reason},
+handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {error, Reason},
 		{handle_continue, _, _HandshakeEvent, _}},
 		#tunnel_state{socket=ProxyPid}, _EvHandler, EvHandlerState0)
 		when is_reference(ContinueStreamRef) ->
@@ -206,27 +206,28 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {error, _Reason},
 %%   receives a TCP segment with the FIN bit set sends a DATA frame with
 %%   the END_STREAM flag set.  Note that the final TCP segment or DATA
 %%   frame could be empty.
-	{[], EvHandlerState0};
+	{{error, Reason}, EvHandlerState0};
 %% Send the data. This causes TLS to encrypt the data and send it to the inner layer.
 handle_continue(ContinueStreamRef, {data, _ReplyTo, _StreamRef, IsFin, Data},
 		#tunnel_state{}, _EvHandler, EvHandlerState)
 		when is_reference(ContinueStreamRef) ->
-	{[{send, IsFin, Data}], EvHandlerState};
+	{{send, IsFin, Data}, EvHandlerState};
 handle_continue(ContinueStreamRef, {tls_proxy, ProxyPid, Data},
 		State=#tunnel_state{socket=ProxyPid, protocol=Proto, protocol_state=ProtoState},
 		EvHandler, EvHandlerState0)
 		when is_reference(ContinueStreamRef) ->
 	{Commands, EvHandlerState} = Proto:handle(Data, ProtoState, EvHandler, EvHandlerState0),
 	{{state, commands(Commands, State)}, EvHandlerState};
-%% @todo What to do about those? Does it matter which one closes/errors out?
 handle_continue(ContinueStreamRef, {tls_proxy_closed, ProxyPid},
-		#tunnel_state{socket=ProxyPid}, _EvHandler, _EvHandlerState0)
+		#tunnel_state{socket=ProxyPid}, _EvHandler, EvHandlerState0)
 		when is_reference(ContinueStreamRef) ->
-	todo;
-handle_continue(ContinueStreamRef, {tls_proxy_error, ProxyPid, _Reason},
-		#tunnel_state{socket=ProxyPid}, _EvHandler, _EvHandlerState0)
+	%% @todo All sub-streams must produce a stream_error.
+	{{error, closed}, EvHandlerState0};
+handle_continue(ContinueStreamRef, {tls_proxy_error, ProxyPid, Reason},
+		#tunnel_state{socket=ProxyPid}, _EvHandler, EvHandlerState0)
 		when is_reference(ContinueStreamRef) ->
-	todo;
+	%% @todo All sub-streams must produce a stream_error.
+	{{error, Reason}, EvHandlerState0};
 %% We always dereference the ContinueStreamRef because it includes a
 %% reference() for Socks layers too.
 %%
@@ -242,21 +243,23 @@ handle_continue([_StreamRef|ContinueStreamRef0], Msg,
 		Msg, ProtoState, EvHandler, EvHandlerState0),
 	{{state, commands(Commands, State)}, EvHandlerState}.
 
-%% @todo Probably just pass it forward?
-update_flow(_State, _ReplyTo, _StreamRef, _Inc) ->
-	todo.
+update_flow(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState},
+		ReplyTo, StreamRef0, Inc) ->
+	StreamRef = maybe_dereference(State, StreamRef0),
+	Commands = Proto:update_flow(ProtoState, ReplyTo, StreamRef, Inc),
+	{state, commands(Commands, State)}.
 
-%% @todo ?
-closing(_Reason, _State, _EvHandler, _EvHandlerState) ->
-	todo.
+closing(_Reason, _State, _EvHandler, EvHandlerState) ->
+	%% @todo Graceful shutdown must be propagated to tunnels.
+	{[], EvHandlerState}.
 
-%% @todo ?
-close(_Reason, _State, _EvHandler, _EvHandlerState) ->
-	todo.
+close(_Reason, _State, _EvHandler, EvHandlerState) ->
+	%% @todo Closing must be propagated to tunnels.
+	EvHandlerState.
 
-%% @todo ?
-keepalive(_State, _EvHandler, _EvHandlerState) ->
-	todo.
+keepalive(State, _EvHandler, EvHandlerState) ->
+	%% @todo Need to figure out how to handle keepalive for tunnels.
+	{State, EvHandlerState}.
 
 %% We pass the headers forward and optionally dereference StreamRef.
 headers(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
@@ -315,14 +318,16 @@ connect(State=#tunnel_state{info=#{origin_host := Host, origin_port := Port},
 		ReplyTo, Destination, #{host => Host, port => Port}, Headers, InitialFlow),
 	State#tunnel_state{protocol_state=ProtoState}.
 
-%% @todo ?
-cancel(_State, _StreamRef, _ReplyTo, _EvHandler, _EvHandlerState) ->
-	todo.
+cancel(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState},
+		StreamRef0, ReplyTo, EvHandler, EvHandlerState0) ->
+	StreamRef = maybe_dereference(State, StreamRef0),
+	{Commands, EvHandlerState} = Proto:cancel(ProtoState, StreamRef, ReplyTo, EvHandler, EvHandlerState0),
+	{{state, commands(Commands, State)}, EvHandlerState}.
 
-%% @todo ?
-%% ... we might have to do update Cowlib there...
 timeout(_State, {cow_http2_machine, _Name}, _TRef) ->
-	todo.
+	%% @todo We currently have no way of routing timeout events to the right layer.
+	%% We will need to update Cowlib to include routing information in the timeout message.
+	[].
 
 stream_info(#tunnel_state{transport=Transport0, stream_ref=TunnelStreamRef, reply_to=ReplyTo,
 		tunnel_protocol=TunnelProtocol,
@@ -383,9 +388,9 @@ tunneled_name(#tunnel_state{tunnel_protocol=TunnelProto}, false) ->
 tunneled_name(#tunnel_state{protocol=Proto}, _) ->
 	Proto:name().
 
-%% @todo ?
 down(_State) ->
-	todo.
+	%% @todo Tunnels must be included in the gun_down message.
+	[].
 
 %% Internal.
 

@@ -338,21 +338,30 @@ data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0) ->
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 %			%% @todo What about IsFin?
 			{Commands, EvHandlerState} = Proto:handle(Data, ProtoState0, EvHandler, EvHandlerState0),
-			{tunnel_commands(Commands, Stream, State), EvHandlerState}
+			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState)
 	end.
 
-tunnel_commands(Command, Stream, State) when not is_list(Command) ->
-	tunnel_commands([Command], Stream, State);
-tunnel_commands([], Stream, State) ->
-	store_stream(State, Stream);
-tunnel_commands([{send, IsFin, Data}|Tail], Stream=#stream{id=StreamID}, State0) ->
-	%% @todo EvHandler EvHandlerState
-	{State, _EvHandlerState} = maybe_send_data(State0, StreamID, IsFin, Data, todo, todo),
-	tunnel_commands(Tail, Stream, State);
-tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel}, State) ->
-	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}}, State);
-tunnel_commands([SetCookie={set_cookie, _, _, _, _}|Tail], Stream, State=#http2_state{commands_queue=Queue}) ->
-	tunnel_commands(Tail, Stream, State#http2_state{commands_queue=[SetCookie|Queue]}).
+tunnel_commands(Command, Stream, State, EvHandler, EvHandlerState)
+		when not is_list(Command) ->
+	tunnel_commands([Command], Stream, State, EvHandler, EvHandlerState);
+tunnel_commands([], Stream, State, _EvHandler, EvHandlerState) ->
+	{store_stream(State, Stream), EvHandlerState};
+tunnel_commands([{send, IsFin, Data}|Tail], Stream=#stream{id=StreamID},
+		State0, EvHandler, EvHandlerState0) ->
+	{State, EvHandlerState} = maybe_send_data(State0, StreamID,
+		IsFin, Data, EvHandler, EvHandlerState0),
+	tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState);
+tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
+		State, EvHandler, EvHandlerState) ->
+	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}},
+		State, EvHandler, EvHandlerState);
+tunnel_commands([SetCookie={set_cookie, _, _, _, _}|Tail], Stream,
+		State=#http2_state{commands_queue=Queue}, EvHandler, EvHandlerState) ->
+	tunnel_commands(Tail, Stream, State#http2_state{commands_queue=[SetCookie|Queue]},
+		EvHandler, EvHandlerState);
+tunnel_commands([{error, _Reason}|_], #stream{id=StreamID},
+		State, _EvHandler, EvHandlerState) ->
+	{delete_stream(State, StreamID), EvHandlerState}.
 
 continue_stream_ref(#http2_state{socket=#{handle_continue_stream_ref := ContinueStreamRef}}, StreamRef) ->
 	case ContinueStreamRef of
@@ -599,17 +608,17 @@ ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	end.
 
 %% We always pass handle_continue messages to the tunnel.
-handle_continue(ContinueStreamRef, Msg, State, EvHandler, EvHandlerState0) ->
+handle_continue(ContinueStreamRef, Msg, State0, EvHandler, EvHandlerState0) ->
 	StreamRef = case ContinueStreamRef of
 		[SR|_] -> SR;
 		_ -> ContinueStreamRef
 	end,
-	case get_stream_by_ref(State, StreamRef) of
+	case get_stream_by_ref(State0, StreamRef) of
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
-			{Commands, EvHandlerState} = Proto:handle_continue(ContinueStreamRef,
+			{Commands, EvHandlerState1} = Proto:handle_continue(ContinueStreamRef,
 				Msg, ProtoState0, EvHandler, EvHandlerState0),
-			{{state, tunnel_commands(Commands, Stream, State)},
-				EvHandlerState}%;
+			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
+			{{state, State}, EvHandlerState}
 		%% The stream may have ended while TLS was being decoded. @todo What should we do?
 %		error ->
 %			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
