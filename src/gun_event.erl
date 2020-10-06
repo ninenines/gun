@@ -24,6 +24,7 @@
 	origin_port := inet:port_number(),
 	opts := gun:opts()
 }.
+-export_type([init_event/0]).
 
 -callback init(init_event(), State) -> State.
 
@@ -37,6 +38,7 @@
 	lookup_info => gun_tcp:lookup_info(),
 	error => any()
 }.
+-export_type([domain_lookup_event/0]).
 
 -callback domain_lookup_start(domain_lookup_event(), State) -> State.
 -callback domain_lookup_end(domain_lookup_event(), State) -> State.
@@ -50,6 +52,7 @@
 	protocol => http | http2 | socks, %% Only when transport is tcp.
 	error => any()
 }.
+-export_type([connect_event/0]).
 
 -callback connect_start(connect_event(), State) -> State.
 -callback connect_end(connect_event(), State) -> State.
@@ -70,6 +73,7 @@
 	protocol => http | http2 | socks,
 	error => any()
 }.
+-export_type([tls_handshake_event/0]).
 
 -callback tls_handshake_start(tls_handshake_event(), State) -> State.
 -callback tls_handshake_end(tls_handshake_event(), State) -> State.
@@ -86,6 +90,7 @@
 	path := iodata(),
 	headers := [{binary(), iodata()}]
 }.
+-export_type([request_start_event/0]).
 
 -callback request_start(request_start_event(), State) -> State.
 -callback request_headers(request_start_event(), State) -> State.
@@ -96,6 +101,7 @@
 	stream_ref := reference(),
 	reply_to := pid()
 }.
+-export_type([request_end_event/0]).
 
 -callback request_end(request_end_event(), State) -> State.
 
@@ -105,6 +111,7 @@
 	stream_ref := reference(),
 	reply_to := pid()
 }.
+-export_type([push_promise_start_event/0]).
 
 -callback push_promise_start(push_promise_start_event(), State) -> State.
 
@@ -121,6 +128,7 @@
 	uri := binary(),
 	headers := [{binary(), iodata()}]
 }.
+-export_type([push_promise_end_event/0]).
 
 -callback push_promise_end(push_promise_end_event(), State) -> State.
 
@@ -130,6 +138,7 @@
 	stream_ref := reference(),
 	reply_to := pid()
 }.
+-export_type([response_start_event/0]).
 
 -callback response_start(response_start_event(), State) -> State.
 
@@ -141,6 +150,7 @@
 	status := non_neg_integer(),
 	headers := [{binary(), binary()}]
 }.
+-export_type([response_headers_event/0]).
 
 -callback response_inform(response_headers_event(), State) -> State.
 -callback response_headers(response_headers_event(), State) -> State.
@@ -152,6 +162,7 @@
 	reply_to := pid(),
 	headers := [{binary(), binary()}]
 }.
+-export_type([response_trailers_event/0]).
 
 -callback response_trailers(response_trailers_event(), State) -> State.
 
@@ -161,6 +172,7 @@
 	stream_ref := reference(),
 	reply_to := pid()
 }.
+-export_type([response_end_event/0]).
 
 -callback response_end(response_end_event(), State) -> State.
 
@@ -178,6 +190,7 @@
 	reply_to := pid(),
 	opts := gun:ws_opts()
 }.
+-export_type([ws_upgrade_event/0]).
 
 -callback ws_upgrade(ws_upgrade_event(), State) -> State.
 
@@ -189,6 +202,7 @@
 	frag_state := cow_ws:frag_state(),
 	extensions := cow_ws:extensions()
 }.
+-export_type([ws_recv_frame_start_event/0]).
 
 -callback ws_recv_frame_start(ws_recv_frame_start_event(), State) -> State.
 
@@ -204,6 +218,7 @@
 	len := non_neg_integer(),
 	mask_key := cow_ws:mask_key()
 }.
+-export_type([ws_recv_frame_header_event/0]).
 
 -callback ws_recv_frame_header(ws_recv_frame_header_event(), State) -> State.
 
@@ -216,6 +231,7 @@
 	close_code := undefined | cow_ws:close_code(),
 	payload := binary()
 }.
+-export_type([ws_recv_frame_end_event/0]).
 
 -callback ws_recv_frame_end(ws_recv_frame_end_event(), State) -> State.
 
@@ -227,6 +243,7 @@
 	extensions := cow_ws:extensions(),
 	frame := gun:ws_frame()
 }.
+-export_type([ws_send_frame_event/0]).
 
 -callback ws_send_frame_start(ws_send_frame_event(), State) -> State.
 -callback ws_send_frame_end(ws_send_frame_event(), State) -> State.
@@ -243,6 +260,7 @@
 -type protocol_changed_event() :: #{
 	protocol := http | http2 | socks | ws
 }.
+-export_type([protocol_changed_event/0]).
 
 -callback protocol_changed(protocol_changed_event(), State) -> State.
 
@@ -258,6 +276,7 @@
 	socket := ssl:sslsocket() | pid(),
 	transport := tls | tls_proxy
 }.
+-export_type([transport_changed_event/0]).
 
 -callback transport_changed(transport_changed_event(), State) -> State.
 
@@ -269,6 +288,7 @@
 	origin_host := inet:hostname() | inet:ip_address(),
 	origin_port := inet:port_number()
 }.
+-export_type([origin_changed_event/0]).
 
 -callback origin_changed(origin_changed_event(), State) -> State.
 
@@ -288,6 +308,7 @@
 	endpoint := local | remote,
 	reason := atom()
 }.
+-export_type([cancel_event/0]).
 
 -callback cancel(cancel_event(), State) -> State.
 
@@ -296,6 +317,7 @@
 -type disconnect_event() :: #{
 	reason := normal | closed | {error, any()}
 }.
+-export_type([disconnect_event/0]).
 
 -callback disconnect(disconnect_event(), State) -> State.
 
@@ -305,5 +327,6 @@
 	state := not_connected | domain_lookup | connecting | tls_handshake | connected,
 	reason := normal | shutdown | {shutdown, any()} | any()
 }.
+-export_type([terminate_event/0]).
 
 -callback terminate(terminate_event(), State) -> State.
