@@ -139,6 +139,9 @@ do_proxy_parse(<<Len:24, 1:8, _:8, StreamID:32, ReqHeadersBlock:Len/binary, Rest
 		Stream#proxy_stream{origin_socket=OriginSocket}),
 	do_proxy_parse(Rest, Proxy#proxy{streams=Streams,
 		decode_state=DecodeState, encode_state=EncodeState});
+%% An RST_STREAM was received. Stop the proxy.
+do_proxy_parse(<<_:24, 3:8, _/bits>>, _) ->
+	ok;
 do_proxy_parse(<<Len:24, Header:6/binary, Payload:Len/binary, Rest/bits>>, Proxy) ->
 	ct:pal("Ignoring packet header ~0p~npayload ~p", [Header, Payload]),
 	do_proxy_parse(Rest, Proxy);
@@ -557,15 +560,6 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 	gun:close(ConnPid).
 
 connect_cowboy_http_via_h2c(_) ->
-
-%dbg:tracer(),
-%dbg:tpl(gun_http, []),
-%dbg:tpl(gun_http2, []),
-%dbg:tpl(gun_tunnel, []),
-%dbg:tpl(gun_tcp_proxy, []),
-%dbg:tpl(gun, []),
-%dbg:p(all, c),
-
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
 	do_connect_cowboy(<<"http">>, tcp, http, <<"http">>, tcp).
@@ -659,6 +653,34 @@ do_cowboy_origin(OriginTransport, OriginProtocol) ->
 	end,
 	{ok, Ref, Port}.
 
+connect_handshake_timeout(_) ->
+	doc("HTTP/2 timeouts are properly routed to the appropriate "
+		"tunnel layer. (RFC7540 3.5, RFC7540 8.3)"),
+	{ok, _, OriginPort} = init_origin(tcp, raw, fun(_, _, _) ->
+		timer:sleep(5000)
+	end),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, [
+		#proxy_stream{id=1, status=200}
+	]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(ProxyPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [{http2, #{preface_timeout => 500}}]
+	}),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{up, http2} = gun:await(ConnPid, StreamRef),
+	%% @todo The error should be normalized.
+	%% @todo Do we want to indicate that a connection_error occurred within the tunnel stream?
+	{error, {stream_error, {stream_error, protocol_error,
+		'The preface was not received in a reasonable amount of time.'}}}
+		= gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 connect_http_via_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through both "
@@ -666,14 +688,6 @@ connect_http_via_http_via_h2c(_) ->
 	do_connect_via_multiple_proxies(tcp, http, tcp, http, tcp).
 
 connect_https_via_https_via_h2(_) ->
-
-%dbg:tracer(),
-%dbg:tpl(?MODULE, []),
-%dbg:tpl(gun, []),
-%dbg:tpl(gun_http, []),
-%dbg:tpl(gun_http2, []),
-%dbg:p(all, c),
-
 	doc("CONNECT can be used to establish a TLS connection "
 		"to an HTTP/1.1 server via a tunnel going through both "
 		"a TLS HTTP/2 and a TLS HTTP/1.1 proxy. (RFC7540 8.3)"),

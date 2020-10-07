@@ -173,10 +173,10 @@ init(_ReplyTo, Socket, Transport, Opts0) ->
 		initial_connection_window_size => maps:get(initial_connection_window_size, Opts0, 8000000),
 		initial_stream_window_size => maps:get(initial_stream_window_size, Opts0, 8000000)
 	},
-	{ok, Preface, HTTP2Machine} = cow_http2_machine:init(client, Opts),
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	BaseStreamRef = maps:get(stream_ref, Opts, undefined),
 	TunnelTransport = maps:get(tunnel_transport, Opts, undefined),
+	{ok, Preface, HTTP2Machine} = cow_http2_machine:init(client, Opts#{message_tag => BaseStreamRef}),
 	%% @todo Better validate the preface being received.
 	State = #http2_state{socket=Socket, transport=Transport, opts=Opts,
 		base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
@@ -1046,13 +1046,31 @@ cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP
 				EvHandlerState0}
 	end.
 
-%% @todo What about tunnels?
-timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, Name}, TRef) ->
+timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, undefined, Name}, TRef) ->
 	case cow_http2_machine:timeout(Name, TRef, HTTP2Machine0) of
 		{ok, HTTP2Machine} ->
 			{state, State#http2_state{http2_machine=HTTP2Machine}};
 		{error, Error={connection_error, _, _}, _HTTP2Machine} ->
 			connection_error(State, Error)
+	end;
+%% Timeouts occurring in tunnels.
+timeout(State, {cow_http2_machine, RealStreamRef, Name}, TRef) ->
+	{StreamRef, SubStreamRef} = if
+		is_reference(RealStreamRef) -> {RealStreamRef, undefined};
+		true -> {hd(RealStreamRef), tl(RealStreamRef)}
+	end,
+	case get_stream_by_ref(State, StreamRef) of
+		Stream=#stream{id=StreamID, tunnel=Tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
+			case Proto:timeout(ProtoState0, {cow_http2_machine, SubStreamRef, Name}, TRef) of
+				{state, ProtoState} ->
+					{state, store_stream(State, Stream#stream{
+						tunnel=Tunnel#tunnel{protocol_state=ProtoState}})};
+				{error, {connection_error, Reason, Human}} ->
+					{state, reset_stream(State, StreamID, {stream_error, Reason, Human})}
+			end;
+		%% We ignore timeout events for streams that no longer exist.
+		error ->
+			{state, State}
 	end.
 
 stream_info(State, StreamRef) when is_reference(StreamRef) ->

@@ -324,10 +324,13 @@ cancel(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState},
 	{Commands, EvHandlerState} = Proto:cancel(ProtoState, StreamRef, ReplyTo, EvHandler, EvHandlerState0),
 	{{state, commands(Commands, State)}, EvHandlerState}.
 
-timeout(_State, {cow_http2_machine, _Name}, _TRef) ->
-	%% @todo We currently have no way of routing timeout events to the right layer.
-	%% We will need to update Cowlib to include routing information in the timeout message.
-	[].
+timeout(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0}, Msg, TRef) ->
+	case Proto:timeout(ProtoState0, Msg, TRef) of
+		{state, ProtoState} ->
+			{state, State#tunnel_state{protocol_state=ProtoState}};
+		Other ->
+			Other
+	end.
 
 stream_info(#tunnel_state{transport=Transport0, stream_ref=TunnelStreamRef, reply_to=ReplyTo,
 		tunnel_protocol=TunnelProtocol,

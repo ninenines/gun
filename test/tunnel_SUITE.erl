@@ -774,18 +774,6 @@ socks5tls_socks5tls_rawtls(_) ->
 }).
 
 do_tunnel(FunctionName) ->
-
-%dbg:tracer(),
-%dbg:tpl(gun, []),
-%dbg:tpl(gun_http, []),
-%dbg:tpl(gun_http2, []),
-%dbg:tpl(gun_tunnel, []),
-%dbg:p(all, c),
-
-%dbg:tracer(),
-%dbg:tpl(?MODULE, []),
-%dbg:p(all, c),
-
 	[Proxy1, Proxy2, Origin] = [list_to_atom(Lex) || Lex <- string:lexemes(atom_to_list(FunctionName), "_")],
 	do_doc(Proxy1, Proxy2, Origin),
 	{ok, OriginPid, OriginPort} = do_origin_start(Origin),
