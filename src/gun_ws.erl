@@ -91,7 +91,7 @@ do_check_options([Opt|_]) ->
 name() -> ws.
 opts_name() -> ws_opts.
 has_keepalive() -> true.
-default_keepalive() -> 5000.
+default_keepalive() -> infinity.
 
 init(ReplyTo, Socket, Transport, #{stream_ref := StreamRef, headers := Headers,
 		extensions := Extensions, flow := InitialFlow, handler := Handler, opts := Opts}) ->

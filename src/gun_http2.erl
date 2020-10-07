@@ -164,7 +164,7 @@ do_check_options([Opt={Name, _}|Opts]) ->
 name() -> http2.
 opts_name() -> http2_opts.
 has_keepalive() -> true.
-default_keepalive() -> 5000.
+default_keepalive() -> infinity.
 
 init(_ReplyTo, Socket, Transport, Opts0) ->
 	%% We have different defaults than the protocol in order

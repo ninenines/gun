@@ -241,7 +241,7 @@ flow - see below::
 The initial flow control value for all HTTP/2 streams.
 By default flow control is disabled.
 
-keepalive (5000)::
+keepalive (infinity)::
 
 Time between pings in milliseconds.
 
@@ -514,7 +514,7 @@ flow - see below::
 The initial flow control value for the Websocket connection.
 By default flow control is disabled.
 
-keepalive (5000)::
+keepalive (infinity)::
 
 Time between pings in milliseconds.
 
@@ -559,7 +559,7 @@ when receiving a ping.
          lowercased as well.
 * *2.0*: Function `gun:headers/4,5` introduced.
 * *2.0*: The `keepalive` option is now set to `infinity` by
-         default for the HTTP/1.1 protocol, disabling it.
+         default for all protocols. This means it is disabled.
 * *2.0*: Websocket options `keepalive` and `silence_pings` introduced.
 * *1.3*: Add the CONNECT destination's `protocols` option and
          deprecate the previously introduced `protocol` option.
