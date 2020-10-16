@@ -1741,54 +1741,6 @@ do_protocol_changed_tls_connect(Config, OriginProtocol) ->
 	} = do_receive_event(protocol_changed),
 	gun:close(ConnPid).
 
-%% transport_changed.
-
-http1_transport_changed_connect(Config) ->
-	doc("Confirm that the transport_changed event callback is called on CONNECT success "
-		"when connecting through a TLS server via a TCP proxy."),
-	OriginPort = config(tls_origin_port, Config),
-	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
-	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
-		event_handler => {?MODULE, self()},
-		protocols => [config(name, config(tc_group_properties, Config))],
-		transport => tcp
-	}),
-	{ok, http} = gun:await_up(ConnPid),
-	_ = gun:connect(ConnPid, #{
-		host => "localhost",
-		port => OriginPort,
-		transport => tls
-	}),
-	#{
-		socket := Socket,
-		transport := tls
-	} = do_receive_event(transport_changed),
-	true = is_tuple(Socket),
-	gun:close(ConnPid).
-
-http1_transport_changed_connect_over_https_proxy(Config) ->
-	doc("Confirm that the transport_changed event callback is called on CONNECT success "
-		"when connecting through a TLS server via a TLS proxy."),
-	OriginPort = config(tls_origin_port, Config),
-	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tls),
-	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
-		event_handler => {?MODULE, self()},
-		protocols => [config(name, config(tc_group_properties, Config))],
-		transport => tls
-	}),
-	{ok, http} = gun:await_up(ConnPid),
-	_ = gun:connect(ConnPid, #{
-		host => "localhost",
-		port => OriginPort,
-		transport => tls
-	}),
-	#{
-		socket := Socket,
-		transport := tls_proxy
-	} = do_receive_event(transport_changed),
-	true = is_pid(Socket),
-	gun:close(ConnPid).
-
 %% origin_changed.
 
 origin_changed_connect(Config) ->
@@ -2126,10 +2078,6 @@ ws_send_frame_end(EventData, Pid) ->
 	Pid.
 
 protocol_changed(EventData, Pid) ->
-	Pid ! {?FUNCTION_NAME, EventData},
-	Pid.
-
-transport_changed(EventData, Pid) ->
 	Pid ! {?FUNCTION_NAME, EventData},
 	Pid.
 

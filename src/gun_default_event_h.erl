@@ -39,7 +39,6 @@
 -export([ws_send_frame_start/2]).
 -export([ws_send_frame_end/2]).
 -export([protocol_changed/2]).
--export([transport_changed/2]).
 -export([origin_changed/2]).
 -export([cancel/2]).
 -export([disconnect/2]).
@@ -115,9 +114,6 @@ ws_send_frame_end(_EventData, State) ->
 	State.
 
 protocol_changed(_EventData, State) ->
-	State.
-
-transport_changed(_EventData, State) ->
 	State.
 
 origin_changed(_EventData, State) ->

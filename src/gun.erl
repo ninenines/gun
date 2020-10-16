@@ -1720,16 +1720,10 @@ commands([{origin, Scheme, Host, Port, Type}|Tail],
 		origin_host=Host, origin_port=Port, intermediaries=[Info|Intermediaries],
 		event_handler_state=EvHandlerState});
 commands([{switch_transport, Transport, Socket}|Tail], State=#state{
-		protocol=Protocol, protocol_state=ProtoState0,
-		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+		protocol=Protocol, protocol_state=ProtoState0}) ->
 	ProtoState = Protocol:switch_transport(Transport, Socket, ProtoState0),
-	EvHandlerState = EvHandler:transport_changed(#{
-		socket => Socket,
-		transport => Transport:name()
-	}, EvHandlerState0),
 	commands(Tail, active(State#state{socket=Socket, transport=Transport,
-		messages=Transport:messages(), protocol_state=ProtoState,
-		event_handler_state=EvHandlerState}));
+		messages=Transport:messages(), protocol_state=ProtoState}));
 commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
 		opts=Opts, socket=Socket, transport=Transport,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->

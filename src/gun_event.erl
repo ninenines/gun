@@ -261,24 +261,6 @@
 
 -callback protocol_changed(protocol_changed_event(), State) -> State.
 
-%% transport_changed.
-%%
-%% This event can occur following a successful CONNECT request.
-%%
-%% @todo I think this event should be removed. We already know
-%% about the transport being TLS via the tls_handshake events.
-%% Perhaps we should provide the socket in tls_handshake_end.
-%% We already do!! Therefore what's the point of this event?
-%% Remove it!!
-
--type transport_changed_event() :: #{
-	socket := ssl:sslsocket() | pid(),
-	transport := tls | tls_proxy
-}.
--export_type([transport_changed_event/0]).
-
--callback transport_changed(transport_changed_event(), State) -> State.
-
 %% origin_changed.
 
 -type origin_changed_event() :: #{

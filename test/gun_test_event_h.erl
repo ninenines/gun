@@ -40,7 +40,6 @@ ws_recv_frame_end(Event, State) -> common(?FUNCTION_NAME, Event, State).
 ws_send_frame_start(Event, State) -> common(?FUNCTION_NAME, Event, State).
 ws_send_frame_end(Event, State) -> common(?FUNCTION_NAME, Event, State).
 protocol_changed(Event, State) -> common(?FUNCTION_NAME, Event, State).
-transport_changed(Event, State) -> common(?FUNCTION_NAME, Event, State).
 origin_changed(Event, State) -> common(?FUNCTION_NAME, Event, State).
 cancel(Event, State) -> common(?FUNCTION_NAME, Event, State).
 disconnect(Event, State) -> common(?FUNCTION_NAME, Event, State).
