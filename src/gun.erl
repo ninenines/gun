@@ -1440,19 +1440,6 @@ handle_common_connected_no_input(info,
 		Res ->
 			Res
 	end;
-%% @todo
-%	NewProtocol = protocol_negotiated(Negotiated, Protocols),
-%	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-%		socket => Socket,
-%		protocol => NewProtocol
-%	}, EvHandlerState0),
-%	commands([{switch_protocol, NewProtocol, ReplyTo}], State0#state{event_handler_state=EvHandlerState});
-%%
-%		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-%	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-%		error => Reason
-%	}, EvHandlerState0),
-%	commands([Error], State#state{event_handler_state=EvHandlerState});
 handle_common_connected_no_input(info, {handle_continue, StreamRef, Msg}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->

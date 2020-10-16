@@ -467,15 +467,6 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 			Proto = gun_tunnel,
 			ProtoOpts = case Destination of
 				#{transport := tls} ->
-%tls_handshake(internal, {tls_handshake,
-%		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols, ReplyTo},
-%		State=#state{socket=Socket, transport=Transport, origin_host=OriginHost, origin_port=OriginPort,
-%		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-%	HandshakeEvent = HandshakeEvent0#{
-%		tls_opts => TLSOpts,
-%		socket => Socket
-%	},
-%	EvHandlerState = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 					Protocols = maps:get(protocols, Destination, [http2, http]),
 					TLSOpts = gun:ensure_alpn_sni(Protocols, maps:get(tls_opts, Destination, []), DestHost),
 					HandshakeEvent = #{
