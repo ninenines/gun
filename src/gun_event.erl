@@ -62,10 +62,10 @@
 %% These events occur when connecting to a TLS server or when
 %% upgrading the connection or stream to use TLS, for example
 %% using CONNECT. The stream_ref/reply_to values are only
-%% present when the TLS handshake occurs as a result of a request.
+%% present when the TLS handshake occurs in the scope of a request.
 
 -type tls_handshake_event() :: #{
-	stream_ref => reference(),
+	stream_ref => gun:stream_ref(),
 	reply_to => pid(),
 	socket := inet:socket() | ssl:sslsocket() | pid(), %% The socket before/after will be different.
 	tls_opts := [ssl:tls_client_option()],
@@ -81,13 +81,13 @@
 %% request_start/request_headers.
 
 -type request_start_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	function := headers | request | ws_upgrade,
 	method := iodata(),
 	scheme => binary(),
 	authority := iodata(),
-	path := iodata(),
+	path => iodata(),
 	headers := [{binary(), iodata()}]
 }.
 -export_type([request_start_event/0]).
@@ -98,7 +98,7 @@
 %% request_end.
 
 -type request_end_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid()
 }.
 -export_type([request_end_event/0]).
@@ -108,7 +108,7 @@
 %% push_promise_start.
 
 -type push_promise_start_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid()
 }.
 -export_type([push_promise_start_event/0]).
@@ -118,12 +118,12 @@
 %% push_promise_end.
 
 -type push_promise_end_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	%% No stream is created if we receive the push_promise while
 	%% in the process of gracefully shutting down the connection.
 	%% The promised stream is canceled immediately.
-	promised_stream_ref => reference(),
+	promised_stream_ref => gun:stream_ref(),
 	method := binary(),
 	uri := binary(),
 	headers := [{binary(), iodata()}]
@@ -135,7 +135,7 @@
 %% response_start.
 
 -type response_start_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid()
 }.
 -export_type([response_start_event/0]).
@@ -145,7 +145,7 @@
 %% response_inform/response_headers.
 
 -type response_headers_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	status := non_neg_integer(),
 	headers := [{binary(), binary()}]
@@ -158,7 +158,7 @@
 %% response_trailers.
 
 -type response_trailers_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	headers := [{binary(), binary()}]
 }.
@@ -169,7 +169,7 @@
 %% response_end.
 
 -type response_end_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid()
 }.
 -export_type([response_end_event/0]).
@@ -186,7 +186,7 @@
 %% response.
 
 -type ws_upgrade_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	opts := gun:ws_opts()
 }.
@@ -197,7 +197,7 @@
 %% ws_recv_frame_start.
 
 -type ws_recv_frame_start_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	frag_state := cow_ws:frag_state(),
 	extensions := cow_ws:extensions()
@@ -209,7 +209,7 @@
 %% ws_recv_frame_header.
 
 -type ws_recv_frame_header_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	frag_state := cow_ws:frag_state(),
 	extensions := cow_ws:extensions(),
@@ -225,7 +225,7 @@
 %% ws_recv_frame_end.
 
 -type ws_recv_frame_end_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	extensions := cow_ws:extensions(),
 	close_code := undefined | cow_ws:close_code(),
@@ -238,7 +238,7 @@
 %% ws_send_frame_start/ws_send_frame_end.
 
 -type ws_send_frame_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	extensions := cow_ws:extensions(),
 	frame := gun:ws_frame()
@@ -251,13 +251,10 @@
 %% protocol_changed.
 %%
 %% This event can occur either following a successful ws_upgrade
-%% event or following a successful CONNECT request.
-%%
-%% @todo Currently there is only a connection-wide variant of this
-%% event. In the future there will be a stream-wide variant to
-%% support CONNECT and Websocket over HTTP/2.
+%% event, following a successful CONNECT request or a SOCKS tunnel.
 
 -type protocol_changed_event() :: #{
+	stream_ref := gun:stream_ref(),
 	protocol := http | http2 | socks | ws
 }.
 -export_type([protocol_changed_event/0]).
@@ -268,9 +265,11 @@
 %%
 %% This event can occur following a successful CONNECT request.
 %%
-%% @todo Currently there is only a connection-wide variant of this
-%% event. In the future there will be a stream-wide variant to
-%% support CONNECT through TLS proxies over HTTP/2.
+%% @todo I think this event should be removed. We already know
+%% about the transport being TLS via the tls_handshake events.
+%% Perhaps we should provide the socket in tls_handshake_end.
+%% We already do!! Therefore what's the point of this event?
+%% Remove it!!
 
 -type transport_changed_event() :: #{
 	socket := ssl:sslsocket() | pid(),
@@ -283,6 +282,7 @@
 %% origin_changed.
 
 -type origin_changed_event() :: #{
+	stream_ref := gun:stream_ref(),
 	type := connect, %% @todo socks?
 	origin_scheme := binary(),
 	origin_host := inet:hostname() | inet:ip_address(),
@@ -303,7 +303,7 @@
 %% Events may still occur for a short time after the cancel.
 
 -type cancel_event() :: #{
-	stream_ref := reference(),
+	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	endpoint := local | remote,
 	reason := atom()

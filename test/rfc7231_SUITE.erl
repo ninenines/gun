@@ -115,10 +115,11 @@ do_proxy_loop(Transport, ClientSocket, OriginSocket) ->
 				{error, _} ->
 					ok
 			end;
+		%% Wait forever when a connection gets closed. We will exit with the test process.
 		{tcp_closed, _} ->
-			ok;
+			timer:sleep(infinity);
 		{ssl_closed, _} ->
-			ok;
+			timer:sleep(infinity);
 		Msg ->
 			error(Msg)
 	end.

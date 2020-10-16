@@ -26,6 +26,7 @@
 -export([close/4]).
 -export([keepalive/3]).
 -export([ws_send/5]).
+-export([ws_send/6]).
 -export([down/1]).
 
 -record(payload, {
@@ -288,6 +289,9 @@ ws_send([Frame|Tail], State, ReplyTo, EvHandler, EvHandlerState0) ->
 		Other ->
 			Other
 	end.
+
+ws_send(Frames, State, _StreamRef, ReplyTo, EvHandler, EvHandlerState) ->
+	ws_send(Frames, State, ReplyTo, EvHandler, EvHandlerState).
 
 %% Websocket has no concept of streams.
 down(_) ->

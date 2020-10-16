@@ -90,10 +90,11 @@ do_proxy_receive(Buffer, Proxy=#proxy{socket=Socket, transport=Transport}) ->
 			do_proxy_parse(<<Buffer/binary, Data0/bits>>, Proxy);
 		{tcp, OriginSocket, OriginData} ->
 			do_proxy_forward(Buffer, Proxy, OriginSocket, OriginData);
+		%% Wait forever when a connection gets closed. We will exit with the test process.
 		{tcp_closed, _} ->
-			ok;
+			timer:sleep(infinity);
 		{ssl_closed, _} ->
-			ok;
+			timer:sleep(infinity);
 		Msg ->
 			error(Msg)
 	end.
