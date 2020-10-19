@@ -1780,8 +1780,14 @@ disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
 active(State=#state{active=false}) ->
 	State;
 active(State=#state{socket=Socket, transport=Transport}) ->
-	Transport:setopts(Socket, [{active, once}]),
-	State.
+	case Transport:setopts(Socket, [{active, once}]) of
+		ok ->
+			State;
+		{error, closed} ->
+			disconnect(State, closed);
+		Error={error, _} ->
+			disconnect(State, Error)
+	end.
 
 status(State=#state{status={up, OwnerRef}}, NewStatus) ->
 	demonitor(OwnerRef, [flush]),
