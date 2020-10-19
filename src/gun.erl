@@ -1242,10 +1242,14 @@ connected(internal, {connected, Socket, NewProtocol},
 	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 	{StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	Owner ! {gun_up, self(), Protocol:name()},
-	State = active(State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState}),
-	case Protocol:has_keepalive() of
-		true -> {next_state, StateName, keepalive_timeout(State)};
-		false -> {next_state, StateName, State}
+	case active(State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState}) of
+		{ok, State} ->
+			case Protocol:has_keepalive() of
+				true -> {next_state, StateName, keepalive_timeout(State)};
+				false -> {next_state, StateName, State}
+			end;
+		Disconnect ->
+			Disconnect
 	end;
 %% Public HTTP interface.
 %%
@@ -1380,14 +1384,7 @@ handle_common_connected_no_input(info, {OK, Socket, Data}, _,
 		protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState, EvHandler, EvHandlerState0),
-	case commands(Commands, State0#state{event_handler_state=EvHandlerState}) of
-		{keep_state, State} ->
-			{keep_state, active(State)};
-		{next_state, closing, State, Actions} ->
-			{next_state, closing, active(State), Actions};
-		Res ->
-			Res
-	end;
+	maybe_active(commands(Commands, State0#state{event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(info, {Closed, Socket}, _,
 		State=#state{socket=Socket, messages={_, Closed, _}}) ->
 	disconnect(State, closed);
@@ -1403,28 +1400,14 @@ handle_common_connected_no_input(info,
 	{Commands, EvHandlerState} = Protocol:handle_continue(
 		dereference_stream_ref(StreamRef, State0),
 		Msg, ProtoState, EvHandler, EvHandlerState0),
-	case commands(Commands, State0#state{event_handler_state=EvHandlerState}) of
-		{keep_state, State} ->
-			{keep_state, active(State)};
-		{next_state, closing, State, Actions} ->
-			{next_state, closing, active(State), Actions};
-		Res ->
-			Res
-	end;
+	maybe_active(commands(Commands, State0#state{event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(info, {handle_continue, StreamRef, Msg}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, EvHandlerState} = Protocol:handle_continue(
 		dereference_stream_ref(StreamRef, State0),
 		Msg, ProtoState, EvHandler, EvHandlerState0),
-	case commands(Commands, State0#state{event_handler_state=EvHandlerState}) of
-		{keep_state, State} ->
-			{keep_state, active(State)};
-		{next_state, closing, State, Actions} ->
-			{next_state, closing, active(State), Actions};
-		Res ->
-			Res
-	end;
+	maybe_active(commands(Commands, State0#state{event_handler_state=EvHandlerState}));
 %% Timeouts.
 %% @todo HTTP/2 requires more timeouts than just the keepalive timeout.
 %% We should have a timeout function in protocols that deal with
@@ -1438,12 +1421,7 @@ handle_common_connected_no_input(info, keepalive, _,
 handle_common_connected_no_input(cast, {update_flow, ReplyTo, StreamRef, Flow}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	Commands = Protocol:update_flow(ProtoState, ReplyTo, StreamRef, Flow),
-	case commands(Commands, State0) of
-		{keep_state, State} ->
-			{keep_state, active(State)};
-		Res ->
-			Res
-	end;
+	maybe_active(commands(Commands, State0));
 handle_common_connected_no_input(cast, {cancel, ReplyTo, StreamRef}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
@@ -1503,6 +1481,35 @@ handle_common_connected_no_input({call, From}, {stream_info, StreamRef}, _,
 	}};
 handle_common_connected_no_input(Type, Event, StateName, State) ->
 	handle_common(Type, Event, StateName, State).
+
+maybe_active({keep_state, State0}) ->
+	case active(State0) of
+		{ok, State} ->
+			{keep_state, State};
+		Disconnect ->
+			Disconnect
+	end;
+maybe_active({next_state, closing, State0, Actions}) ->
+	case active(State0) of
+		{ok, State} ->
+			{next_state, closing, State, Actions};
+		Disconnect ->
+			Disconnect
+	end;
+maybe_active(Other) ->
+	Other.
+
+active(State=#state{active=false}) ->
+	{ok, State};
+active(State=#state{socket=Socket, transport=Transport}) ->
+	case Transport:setopts(Socket, [{active, once}]) of
+		ok ->
+			{ok, State};
+		{error, closed} ->
+			disconnect(State, closed);
+		Error = {error, _} ->
+			disconnect(State, Error)
+	end.
 
 tunnel_info_from_intermediaries(State, Tail) ->
 	case Tail of
@@ -1679,11 +1686,17 @@ commands([{origin, Scheme, Host, Port, Type}|Tail],
 	commands(Tail, State#state{origin_scheme=Scheme,
 		origin_host=Host, origin_port=Port, intermediaries=[Info|Intermediaries],
 		event_handler_state=EvHandlerState});
-commands([{switch_transport, Transport, Socket}|Tail], State=#state{
+commands([{switch_transport, Transport, Socket}|Tail], State0=#state{
 		protocol=Protocol, protocol_state=ProtoState0}) ->
 	ProtoState = Protocol:switch_transport(Transport, Socket, ProtoState0),
-	commands(Tail, active(State#state{socket=Socket, transport=Transport,
-		messages=Transport:messages(), protocol_state=ProtoState}));
+	State1 = State0#state{socket=Socket, transport=Transport,
+		messages=Transport:messages(), protocol_state=ProtoState},
+	case active(State1) of
+		{ok, State} ->
+			commands(Tail, State);
+		Disconnect ->
+			Disconnect
+	end;
 commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
 		opts=Opts, socket=Socket, transport=Transport,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
@@ -1702,11 +1715,17 @@ commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
 	EvHandlerState = EvHandler:protocol_changed(ProtocolChangedEvent, EvHandlerState0),
 	%% We cancel the existing keepalive and, depending on the protocol,
 	%% we enable keepalive again, effectively resetting the timer.
-	State = keepalive_cancel(active(State0#state{protocol=Protocol, protocol_state=ProtoState,
-		event_handler_state=EvHandlerState})),
-	case Protocol:has_keepalive() of
-		true -> {next_state, StateName, keepalive_timeout(State)};
-		false -> {next_state, StateName, State}
+	State1 = State0#state{protocol=Protocol, protocol_state=ProtoState,
+		event_handler_state=EvHandlerState},
+	case active(State1) of
+		{ok, State2} ->
+			State = keepalive_cancel(State2),
+			case Protocol:has_keepalive() of
+				true -> {next_state, StateName, keepalive_timeout(State)};
+				false -> {next_state, StateName, State}
+			end;
+		Disconnect ->
+			Disconnect
 	end;
 %% Perform a TLS handshake.
 commands([TLSHandshake={tls_handshake, _, _, _}], State) ->
@@ -1749,12 +1768,6 @@ disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
 	after 0 ->
 		ok
 	end.
-
-active(State=#state{active=false}) ->
-	State;
-active(State=#state{socket=Socket, transport=Transport}) ->
-	Transport:setopts(Socket, [{active, once}]),
-	State.
 
 status(State=#state{status={up, OwnerRef}}, NewStatus) ->
 	demonitor(OwnerRef, [flush]),
