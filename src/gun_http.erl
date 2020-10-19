@@ -26,14 +26,14 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([headers/11]).
--export([request/12]).
+-export([headers/12]).
+-export([request/13]).
 -export([data/7]).
 -export([connect/9]).
 -export([cancel/5]).
 -export([stream_info/2]).
 -export([down/1]).
--export([ws_upgrade/10]).
+-export([ws_upgrade/11]).
 
 %% Functions shared with gun_http2.
 -export([host_header/3]).
@@ -541,42 +541,44 @@ keepalive(State=#http_state{socket=Socket, transport=Transport, out=head}, _, Ev
 keepalive(State, _, EvHandlerState) ->
 	{State, EvHandlerState}.
 
-headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, EvHandlerState)
+headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
-	{State, EvHandlerState};
+	{State, CookieStore, EvHandlerState};
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
-		InitialFlow0, EvHandler, EvHandlerState0) ->
-	{Authority, Conn, Out, EvHandlerState} = send_request(State, StreamRef, ReplyTo,
-		Method, Host, Port, Path, Headers, undefined,
-		EvHandler, EvHandlerState0, ?FUNCTION_NAME),
+		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
+	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, undefined,
+		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	InitialFlow = initial_flow(InitialFlow0, Opts),
 	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo,
-		Method, Authority, Path, InitialFlow), EvHandlerState}.
+		Method, Authority, Path, InitialFlow),
+		CookieStore, EvHandlerState}.
 
-request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, _, EvHandlerState)
+request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
-	{State, EvHandlerState};
+	{State, CookieStore, EvHandlerState};
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
-		InitialFlow0, EvHandler, EvHandlerState0) ->
-	{Authority, Conn, Out, EvHandlerState} = send_request(State, StreamRef, ReplyTo,
-		Method, Host, Port, Path, Headers, Body,
-		EvHandler, EvHandlerState0, ?FUNCTION_NAME),
+		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
+	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
+		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	InitialFlow = initial_flow(InitialFlow0, Opts),
 	{new_stream(State#http_state{connection=Conn, out=Out}, StreamRef, ReplyTo,
-		Method, Authority, Path, InitialFlow), EvHandlerState}.
+		Method, Authority, Path, InitialFlow),
+		CookieStore, EvHandlerState}.
 
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;
 initial_flow(InitialFlow, _) -> InitialFlow.
 
 send_request(State=#http_state{socket=Socket, transport=Transport, version=Version},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers0, Body,
-		EvHandler, EvHandlerState0, Function) ->
+		CookieStore0, EvHandler, EvHandlerState0, Function) ->
 	Headers1 = lists:keydelete(<<"transfer-encoding">>, 1, Headers0),
 	Headers2 = case Body of
 		undefined -> Headers1;
@@ -596,12 +598,14 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		{_, Authority1} -> {Authority1, Headers2}
 	end,
 	Headers4 = transform_header_names(State, Headers3),
-	Headers = case {Body, Out} of
+	Headers5 = case {Body, Out} of
 		{undefined, body_chunked} when Version =:= 'HTTP/1.0' -> Headers4;
 		{undefined, body_chunked} -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers4];
 		{undefined, _} -> Headers4;
 		_ -> [{<<"content-length">>, integer_to_binary(iolist_size(Body))}|Headers4]
 	end,
+	{Headers, CookieStore} = gun_cookies:add_cookie_header(
+		scheme(State), Authority, Path, Headers5, CookieStore0),
 	RealStreamRef = stream_ref(State, StreamRef),
 	RequestEvent = #{
 		stream_ref => RealStreamRef,
@@ -627,7 +631,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		_ ->
 			EvHandlerState2
 	end,
-	{Authority, Conn, Out, EvHandlerState}.
+	{Authority, Conn, Out, CookieStore, EvHandlerState}.
 
 host_header(Transport, Host0, Port) ->
 	Host = case Host0 of
@@ -647,6 +651,13 @@ transform_header_names(#http_state{opts=Opts}, Headers) ->
 	case maps:get(transform_header_name, Opts, undefined) of
 		undefined -> Headers;
 		Fun -> lists:keymap(Fun, 1, Headers)
+	end.
+
+scheme(#http_state{transport=Transport}) ->
+	case Transport of
+		gun_tls -> <<"https">>;
+		gun_tls_proxy -> <<"https">>;
+		_ -> <<"http">>
 	end.
 
 %% We are expecting a new stream.
@@ -897,18 +908,18 @@ end_stream(State=#http_state{streams=[_|Tail]}) ->
 
 %% Websocket upgrade.
 
-ws_upgrade(State, StreamRef, ReplyTo, _, _, _, _, _, _, EvHandlerState)
+ws_upgrade(State, StreamRef, ReplyTo, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
-	{State, EvHandlerState};
+	{State, CookieStore, EvHandlerState};
 ws_upgrade(State=#http_state{version='HTTP/1.0'},
-		StreamRef, ReplyTo, _, _, _, _, _, _, EvHandlerState) ->
+		StreamRef, ReplyTo, _, _, _, _, _, CookieStore, _, EvHandlerState) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"Websocket cannot be used over an HTTP/1.0 connection."}},
-	{[], EvHandlerState};
+	{State, CookieStore, EvHandlerState};
 ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
-		Host, Port, Path, Headers0, WsOpts, EvHandler, EvHandlerState0) ->
+		Host, Port, Path, Headers0, WsOpts, CookieStore0, EvHandler, EvHandlerState0) ->
 	{Headers1, GunExtensions} = case maps:get(compress, WsOpts, false) of
 		true -> {[{<<"sec-websocket-extensions">>,
 				<<"permessage-deflate; client_max_window_bits; server_max_window_bits=15">>}
@@ -930,13 +941,14 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		{<<"sec-websocket-key">>, Key}
 		|Headers2
 	],
-	{Authority, Conn, Out, EvHandlerState} = send_request(State, StreamRef, ReplyTo,
-		<<"GET">>, Host, Port, Path, Headers, undefined,
-		EvHandler, EvHandlerState0, ?FUNCTION_NAME),
+	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+		StreamRef, ReplyTo, <<"GET">>, Host, Port, Path, Headers, undefined,
+		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	InitialFlow = maps:get(flow, WsOpts, infinity),
 	{new_stream(State#http_state{connection=Conn, out=Out},
 		#websocket{ref=StreamRef, reply_to=ReplyTo, key=Key, extensions=GunExtensions, opts=WsOpts},
-		ReplyTo, <<"GET">>, Authority, Path, InitialFlow), EvHandlerState}.
+		ReplyTo, <<"GET">>, Authority, Path, InitialFlow),
+		CookieStore, EvHandlerState}.
 
 ws_handshake(Buffer, State, Ws=#websocket{key=Key}, Headers) ->
 	%% @todo check upgrade, connection

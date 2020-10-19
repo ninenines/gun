@@ -297,9 +297,9 @@
 	messages :: {atom(), atom(), atom()},
 	protocol :: module(),
 	protocol_state :: any(),
+	cookie_store :: undefined | {module(), any()},
 	event_handler :: module(),
-	event_handler_state :: any(),
-	cookie_store :: undefined | {module(), any()}
+	event_handler_state :: any()
 }).
 
 %% Connection.
@@ -1251,26 +1251,26 @@ connected(internal, {connected, Socket, NewProtocol},
 %%
 %% @todo It might be better, internally, to pass around a URIMap
 %% containing the target URI, instead of separate Host/Port/PathWithQs.
-connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers0, InitialFlow},
-		State0=#state{origin_host=Host, origin_port=Port,
-			protocol=Protocol, protocol_state=ProtoState,
+connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow},
+		State=#state{origin_host=Host, origin_port=Port,
+			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Headers, State} = add_cookie_header(Path, Headers0, State0),
-	{ProtoState2, EvHandlerState} = Protocol:headers(ProtoState,
+	{ProtoState2, CookieStore, EvHandlerState} = Protocol:headers(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Method, Host, Port, Path, Headers,
-		InitialFlow, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
-connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers0, Body, InitialFlow},
-		State0=#state{origin_host=Host, origin_port=Port,
-			protocol=Protocol, protocol_state=ProtoState,
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+	{keep_state, State#state{protocol_state=ProtoState2, cookie_store=CookieStore,
+		event_handler_state=EvHandlerState}};
+connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body, InitialFlow},
+		State=#state{origin_host=Host, origin_port=Port,
+			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Headers, State} = add_cookie_header(Path, Headers0, State0),
-	{ProtoState2, EvHandlerState} = Protocol:request(ProtoState,
+	{ProtoState2, CookieStore, EvHandlerState} = Protocol:request(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
-		InitialFlow, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+	{keep_state, State#state{protocol_state=ProtoState2, cookie_store=CookieStore,
+		event_handler_state=EvHandlerState}};
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState,
@@ -1279,16 +1279,17 @@ connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow}
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Destination, #{host => Host, port => Port},
 		Headers, InitialFlow, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+	{keep_state, State#state{protocol_state=ProtoState2,
+		event_handler_state=EvHandlerState}};
 %% Public Websocket interface.
 %% @todo Maybe make an interface in the protocol module instead of checking on protocol name.
 %% An interface would also make sure that HTTP/1.0 can't upgrade.
 connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers}, State=#state{opts=Opts}) ->
 	WsOpts = maps:get(ws_opts, Opts, #{}),
 	connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts}, State);
-connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers0, WsOpts},
-		State0=#state{origin_host=Host, origin_port=Port,
-			protocol=Protocol, protocol_state=ProtoState,
+connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts},
+		State=#state{origin_host=Host, origin_port=Port,
+			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState1 = EvHandler:ws_upgrade(#{
 		stream_ref => StreamRef,
@@ -1296,11 +1297,10 @@ connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers0, WsOpts},
 		opts => WsOpts
 	}, EvHandlerState0),
 	%% @todo Can fail if HTTP/1.0.
-	{Headers, State} = add_cookie_header(Path, Headers0, State0),
-	{ProtoState2, EvHandlerState} = Protocol:ws_upgrade(ProtoState,
+	{ProtoState2, CookieStore, EvHandlerState} = Protocol:ws_upgrade(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
-		Host, Port, Path, Headers, WsOpts, EvHandler, EvHandlerState1),
-	{keep_state, State#state{protocol_state=ProtoState2,
+		Host, Port, Path, Headers, WsOpts, CookieStore0, EvHandler, EvHandlerState1),
+	{keep_state, State#state{protocol_state=ProtoState2, cookie_store=CookieStore,
 		event_handler_state=EvHandlerState}};
 %% @todo Maybe better standardize the protocol callbacks argument orders.
 connected(cast, {ws_send, ReplyTo, StreamRef, Frames}, State=#state{
@@ -1318,35 +1318,6 @@ connected(cast, {ws_send, ReplyTo, _}, _) ->
 	keep_state_and_data;
 connected(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
-
-add_cookie_header(_, Headers, State=#state{cookie_store=undefined}) ->
-	{Headers, State};
-add_cookie_header(PathWithQs, Headers0, State=#state{
-		origin_host=OriginHost, transport=Transport, cookie_store=Store0}) ->
-	Scheme = case Transport of
-		gun_tls -> <<"https">>;
-		gun_tls_proxy -> <<"https">>;
-		gun_tcp -> <<"http">>
-	end,
-	#{path := Path} = uri_string:parse(PathWithQs),
-	URIMap = uri_string:normalize(#{
-		scheme => Scheme,
-		host => case lists:keyfind(<<"host">>, 1, Headers0) of
-			false -> iolist_to_binary(OriginHost); %% @todo Probably not enough for atoms and such.
-			{_, HeaderHost} -> iolist_to_binary(HeaderHost)
-		end,
-		path => iolist_to_binary(Path)
-	}, [return_map]),
-	{ok, Cookies0, Store} = gun_cookies:query(Store0, URIMap),
-	Headers = case Cookies0 of
-		[] ->
-			Headers0;
-		_ ->
-			Cookies = [{Name, Value} || #{name := Name, value := Value} <- Cookies0],
-			%% We put cookies at the end of the headers list as it's the least important header.
-			Headers0 ++ [{<<"cookie">>, cow_cookie:cookie(Cookies)}]
-	end,
-	{Headers, State#state{cookie_store=Store}}.
 
 %% When the origin is using raw we do not dereference the stream_ref
 %% because it expects the full stream_ref to function (there's no
@@ -1655,6 +1626,8 @@ commands([{set_cookie, _, _, Status, _}|Tail], State=#state{opts=#{cookie_ignore
 %% @todo Make sure this works for proxied requests too.
 commands([{set_cookie, Authority, PathWithQs, _, Headers}|Tail], State=#state{
 			transport=Transport, cookie_store=Store0}) ->
+	%% @todo This is wrong. Also we should probably not do a command for this.
+	%% We should instead give the CookieStore to all callbacks.
 	Scheme = case Transport of
 		gun_tls -> <<"https">>;
 		gun_tls_proxy -> <<"https">>;

@@ -14,6 +14,7 @@
 
 -module(gun_cookies).
 
+-export([add_cookie_header/5]).
 -export([domain_match/2]).
 -export([gc/1]).
 -export([path_match/2]).
@@ -78,6 +79,31 @@
 -callback session_gc(State)
 	-> {ok, State}
 	when State::store_state().
+
+-spec add_cookie_header(binary(), iodata(), iodata(), Headers, Store)
+	-> {Headers, Store} when Headers :: [{binary(), iodata()}], Store :: undefined | store().
+add_cookie_header(_, _, _, Headers, Store=undefined) ->
+	{Headers, Store};
+add_cookie_header(Scheme, Authority, PathWithQs, Headers0, Store0) ->
+	#{
+		host := Host,
+		path := Path
+	} = uri_string:parse([Scheme, <<"://">>, Authority, PathWithQs]),
+	URIMap = uri_string:normalize(#{
+		scheme => Scheme,
+		host => iolist_to_binary(Host),
+		path => iolist_to_binary(Path)
+	}, [return_map]),
+	{ok, Cookies0, Store} = query(Store0, URIMap),
+	Headers = case Cookies0 of
+		[] ->
+			Headers0;
+		_ ->
+			Cookies = [{Name, Value} || #{name := Name, value := Value} <- Cookies0],
+			%% We put cookies at the end of the headers list as it's the least important header.
+			Headers0 ++ [{<<"cookie">>, cow_cookie:cookie(Cookies)}]
+	end,
+	{Headers, Store}.
 
 -spec domain_match(binary(), binary()) -> boolean().
 domain_match(String, String) ->
