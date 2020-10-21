@@ -20,7 +20,7 @@
 -export([has_keepalive/0]).
 -export([default_keepalive/0]).
 -export([init/4]).
--export([handle/4]).
+-export([handle/5]).
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
@@ -100,6 +100,10 @@ init(ReplyTo, Socket, Transport, #{stream_ref := StreamRef, headers := Headers,
 	{connected_ws_only, #ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
 		socket=Socket, transport=Transport, opts=Opts, extensions=Extensions,
 		flow=InitialFlow, handler=Handler, handler_state=HandlerState}}.
+
+handle(Data, State, CookieStore, EvHandler, EvHandlerState0) ->
+	{Commands, EvHandlerState} = handle(Data, State, EvHandler, EvHandlerState0),
+	{Commands, CookieStore, EvHandlerState}.
 
 %% Do not handle anything if we received a close frame.
 %% Initiate or terminate the closing state depending on whether we sent a close yet.

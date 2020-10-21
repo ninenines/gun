@@ -21,8 +21,8 @@
 -export([default_keepalive/0]).
 -export([init/4]).
 -export([switch_transport/3]).
--export([handle/4]).
--export([handle_continue/5]).
+-export([handle/5]).
+-export([handle_continue/6]).
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
@@ -110,10 +110,7 @@
 	%% the idea, that's why the main map has the ID as key. Then we also
 	%% have a Ref->ID index for faster lookup when we only have the Ref.
 	streams = #{} :: #{cow_http2:streamid() => #stream{}},
-	stream_refs = #{} :: #{reference() => cow_http2:streamid()},
-
-	%% We must queue commands when parsing the incoming data.
-	commands_queue = [] :: [{set_cookie, iodata(), iodata(), cow_http:status(), cow_http:headers()}]
+	stream_refs = #{} :: #{reference() => cow_http2:streamid()}
 }).
 
 check_options(Opts) ->
@@ -131,6 +128,8 @@ do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
 		ok -> do_check_options(Opts);
 		error -> {error, {options, {http2, Opt}}}
 	end;
+do_check_options([{cookie_ignore_informational, B}|Opts]) when is_boolean(B) ->
+	do_check_options(Opts);
 do_check_options([{flow, InitialFlow}|Opts]) when is_integer(InitialFlow), InitialFlow > 0 ->
 	do_check_options(Opts);
 do_check_options([{keepalive, infinity}|Opts]) ->
@@ -188,35 +187,23 @@ init(_ReplyTo, Socket, Transport, Opts0) ->
 switch_transport(Transport, Socket, State) ->
 	State#http2_state{socket=Socket, transport=Transport}.
 
-%% This function is called before returning from handle/4.
-handle_ret(CommandOrCommands, #http2_state{commands_queue=[]}) ->
-	empty_commands_queue(CommandOrCommands);
-handle_ret(Commands, #http2_state{commands_queue=Queue}) when is_list(Commands) ->
-	lists:reverse(Queue, empty_commands_queue(Commands));
-handle_ret(Command, #http2_state{commands_queue=Queue}) ->
-	lists:reverse([empty_commands_queue(Command)|Queue]).
-
-empty_commands_queue([{state, State}|Tail]) -> [{state, State#http2_state{commands_queue=[]}}|Tail];
-empty_commands_queue([Command|Tail]) -> [Command|empty_commands_queue(Tail)];
-empty_commands_queue([]) -> [];
-empty_commands_queue({state, State}) -> {state, State#http2_state{commands_queue=[]}};
-empty_commands_queue(Command) -> Command.
-
-handle(Data, State=#http2_state{buffer=Buffer}, EvHandler, EvHandlerState) ->
+handle(Data, State=#http2_state{buffer=Buffer}, CookieStore, EvHandler, EvHandlerState) ->
 	parse(<< Buffer/binary, Data/binary >>, State#http2_state{buffer= <<>>},
-		EvHandler, EvHandlerState).
+		CookieStore, EvHandler, EvHandlerState).
 
 parse(Data, State0=#http2_state{status=preface, http2_machine=HTTP2Machine},
-		EvHandler, EvHandlerState0) ->
+		CookieStore0, EvHandler, EvHandlerState0) ->
 	MaxFrameSize = cow_http2_machine:get_local_setting(max_frame_size, HTTP2Machine),
 	case cow_http2:parse(Data, MaxFrameSize) of
 		{ok, Frame, Rest} when element(1, Frame) =:= settings ->
-			case frame(State0#http2_state{status=connected}, Frame, EvHandler, EvHandlerState0) of
-				{Error={error, _}, EvHandlerState} -> {handle_ret(Error, State0), EvHandlerState};
-				{State, EvHandlerState} -> parse(Rest, State, EvHandler, EvHandlerState)
+			case frame(State0#http2_state{status=connected}, Frame, CookieStore0, EvHandler, EvHandlerState0) of
+				{Error={error, _}, CookieStore, EvHandlerState} ->
+					{Error, CookieStore, EvHandlerState};
+				{State, CookieStore, EvHandlerState} ->
+					parse(Rest, State, CookieStore, EvHandler, EvHandlerState)
 			end;
 		more ->
-			{handle_ret({state, State0#http2_state{buffer=Data}}, State0), EvHandlerState0};
+			{{state, State0#http2_state{buffer=Data}}, CookieStore0, EvHandlerState0};
 		%% Any error in the preface is converted to this specific error
 		%% to make debugging the problem easier (it's the server's fault).
 		_ ->
@@ -226,44 +213,49 @@ parse(Data, State0=#http2_state{status=preface, http2_machine=HTTP2Machine},
 				_ ->
 					'Invalid connection preface received. (RFC7540 3.5)'
 			end,
-			{handle_ret(connection_error(State0, {connection_error, protocol_error, Reason}), State0),
-				EvHandlerState0}
+			{connection_error(State0, {connection_error, protocol_error, Reason}),
+				CookieStore0, EvHandlerState0}
 	end;
 parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, streams=Streams},
-		EvHandler, EvHandlerState0) ->
+		CookieStore0, EvHandler, EvHandlerState0) ->
 	MaxFrameSize = cow_http2_machine:get_local_setting(max_frame_size, HTTP2Machine),
 	case cow_http2:parse(Data, MaxFrameSize) of
 		{ok, Frame, Rest} ->
-			case frame(State0, Frame, EvHandler, EvHandlerState0) of
-				{Error={error, _}, EvHandlerState} -> {handle_ret(Error, State0), EvHandlerState};
-				{State, EvHandlerState} -> parse(Rest, State, EvHandler, EvHandlerState)
+			case frame(State0, Frame, CookieStore0, EvHandler, EvHandlerState0) of
+				{Error={error, _}, CookieStore, EvHandlerState} ->
+					{Error, CookieStore, EvHandlerState};
+				{State, CookieStore, EvHandlerState} ->
+					parse(Rest, State, CookieStore, EvHandler, EvHandlerState)
 			end;
 		{ignore, Rest} ->
 			case ignored_frame(State0) of
-				Error = {error, _} -> {handle_ret(Error, State0), EvHandlerState0};
-				State -> parse(Rest, State, EvHandler, EvHandlerState0)
+				Error = {error, _} ->
+					{Error, CookieStore0, EvHandlerState0};
+				State ->
+					parse(Rest, State, CookieStore0, EvHandler, EvHandlerState0)
 			end;
 		{stream_error, StreamID, Reason, Human, Rest} ->
 			parse(Rest, reset_stream(State0, StreamID, {stream_error, Reason, Human}),
-				EvHandler, EvHandlerState0);
+				CookieStore0, EvHandler, EvHandlerState0);
 		Error = {connection_error, _, _} ->
-			{handle_ret(connection_error(State0, Error), State0), EvHandlerState0};
+			{connection_error(State0, Error), CookieStore0, EvHandlerState0};
 		%% If we both received and sent a GOAWAY frame and there are no streams
 		%% currently running, we can close the connection immediately.
 		more when Status =/= connected, Streams =:= #{} ->
-			{handle_ret([{state, State0#http2_state{buffer=Data, status=closing}}, close], State0),
-				EvHandlerState0};
+			{[{state, State0#http2_state{buffer=Data, status=closing}}, close],
+				CookieStore0, EvHandlerState0};
 		%% Otherwise we enter the closing state.
 		more when Status =:= goaway ->
-			{handle_ret([{state, State0#http2_state{buffer=Data, status=closing}}, closing(State0)], State0),
-				EvHandlerState0};
+			{[{state, State0#http2_state{buffer=Data, status=closing}}, closing(State0)],
+				CookieStore0, EvHandlerState0};
 		more ->
-			{handle_ret({state, State0#http2_state{buffer=Data}}, State0), EvHandlerState0}
+			{{state, State0#http2_state{buffer=Data}},
+				CookieStore0, EvHandlerState0}
 	end.
 
 %% Frames received.
 
-frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandlerState0) ->
+frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHandler, EvHandlerState0) ->
 	EvHandlerState = if
 		element(1, Frame) =:= headers; element(1, Frame) =:= push_promise ->
 			EvStreamID = element(2, Frame),
@@ -288,40 +280,49 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, EvHandler, EvHandl
 	case cow_http2_machine:frame(Frame, HTTP2Machine0) of
 		%% We only update the connection's window when receiving a lingering data frame.
 		{ok, HTTP2Machine} when element(1, Frame) =:= data ->
-			{update_window(State#http2_state{http2_machine=HTTP2Machine}), EvHandlerState};
+			{update_window(State#http2_state{http2_machine=HTTP2Machine}),
+				CookieStore, EvHandlerState};
 		{ok, HTTP2Machine} ->
 			{maybe_ack(State#http2_state{http2_machine=HTTP2Machine}, Frame),
-				EvHandlerState};
+				CookieStore, EvHandlerState};
 		{ok, {data, StreamID, IsFin, Data}, HTTP2Machine} ->
 			data_frame(State#http2_state{http2_machine=HTTP2Machine}, StreamID, IsFin, Data,
-				EvHandler, EvHandlerState);
+				CookieStore, EvHandler, EvHandlerState);
 		{ok, {headers, StreamID, IsFin, Headers, PseudoHeaders, BodyLen}, HTTP2Machine} ->
 			headers_frame(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, IsFin, Headers, PseudoHeaders, BodyLen,
-				EvHandler, EvHandlerState);
+				CookieStore, EvHandler, EvHandlerState);
 		{ok, {trailers, StreamID, Trailers}, HTTP2Machine} ->
-			trailers_frame(State#http2_state{http2_machine=HTTP2Machine},
-				StreamID, Trailers, EvHandler, EvHandlerState);
+			{StateRet, EvHandlerStateRet} = trailers_frame(
+				State#http2_state{http2_machine=HTTP2Machine},
+				StreamID, Trailers, EvHandler, EvHandlerState),
+			{StateRet, CookieStore, EvHandlerStateRet};
 		{ok, {rst_stream, StreamID, Reason}, HTTP2Machine} ->
-			rst_stream_frame(State#http2_state{http2_machine=HTTP2Machine},
-				StreamID, Reason, EvHandler, EvHandlerState);
+			{StateRet, EvHandlerStateRet} = rst_stream_frame(
+				State#http2_state{http2_machine=HTTP2Machine},
+				StreamID, Reason, EvHandler, EvHandlerState),
+			{StateRet, CookieStore, EvHandlerStateRet};
 		{ok, {push_promise, StreamID, PromisedStreamID, Headers, PseudoHeaders}, HTTP2Machine} ->
-			push_promise_frame(State#http2_state{http2_machine=HTTP2Machine},
+			{StateRet, EvHandlerStateRet} = push_promise_frame(
+				State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, PromisedStreamID, Headers, PseudoHeaders,
-				EvHandler, EvHandlerState);
+				EvHandler, EvHandlerState),
+			{StateRet, CookieStore, EvHandlerStateRet};
 		{ok, GoAway={goaway, _, _, _}, HTTP2Machine} ->
 			{goaway(State#http2_state{http2_machine=HTTP2Machine}, GoAway),
-				EvHandlerState};
+				CookieStore, EvHandlerState};
 		{send, SendData, HTTP2Machine} ->
-			send_data(maybe_ack(State#http2_state{http2_machine=HTTP2Machine}, Frame), SendData,
-				EvHandler, EvHandlerState);
+			{StateRet, EvHandlerStateRet} = send_data(
+				maybe_ack(State#http2_state{http2_machine=HTTP2Machine}, Frame),
+				SendData, EvHandler, EvHandlerState),
+			{StateRet, CookieStore, EvHandlerStateRet};
 		{error, {stream_error, StreamID, Reason, Human}, HTTP2Machine} ->
 			{reset_stream(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, {stream_error, Reason, Human}),
-				EvHandlerState};
+				CookieStore, EvHandlerState};
 		{error, Error={connection_error, _, _}, HTTP2Machine} ->
 			{connection_error(State#http2_state{http2_machine=HTTP2Machine}, Error),
-				EvHandlerState}
+				CookieStore, EvHandlerState}
 	end.
 
 maybe_ack(State=#http2_state{socket=Socket, transport=Transport}, Frame) ->
@@ -332,14 +333,18 @@ maybe_ack(State=#http2_state{socket=Socket, transport=Transport}, Frame) ->
 	end,
 	State.
 
-data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0) ->
-	case get_stream_by_id(State, StreamID) of
+data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
+	case get_stream_by_id(State0, StreamID) of
 		Stream=#stream{tunnel=undefined} ->
-			data_frame(State, StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream);
+			{State, EvHandlerState} = data_frame1(State0,
+				StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream),
+			{State, CookieStore0, EvHandlerState};
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 %			%% @todo What about IsFin?
-			{Commands, EvHandlerState} = Proto:handle(Data, ProtoState0, EvHandler, EvHandlerState0),
-			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState)
+			{Commands, CookieStore, EvHandlerState1} = Proto:handle(Data,
+				ProtoState0, CookieStore0, EvHandler, EvHandlerState0),
+			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
+			{State, CookieStore, EvHandlerState}
 	end.
 
 tunnel_commands(Command, Stream, State, EvHandler, EvHandlerState)
@@ -356,10 +361,6 @@ tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
 		State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}},
 		State, EvHandler, EvHandlerState);
-tunnel_commands([SetCookie={set_cookie, _, _, _, _}|Tail], Stream,
-		State=#http2_state{commands_queue=Queue}, EvHandler, EvHandlerState) ->
-	tunnel_commands(Tail, Stream, State#http2_state{commands_queue=[SetCookie|Queue]},
-		EvHandler, EvHandlerState);
 tunnel_commands([{error, _Reason}|_], #stream{id=StreamID},
 		State, _EvHandler, EvHandlerState) ->
 	{delete_stream(State, StreamID), EvHandlerState}.
@@ -372,7 +373,7 @@ continue_stream_ref(#http2_state{socket=#{handle_continue_stream_ref := Continue
 continue_stream_ref(State, StreamRef) ->
 	stream_ref(State, StreamRef).
 
-data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
+data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 		Stream=#stream{ref=StreamRef, reply_to=ReplyTo, flow=Flow0, handler_state=Handlers0}) ->
 	{ok, Dec, Handlers} = gun_content_handler:handle(IsFin, Data, Handlers0),
 	Flow = case Flow0 of
@@ -409,11 +410,11 @@ data_frame(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 	{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState}.
 
 %% @todo Make separate functions for inform/connect/normal.
-headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
-		tunnel_transport=TunnelTransport, content_handlers=Handlers0, commands_queue=Commands},
+headers_frame(State=#http2_state{transport=Transport, opts=Opts,
+		tunnel_transport=TunnelTransport, content_handlers=Handlers0},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
-		EvHandler, EvHandlerState0) ->
-	Stream = get_stream_by_id(State0, StreamID),
+		CookieStore0, EvHandler, EvHandlerState0) ->
+	Stream = get_stream_by_id(State, StreamID),
 	#stream{
 		ref=StreamRef,
 		reply_to=ReplyTo,
@@ -421,7 +422,8 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 		path=Path,
 		tunnel=Tunnel
 	} = Stream,
-	State = State0#http2_state{commands_queue=[{set_cookie, Authority, Path, Status, Headers}|Commands]},
+	CookieStore = gun_cookies:set_cookie_header(scheme(State),
+		Authority, Path, Status, Headers, CookieStore0, Opts),
 	RealStreamRef = stream_ref(State, StreamRef),
 	if
 		Status >= 100, Status =< 199 ->
@@ -432,7 +434,7 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 				status => Status,
 				headers => Headers
 			}, EvHandlerState0),
-			{State, EvHandlerState};
+			{State, CookieStore, EvHandlerState};
 		Status >= 200, Status =< 299, element(#tunnel.state, Tunnel) =:= requested ->
 			#tunnel{destination=Destination, info=TunnelInfo0} = Tunnel,
 			#{host := DestHost, port := DestPort} = Destination,
@@ -509,7 +511,7 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 				ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState2),
 			{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{
 				info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}}),
-				EvHandlerState};
+				CookieStore, EvHandlerState};
 		true ->
 			ReplyTo ! {gun_response, self(), RealStreamRef, IsFin, Status, Headers},
 			EvHandlerState1 = EvHandler:response_headers(#{
@@ -532,7 +534,7 @@ headers_frame(State0=#http2_state{transport=Transport, opts=Opts,
 			%% @todo Disable the tunnel if any.
 			{maybe_delete_stream(store_stream(State, Stream#stream{handler_state=Handlers}),
 				StreamID, remote, IsFin),
-				EvHandlerState}
+				CookieStore, EvHandlerState}
 	end.
 
 trailers_frame(State, StreamID, Trailers, EvHandler, EvHandlerState0) ->
@@ -612,17 +614,17 @@ ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	end.
 
 %% We always pass handle_continue messages to the tunnel.
-handle_continue(ContinueStreamRef, Msg, State0, EvHandler, EvHandlerState0) ->
+handle_continue(ContinueStreamRef, Msg, State0, CookieStore0, EvHandler, EvHandlerState0) ->
 	StreamRef = case ContinueStreamRef of
 		[SR|_] -> SR;
 		_ -> ContinueStreamRef
 	end,
 	case get_stream_by_ref(State0, StreamRef) of
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
-			{Commands, EvHandlerState1} = Proto:handle_continue(ContinueStreamRef,
-				Msg, ProtoState0, EvHandler, EvHandlerState0),
+			{Commands, CookieStore, EvHandlerState1} = Proto:handle_continue(ContinueStreamRef,
+				Msg, ProtoState0, CookieStore0, EvHandler, EvHandlerState0),
 			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
-			{handle_ret({state, State}, State), EvHandlerState}
+			{{state, State}, CookieStore, EvHandlerState}
 		%% The stream may have ended while TLS was being decoded. @todo What should we do?
 %		error ->
 %			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
@@ -867,14 +869,9 @@ request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;
 initial_flow(InitialFlow, _) -> InitialFlow.
 
-prepare_headers(#http2_state{transport=Transport}, Method, Host0, Port, Path, Headers0, CookieStore0) ->
-	Scheme = case Transport of
-		gun_tls -> <<"https">>;
-		gun_tls_proxy -> <<"https">>;
-		gun_tcp -> <<"http">>;
-		gun_tcp_proxy -> <<"http">>;
-		gun_tls_proxy_http2_connect -> <<"http">>
-	end,
+prepare_headers(State=#http2_state{transport=Transport},
+		Method, Host0, Port, Path, Headers0, CookieStore0) ->
+	Scheme = scheme(State),
 	Authority = case lists:keyfind(<<"host">>, 1, Headers0) of
 		{_, Host} -> Host;
 		_ -> gun_http:host_header(Transport, Host0, Port)
@@ -897,6 +894,15 @@ prepare_headers(#http2_state{transport=Transport}, Method, Host0, Port, Path, He
 		path => Path
 	},
 	{ok, PseudoHeaders, Headers, CookieStore}.
+
+scheme(#http2_state{transport=Transport}) ->
+	case Transport of
+		gun_tls -> <<"https">>;
+		gun_tls_proxy -> <<"https">>;
+		gun_tcp -> <<"http">>;
+		gun_tcp_proxy -> <<"http">>;
+		gun_tls_proxy_http2_connect -> <<"http">>
+	end.
 
 %% @todo Make all calls go through this clause.
 data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, Data,

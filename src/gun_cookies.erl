@@ -21,6 +21,7 @@
 -export([query/2]).
 -export([session_gc/1]).
 -export([set_cookie/5]).
+-export([set_cookie_header/7]).
 
 -ifdef(TEST).
 -export([wpt_http_state_test_files/1]). %% Also used in rfc6265bis_SUITE.
@@ -340,6 +341,37 @@ store({Mod, State0}, Cookie) ->
 		Error ->
 			Error
 	end.
+
+-spec set_cookie_header(binary(), iodata(), iodata(), cow_http:status(),
+	Headers, Store, #{cookie_ignore_informational := boolean()})
+	-> {Headers, Store} when Headers :: [{binary(), iodata()}], Store :: undefined | store().
+%% Don't set cookies when cookie store isn't configured.
+set_cookie_header(_, _, _, _, _, Store=undefined, _) ->
+	Store;
+%% Ignore cookies set on informational responses when configured to do so.
+%% This includes cookies set to Websocket upgrade responses!
+set_cookie_header(_, _, _, Status, _, Store, #{cookie_ignore_informational := true})
+		when Status >= 100, Status =< 199 ->
+	Store;
+set_cookie_header(Scheme, Authority, PathWithQs, _, Headers, Store0, _) ->
+	#{host := Host, path := Path} = uri_string:parse([Scheme, <<"://">>, Authority, PathWithQs]),
+	URIMap = uri_string:normalize(#{
+		scheme => Scheme,
+		host => iolist_to_binary(Host),
+		path => iolist_to_binary(Path)
+	}, [return_map]),
+	SetCookies = [SC || {<<"set-cookie">>, SC} <- Headers],
+	lists:foldl(fun(SC, Store1) ->
+		case cow_cookie:parse_set_cookie(SC) of
+			{ok, N, V, A} ->
+				case set_cookie(Store1, URIMap, N, V, A) of
+					{ok, Store} -> Store;
+					{error, _} -> Store1
+				end;
+			ignore ->
+				Store1
+		end
+	end, Store0, SetCookies).
 
 -ifdef(TEST).
 gc_test() ->

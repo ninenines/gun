@@ -20,7 +20,7 @@
 -export([has_keepalive/0]).
 -export([init/4]).
 -export([switch_transport/3]).
--export([handle/4]).
+-export([handle/5]).
 -export([closing/4]).
 -export([close/4]).
 %% @todo down
@@ -99,8 +99,8 @@ init(ReplyTo, Socket, Transport, Opts) ->
 switch_transport(Transport, Socket, State) ->
 	State#socks_state{socket=Socket, transport=Transport}.
 
-handle(Data, State, _, EvHandlerState) ->
-	{handle(Data, State), EvHandlerState}.
+handle(Data, State, CookieStore, _, EvHandlerState) ->
+	{handle(Data, State), CookieStore, EvHandlerState}.
 
 %% No authentication.
 handle(<<5, 0>>, State=#socks_state{version=5, status=auth_method_select}) ->

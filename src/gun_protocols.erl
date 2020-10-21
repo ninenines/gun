@@ -49,11 +49,23 @@ handler_and_opts(ProtocolName, Opts) ->
 	{Protocol, maps:get(Protocol:opts_name(), Opts, #{})}.
 
 -spec negotiated({ok, binary()} | {error, protocol_not_negotiated}, gun:protocols())
-	-> http | http2 | raw | socks.
-negotiated({ok, <<"h2">>}, _) -> http2;
-negotiated({ok, <<"http/1.1">>}, _) -> http;
-negotiated({error, protocol_not_negotiated}, [Protocol]) -> Protocol;
-negotiated({error, protocol_not_negotiated}, _) -> http.
+	-> gun:protocol().
+negotiated({ok, <<"h2">>}, Protocols) ->
+	lists:foldl(fun
+		(E = http2, _) -> E;
+		(E = {http2, _}, _) -> E;
+		(_, Acc) -> Acc
+	end, http2, Protocols);
+negotiated({ok, <<"http/1.1">>}, Protocols) ->
+	lists:foldl(fun
+		(E = http, _) -> E;
+		(E = {http, _}, _) -> E;
+		(_, Acc) -> Acc
+	end, http, Protocols);
+negotiated({error, protocol_not_negotiated}, [Protocol]) ->
+	Protocol;
+negotiated({error, protocol_not_negotiated}, _) ->
+	http.
 
 -spec stream_ref(gun:protocol()) -> undefined | gun:stream_ref().
 stream_ref({_, ProtocolOpts}) -> maps:get(stream_ref, ProtocolOpts, undefined);

@@ -158,9 +158,8 @@ do_informational_set_cookie(Config, Boolean) ->
 	Protocol = config(protocol, Config),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
-		protocols => [Protocol],
-		cookie_store => gun_cookies_list:init(),
-		cookie_ignore_informational => Boolean
+		protocols => [{Protocol, #{cookie_ignore_informational => Boolean}}],
+		cookie_store => gun_cookies_list:init()
 	}),
 	{ok, Protocol} = gun:await_up(ConnPid),
 	StreamRef1 = gun:get(ConnPid, "/informational"),
@@ -176,13 +175,46 @@ do_informational_set_cookie(Config, Boolean) ->
 	gun:close(ConnPid),
 	Res.
 
-set_cookie_connect(Config) ->
+set_cookie_connect_tcp(Config) ->
 	doc("Cookies may also be set in responses going through CONNECT tunnels."),
 	Transport = config(transport, Config),
 	Protocol = config(protocol, Config),
-	{ok, ProxyPid, ProxyPort} = event_SUITE:do_proxy_start(Protocol, Transport),
+	{ok, ProxyPid, ProxyPort} = event_SUITE:do_proxy_start(Protocol, tcp),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		transport => tcp,
+		protocols => [Protocol],
+		cookie_store => gun_cookies_list:init()
+	}),
+	{ok, Protocol} = gun:await_up(ConnPid),
+	tunnel_SUITE:do_handshake_completed(Protocol, ProxyPid),
+	StreamRef1 = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => config(port, Config),
 		transport => Transport,
+		protocols => [Protocol]
+	}),
+	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
+	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{up, Protocol} = gun:await(ConnPid, StreamRef1),
+	StreamRef2 = gun:get(ConnPid, "/cookie-set?prefix", #{
+		<<"please-set-cookie">> => <<"a=b">>
+	}, #{tunnel => StreamRef1}),
+	{response, fin, 204, Headers2} = gun:await(ConnPid, StreamRef2),
+	ct:log("Headers2:~n~p", [Headers2]),
+	StreamRef3 = gun:get(ConnPid, "/cookie-echo", [], #{tunnel => StreamRef1}),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef3),
+	{ok, Body3} = gun:await_body(ConnPid, StreamRef3),
+	ct:log("Body3:~n~p", [Body3]),
+	[{<<"a">>, <<"b">>}] = cow_cookie:parse_cookie(Body3),
+	gun:close(ConnPid).
+
+set_cookie_connect_tls(Config) ->
+	doc("Cookies may also be set in responses going through CONNECT tunnels."),
+	Transport = config(transport, Config),
+	Protocol = config(protocol, Config),
+	{ok, ProxyPid, ProxyPort} = event_SUITE:do_proxy_start(Protocol, tls),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		transport => tls,
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),

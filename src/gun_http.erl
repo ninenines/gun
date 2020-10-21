@@ -21,7 +21,7 @@
 -export([default_keepalive/0]).
 -export([init/4]).
 -export([switch_transport/3]).
--export([handle/4]).
+-export([handle/5]).
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
@@ -80,10 +80,7 @@
 	streams = [] :: [#stream{}],
 	in = head :: io(),
 	in_state = {0, 0} :: {non_neg_integer(), non_neg_integer()},
-	out = head :: io(),
-
-	%% We must queue commands when parsing the incoming data.
-	commands_queue = [] :: [{set_cookie, iodata(), iodata(), cow_http:status(), cow_http:headers()}]
+	out = head :: io()
 }).
 
 check_options(Opts) ->
@@ -100,6 +97,8 @@ do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
 		ok -> do_check_options(Opts);
 		error -> {error, {options, {http, Opt}}}
 	end;
+do_check_options([{cookie_ignore_informational, B}|Opts]) when is_boolean(B) ->
+	do_check_options(Opts);
 do_check_options([{flow, InitialFlow}|Opts]) when is_integer(InitialFlow), InitialFlow > 0 ->
 	do_check_options(Opts);
 do_check_options([{keepalive, infinity}|Opts]) ->
@@ -127,29 +126,16 @@ init(_ReplyTo, Socket, Transport, Opts) ->
 switch_transport(Transport, Socket, State) ->
 	State#http_state{socket=Socket, transport=Transport}.
 
-%% This function is called before returning from handle/4.
-handle_ret(CommandOrCommands, #http_state{commands_queue=[]}) ->
-	empty_commands_queue(CommandOrCommands);
-handle_ret(Commands, #http_state{commands_queue=Queue}) when is_list(Commands) ->
-	lists:reverse(Queue, empty_commands_queue(Commands));
-handle_ret(Command, #http_state{commands_queue=Queue}) ->
-	lists:reverse([empty_commands_queue(Command)|Queue]).
-
-empty_commands_queue([{state, State}|Tail]) -> [{state, State#http_state{commands_queue=[]}}|Tail];
-empty_commands_queue([Command|Tail]) -> [Command|empty_commands_queue(Tail)];
-empty_commands_queue([]) -> [];
-empty_commands_queue({state, State}) -> {state, State#http_state{commands_queue=[]}};
-empty_commands_queue(Command) -> Command.
-
 %% Stop looping when we got no more data.
-handle(<<>>, State, _, EvHandlerState) ->
-	{handle_ret({state, State}, State), EvHandlerState};
+handle(<<>>, State, CookieStore, _, EvHandlerState) ->
+	{{state, State}, CookieStore, EvHandlerState};
 %% Close when server responds and we don't have any open streams.
-handle(_, State=#http_state{streams=[]}, _, EvHandlerState) ->
-	{handle_ret(close, State), EvHandlerState};
+handle(_, #http_state{streams=[]}, CookieStore, _, EvHandlerState) ->
+	{close, CookieStore, EvHandlerState};
 %% Wait for the full response headers before trying to parse them.
 handle(Data, State=#http_state{in=head, buffer=Buffer,
-		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]}, EvHandler, EvHandlerState0) ->
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
+		CookieStore, EvHandler, EvHandlerState0) ->
 	%% Send the event only if there was no data in the buffer.
 	%% If there is data in the buffer then we already sent the event.
 	EvHandlerState = case Buffer of
@@ -163,31 +149,34 @@ handle(Data, State=#http_state{in=head, buffer=Buffer,
 	end,
 	Data2 = << Buffer/binary, Data/binary >>,
 	case binary:match(Data2, <<"\r\n\r\n">>) of
-		nomatch -> {handle_ret({state, State#http_state{buffer=Data2}}, State), EvHandlerState};
-		{_, _} -> handle_head(Data2, State#http_state{buffer= <<>>}, EvHandler, EvHandlerState)
+		nomatch ->
+			{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState};
+		{_, _} ->
+			handle_head(Data2, State#http_state{buffer= <<>>},
+				CookieStore, EvHandler, EvHandlerState)
 	end;
 %% Everything sent to the socket until it closes is part of the response body.
-handle(Data, State=#http_state{in=body_close}, _, EvHandlerState) ->
-	{handle_ret(send_data(Data, State, nofin), State), EvHandlerState};
+handle(Data, State=#http_state{in=body_close}, CookieStore, _, EvHandlerState) ->
+	{send_data(Data, State, nofin), CookieStore, EvHandlerState};
 %% Chunked transfer-encoding may contain both data and trailers.
-handle(Data, State=#http_state{in=body_chunked, in_state=InState,
-		buffer=Buffer, streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_],
-		connection=Conn}, EvHandler, EvHandlerState0) ->
+handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_], connection=Conn},
+		CookieStore, EvHandler, EvHandlerState0) ->
 	Buffer2 = << Buffer/binary, Data/binary >>,
 	case cow_http_te:stream_chunked(Buffer2, InState) of
 		more ->
-			{handle_ret({state, State#http_state{buffer=Buffer2}}, State), EvHandlerState0};
+			{{state, State#http_state{buffer=Buffer2}}, CookieStore, EvHandlerState0};
 		{more, Data2, InState2} ->
-			{handle_ret(send_data(Data2, State#http_state{buffer= <<>>, in_state=InState2}, nofin), State),
-				EvHandlerState0};
+			{send_data(Data2, State#http_state{buffer= <<>>, in_state=InState2}, nofin),
+				CookieStore, EvHandlerState0};
 		{more, Data2, Length, InState2} when is_integer(Length) ->
 			%% @todo See if we can recv faster than one message at a time.
-			{handle_ret(send_data(Data2, State#http_state{buffer= <<>>, in_state=InState2}, nofin), State),
-				EvHandlerState0};
+			{send_data(Data2, State#http_state{buffer= <<>>, in_state=InState2}, nofin),
+				CookieStore, EvHandlerState0};
 		{more, Data2, Rest, InState2} ->
 			%% @todo See if we can recv faster than one message at a time.
-			{handle_ret(send_data(Data2, State#http_state{buffer=Rest, in_state=InState2}, nofin), State),
-				EvHandlerState0};
+			{send_data(Data2, State#http_state{buffer=Rest, in_state=InState2}, nofin),
+				CookieStore, EvHandlerState0};
 		{done, HasTrailers, Rest} ->
 			%% @todo response_end should be called AFTER send_data
 			{IsFin, EvHandlerState} = case HasTrailers of
@@ -205,11 +194,13 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 			[{state, State1}|_] = send_data(<<>>, State, IsFin),
 			case {HasTrailers, Conn} of
 				{trailers, _} ->
-					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer}, EvHandler, EvHandlerState);
+					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
+						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, keepalive} ->
-					handle(Rest, end_stream(State1#http_state{buffer= <<>>}), EvHandler, EvHandlerState);
+					handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
+						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, close} ->
-					{handle_ret([{state, end_stream(State1)}, close], State1), EvHandlerState}
+					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end;
 		{done, Data2, HasTrailers, Rest} ->
 			%% @todo response_end should be called AFTER send_data
@@ -227,19 +218,22 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState,
 			[{state, State1}|_] = send_data(Data2, State, IsFin),
 			case {HasTrailers, Conn} of
 				{trailers, _} ->
-					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer}, EvHandler, EvHandlerState);
+					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
+						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, keepalive} ->
-					handle(Rest, end_stream(State1#http_state{buffer= <<>>}), EvHandler, EvHandlerState);
+					handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
+						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, close} ->
-					{handle_ret([{state, end_stream(State1)}, close], State1), EvHandlerState}
+					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end
 	end;
 handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
-		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]}, EvHandler, EvHandlerState0) ->
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
+		CookieStore, EvHandler, EvHandlerState0) ->
 	Data2 = << Buffer/binary, Data/binary >>,
 	case binary:match(Data2, <<"\r\n\r\n">>) of
 		nomatch ->
-			{handle_ret({state, State#http_state{buffer=Data2}}, State), EvHandlerState0};
+			{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState0};
 		{_, _} ->
 			{Trailers, Rest} = cow_http:parse_headers(Data2),
 			%% @todo We probably want to pass this to gun_content_handler?
@@ -253,21 +247,22 @@ handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
 			EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
 			case Conn of
 				keepalive ->
-					handle(Rest, end_stream(State#http_state{buffer= <<>>}), EvHandler, EvHandlerState);
+					handle(Rest, end_stream(State#http_state{buffer= <<>>}),
+						CookieStore, EvHandler, EvHandlerState);
 				close ->
-					{handle_ret([{state, end_stream(State)}, close], State), EvHandlerState}
+					{[{state, end_stream(State)}, close], CookieStore, EvHandlerState}
 			end
 	end;
 %% We know the length of the rest of the body.
 handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
-		EvHandler, EvHandlerState0) ->
+		CookieStore, EvHandler, EvHandlerState0) ->
 	DataSize = byte_size(Data),
 	if
 		%% More data coming.
 		DataSize < Length ->
-			{handle_ret(send_data(Data, State#http_state{in={body, Length - DataSize}}, nofin), State),
-				EvHandlerState0};
+			{send_data(Data, State#http_state{in={body, Length - DataSize}}, nofin),
+				CookieStore, EvHandlerState0};
 		%% Stream finished, no rest.
 		DataSize =:= Length ->
 			%% We ignore the active command because the stream ended.
@@ -278,9 +273,9 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 			}, EvHandlerState0),
 			case Conn of
 				keepalive ->
-					{handle_ret([{state, end_stream(State1)}, {active, true}], State1), EvHandlerState};
+					{[{state, end_stream(State1)}, {active, true}], CookieStore, EvHandlerState};
 				close ->
-					{handle_ret([{state, end_stream(State1)}, close], State1), EvHandlerState}
+					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end;
 		%% Stream finished, rest.
 		true ->
@@ -292,28 +287,30 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 				reply_to => ReplyTo
 			}, EvHandlerState0),
 			case Conn of
-				keepalive -> handle(Rest, end_stream(State1), EvHandler, EvHandlerState);
-				close -> {handle_ret([{state, end_stream(State1)}, close], State1), EvHandlerState}
+				keepalive -> handle(Rest, end_stream(State1), CookieStore, EvHandler, EvHandlerState);
+				close -> {[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end
 	end.
 
-handle_head(Data, State0=#http_state{streams=[#stream{ref=StreamRef, authority=Authority, path=Path}|_],
-		commands_queue=Commands}, EvHandler, EvHandlerState) ->
+handle_head(Data, State=#http_state{opts=Opts,
+		streams=[#stream{ref=StreamRef, authority=Authority, path=Path}|_]},
+		CookieStore0, EvHandler, EvHandlerState) ->
 	{Version, Status, _, Rest0} = cow_http:parse_status_line(Data),
 	{Headers, Rest} = cow_http:parse_headers(Rest0),
-	State = State0#http_state{commands_queue=[{set_cookie, Authority, Path, Status, Headers}|Commands]},
+	CookieStore = gun_cookies:set_cookie_header(scheme(State),
+		Authority, Path, Status, Headers, CookieStore0, Opts),
 	case StreamRef of
 		{connect, _, _} when Status >= 200, Status < 300 ->
-			handle_connect(Rest, State, EvHandler, EvHandlerState, Version, Status, Headers);
+			handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
 		_ when Status >= 100, Status =< 199 ->
-			handle_inform(Rest, State, EvHandler, EvHandlerState, Version, Status, Headers);
+			handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
 		_ ->
-			handle_response(Rest, State, EvHandler, EvHandlerState, Version, Status, Headers)
+			handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
 	end.
 
 handle_connect(Rest, State=#http_state{
 		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
-		EvHandler, EvHandlerState0, 'HTTP/1.1', Status, Headers) ->
+		CookieStore, EvHandler, EvHandlerState0, 'HTTP/1.1', Status, Headers) ->
 	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 	_ = case Stream of
@@ -342,25 +339,25 @@ handle_connect(Rest, State=#http_state{
 				timeout => maps:get(tls_handshake_timeout, Destination, infinity)
 			},
 			Protocols = maps:get(protocols, Destination, [http2, http]),
-			{handle_ret([
+			{[
 				{origin, <<"https">>, NewHost, NewPort, connect},
 				{tls_handshake, HandshakeEvent, Protocols, ReplyTo}
-			], State), EvHandlerState1};
+			], CookieStore, EvHandlerState1};
 		_ ->
 			[NewProtocol0] = maps:get(protocols, Destination, [http]),
 			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, RealStreamRef),
 			Protocol = gun_protocols:handler(NewProtocol),
 			ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},
-			{handle_ret([
+			{[
 				{origin, <<"http">>, NewHost, NewPort, connect},
 				{switch_protocol, NewProtocol, ReplyTo}
-			], State), EvHandlerState1}
+			], CookieStore, EvHandlerState1}
 	end.
 
 %% @todo We probably shouldn't send info messages if the stream is not alive.
 handle_inform(Rest, State=#http_state{
 		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
-		EvHandler, EvHandlerState0, Version, Status, Headers) ->
+		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers) ->
 	EvHandlerState = EvHandler:response_inform(#{
 		stream_ref => stream_ref(State, StreamRef),
 		reply_to => ReplyTo,
@@ -370,7 +367,7 @@ handle_inform(Rest, State=#http_state{
 	%% @todo We might want to switch to the HTTP/2 protocol or to the TLS transport as well.
 	case {Version, Status, StreamRef} of
 		{'HTTP/1.1', 101, #websocket{}} ->
-			{handle_ret(ws_handshake(Rest, State, StreamRef, Headers), State), EvHandlerState};
+			{ws_handshake(Rest, State, StreamRef, Headers), CookieStore, EvHandlerState};
 		%% Any other 101 response results in us switching to the raw protocol.
 		%% @todo We should check that we asked for an upgrade before accepting it.
 		{'HTTP/1.1', 101, _} when is_reference(StreamRef) ->
@@ -380,21 +377,21 @@ handle_inform(Rest, State=#http_state{
 				Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
 				ReplyTo ! {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers},
 				%% @todo We probably need to add_stream_ref?
-				{handle_ret({switch_protocol, raw, ReplyTo}, State), EvHandlerState0}
+				{{switch_protocol, raw, ReplyTo}, CookieStore, EvHandlerState0}
 			catch _:_ ->
 				%% When the Upgrade header is missing or invalid we treat
 				%% the response as any other informational response.
 				ReplyTo ! {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers},
-				handle(Rest, State, EvHandler, EvHandlerState)
+				handle(Rest, State, CookieStore, EvHandler, EvHandlerState)
 			end;
 		_ ->
 			ReplyTo ! {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers},
-			handle(Rest, State, EvHandler, EvHandlerState)
+			handle(Rest, State, CookieStore, EvHandler, EvHandlerState)
 	end.
 
 handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connection=Conn,
 		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo, method=Method, is_alive=IsAlive}|Tail]},
-		EvHandler, EvHandlerState0, Version, Status, Headers) ->
+		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers) ->
 	In = response_io_from_headers(Method, Version, Status, Headers),
 	IsFin = case In of head -> fin; _ -> nofin end,
 	RealStreamRef = stream_ref(State, StreamRef),
@@ -436,17 +433,17 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 	%% We always reset in_state even if not chunked.
 	if
 		IsFin =:= fin, Conn2 =:= close ->
-			{handle_ret(close, State), EvHandlerState};
+			{close, CookieStore, EvHandlerState};
 		IsFin =:= fin ->
 			handle(Rest, end_stream(State#http_state{in=In,
 				in_state={0, 0}, connection=Conn2,
 				streams=[Stream#stream{handler_state=Handlers}|Tail]}),
-				EvHandler, EvHandlerState);
+				CookieStore, EvHandler, EvHandlerState);
 		true ->
 			handle(Rest, State#http_state{in=In,
 				in_state={0, 0}, connection=Conn2,
 				streams=[Stream#stream{handler_state=Handlers}|Tail]},
-				EvHandler, EvHandlerState)
+				CookieStore, EvHandler, EvHandlerState)
 	end.
 
 %% The state must be first in order to retrieve it when the stream ended.

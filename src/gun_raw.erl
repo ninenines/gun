@@ -19,7 +19,7 @@
 -export([opts_name/0]).
 -export([has_keepalive/0]).
 -export([init/4]).
--export([handle/4]).
+-export([handle/5]).
 -export([closing/4]).
 -export([close/4]).
 -export([data/7]).
@@ -44,10 +44,10 @@ init(ReplyTo, Socket, Transport, Opts) ->
 	StreamRef = maps:get(stream_ref, Opts, undefined),
 	{connected_data_only, #raw_state{ref=StreamRef, reply_to=ReplyTo, socket=Socket, transport=Transport}}.
 
-handle(Data, State=#raw_state{ref=StreamRef, reply_to=ReplyTo}, _, EvHandlerState) ->
+handle(Data, State=#raw_state{ref=StreamRef, reply_to=ReplyTo}, CookieStore, _, EvHandlerState) ->
 	%% When we take over the entire connection there is no stream reference.
 	ReplyTo ! {gun_data, self(), StreamRef, nofin, Data},
-	{{state, State}, EvHandlerState}.
+	{{state, State}, CookieStore, EvHandlerState}.
 
 %% We can always close immediately.
 closing(_, _, _, EvHandlerState) ->

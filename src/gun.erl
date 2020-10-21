@@ -135,7 +135,6 @@
 
 -type opts() :: #{
 	connect_timeout => timeout(),
-	cookie_ignore_informational => boolean(),
 	cookie_store => gun_cookies:store(),
 	domain_lookup_timeout => timeout(),
 	event_handler => {module(), any()},
@@ -212,6 +211,7 @@
 -type http_opts() :: #{
 	closing_timeout => timeout(),
 	content_handlers => gun_content_handler:opt(),
+	cookie_ignore_informational => boolean(),
 	flow => pos_integer(),
 	keepalive => timeout(),
 	transform_header_name => fun((binary()) -> binary()),
@@ -226,6 +226,7 @@
 -type http2_opts() :: #{
 	closing_timeout => timeout(),
 	content_handlers => gun_content_handler:opt(),
+	cookie_ignore_informational => boolean(),
 	flow => pos_integer(),
 	keepalive => timeout(),
 
@@ -349,8 +350,6 @@ check_options([{connect_timeout, infinity}|Opts]) ->
 check_options([{connect_timeout, T}|Opts]) when is_integer(T), T >= 0 ->
 	check_options(Opts);
 check_options([{cookie_store, {Mod, _}}|Opts]) when is_atom(Mod) ->
-	check_options(Opts);
-check_options([{cookie_ignore_informational, B}|Opts]) when is_boolean(B) ->
 	check_options(Opts);
 check_options([{domain_lookup_timeout, infinity}|Opts]) ->
 	check_options(Opts);
@@ -1097,10 +1096,13 @@ initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts, or
 
 ensure_alpn_sni(Protocols0, TransOpts0, OriginHost) ->
 	%% ALPN.
-	Protocols = [case P of
-		http -> <<"http/1.1">>;
-		http2 -> <<"h2">>
-	end || P <- Protocols0, lists:member(P, [http, http2])],
+	Protocols = lists:foldl(fun
+		(http, Acc) -> [<<"http/1.1">>|Acc];
+		({http, _}, Acc) -> [<<"http/1.1">>|Acc];
+		(http2, Acc) -> [<<"h2">>|Acc];
+		({http2, _}, Acc) -> [<<"h2">>|Acc];
+		(_, Acc) -> Acc
+	end, [], Protocols0),
 	TransOpts = [
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
@@ -1188,12 +1190,13 @@ normal_tls_handshake(Socket, State=#state{
 	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 		{ok, TLSSocket} ->
-			Protocol = gun_protocols:negotiated(ssl:negotiated_protocol(TLSSocket), Protocols),
+			NewProtocol = gun_protocols:negotiated(ssl:negotiated_protocol(TLSSocket), Protocols),
+			Protocol = gun_protocols:handler(NewProtocol),
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 				socket => TLSSocket,
-				protocol => Protocol
+				protocol => Protocol:name()
 			}, EvHandlerState1),
-			{ok, TLSSocket, Protocol, State#state{event_handler_state=EvHandlerState}};
+			{ok, TLSSocket, NewProtocol, State#state{event_handler_state=EvHandlerState}};
 		{error, Reason} ->
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 				error => Reason
@@ -1381,10 +1384,12 @@ handle_common_connected(Type, Event, StateName, StateData) ->
 %% Socket events.
 handle_common_connected_no_input(info, {OK, Socket, Data}, _,
 		State0=#state{socket=Socket, messages={OK, _, _},
-		protocol=Protocol, protocol_state=ProtoState,
+		protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:handle(Data, ProtoState, EvHandler, EvHandlerState0),
-	maybe_active(commands(Commands, State0#state{event_handler_state=EvHandlerState}));
+	{Commands, CookieStore, EvHandlerState} = Protocol:handle(Data,
+		ProtoState, CookieStore0, EvHandler, EvHandlerState0),
+	maybe_active(commands(Commands, State0#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(info, {Closed, Socket}, _,
 		State=#state{socket=Socket, messages={_, Closed, _}}) ->
 	disconnect(State, closed);
@@ -1395,19 +1400,21 @@ handle_common_connected_no_input(info, {Error, Socket, Reason}, _,
 %% We always forward the messages to Protocol:handle_continue.
 handle_common_connected_no_input(info,
 		Msg={gun_tls_proxy, _, _, {handle_continue, StreamRef, _, _}}, _,
-		State0=#state{protocol=Protocol, protocol_state=ProtoState,
+		State0=#state{protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:handle_continue(
+	{Commands, CookieStore, EvHandlerState} = Protocol:handle_continue(
 		dereference_stream_ref(StreamRef, State0),
-		Msg, ProtoState, EvHandler, EvHandlerState0),
-	maybe_active(commands(Commands, State0#state{event_handler_state=EvHandlerState}));
+		Msg, ProtoState, CookieStore0, EvHandler, EvHandlerState0),
+	maybe_active(commands(Commands, State0#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(info, {handle_continue, StreamRef, Msg}, _,
-		State0=#state{protocol=Protocol, protocol_state=ProtoState,
+		State0=#state{protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:handle_continue(
+	{Commands, CookieStore, EvHandlerState} = Protocol:handle_continue(
 		dereference_stream_ref(StreamRef, State0),
-		Msg, ProtoState, EvHandler, EvHandlerState0),
-	maybe_active(commands(Commands, State0#state{event_handler_state=EvHandlerState}));
+		Msg, ProtoState, CookieStore0, EvHandler, EvHandlerState0),
+	maybe_active(commands(Commands, State0#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState}));
 %% Timeouts.
 %% @todo HTTP/2 requires more timeouts than just the keepalive timeout.
 %% We should have a timeout function in protocols that deal with
@@ -1622,44 +1629,6 @@ commands([{active, Active}|Tail], State) when is_boolean(Active) ->
 	commands(Tail, State#state{active=Active});
 commands([{state, ProtoState}|Tail], State) ->
 	commands(Tail, State#state{protocol_state=ProtoState});
-%% Don't set cookies when cookie store isn't configured.
-commands([{set_cookie, _, _, _, _}|Tail], State=#state{cookie_store=undefined}) ->
-	commands(Tail, State);
-%% Ignore cookies set on informational responses when configured to do so.
-%% This includes cookies set to Websocket upgrade responses!
-commands([{set_cookie, _, _, Status, _}|Tail], State=#state{opts=#{cookie_ignore_informational := true}})
-		when Status >= 100, Status =< 199 ->
-	commands(Tail, State);
-%% @todo Make sure this works for proxied requests too.
-commands([{set_cookie, Authority, PathWithQs, _, Headers}|Tail], State=#state{
-			transport=Transport, cookie_store=Store0}) ->
-	%% @todo This is wrong. Also we should probably not do a command for this.
-	%% We should instead give the CookieStore to all callbacks.
-	Scheme = case Transport of
-		gun_tls -> <<"https">>;
-		gun_tls_proxy -> <<"https">>;
-		gun_tcp -> <<"http">>
-	end,
-	%% @todo Not sure if this is best done here or in the protocol code or elsewhere.
-	#{host := Host, path := Path} = uri_string:parse([Scheme, <<"://">>, Authority, PathWithQs]),
-	URIMap = uri_string:normalize(#{
-		scheme => Scheme,
-		host => iolist_to_binary(Host),
-		path => iolist_to_binary(Path)
-	}, [return_map]),
-	SetCookies = [SC || {<<"set-cookie">>, SC} <- Headers],
-	Store = lists:foldl(fun(SC, Store1) ->
-		case cow_cookie:parse_set_cookie(SC) of
-			{ok, N, V, A} ->
-				case gun_cookies:set_cookie(Store1, URIMap, N, V, A) of
-					{ok, Store2} -> Store2;
-					{error, _} -> Store1
-				end;
-			ignore ->
-				Store1
-		end
-	end, Store0, SetCookies),
-	commands(Tail, State#state{cookie_store=Store});
 %% Order is important: the origin must be changed before
 %% the transport and/or protocol in order to keep track
 %% of the intermediaries properly.
