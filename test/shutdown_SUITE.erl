@@ -218,9 +218,9 @@ http1_request_connection_close_pipeline(Config) ->
 	StreamRef3 = gun:get(ConnPid, "/"),
 	%% We get the response, pipelined streams get canceled, followed by Gun shutting down.
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{error, {stream_error, closing}} = gun:await(ConnPid, StreamRef2),
+	{error, {stream_error, closing}} = gun:await(ConnPid, StreamRef3),
 	{ok, _} = gun:await_body(ConnPid, StreamRef1),
-	{error, {stream_error, {closed, normal}}} = gun:await(ConnPid, StreamRef2),
-	{error, {stream_error, {closed, normal}}} = gun:await(ConnPid, StreamRef3),
 	gun_is_down(ConnPid, ConnRef, normal).
 
 http1_response_connection_close(_) ->
@@ -272,8 +272,8 @@ http1_response_connection_close_pipeline(_) ->
 		%% We get the response, pipelined streams get canceled, followed by Gun shutting down.
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
 		{ok, _} = gun:await_body(ConnPid, StreamRef1),
-		{error, {stream_error, {closed, normal}}} = gun:await(ConnPid, StreamRef2),
-		{error, {stream_error, {closed, normal}}} = gun:await(ConnPid, StreamRef3),
+		{error, {stream_error, closing}} = gun:await(ConnPid, StreamRef2),
+		{error, {stream_error, closing}} = gun:await(ConnPid, StreamRef3),
 		gun_is_down(ConnPid, ConnRef, normal)
 	after
 		cowboy:stop_listener(?FUNCTION_NAME)
@@ -295,6 +295,47 @@ http10_connection_close(Config) ->
 	%% We get the response followed by Gun shutting down.
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 	{ok, _} = gun:await_body(ConnPid, StreamRef),
+	gun_is_down(ConnPid, ConnRef, normal).
+
+http1_response_connection_close_delayed_body(_) ->
+	doc("HTTP/1.1: Confirm that requests initiated when Gun has received a "
+		"connection: close response header fail immediately if retry "
+		"is disabled, without waiting for the response body."),
+	ServerFun = fun(_Parent, ClientSocket, gen_tcp) ->
+		try
+			{ok, Req} = gen_tcp:recv(ClientSocket, 0, 5000),
+			<<"GET / HTTP/1.1\r\n", _/binary>> = Req,
+			ok = gen_tcp:send(ClientSocket, <<"HTTP/1.1 200 OK\r\n"
+				"Connection: close\r\n"
+				"Content-Length: 12\r\n\r\nHello">>),
+			timer:sleep(500),
+			ok = gen_tcp:send(ClientSocket, " world!")
+		after
+			gen_tcp:close(ClientSocket)
+		end
+	end,
+	{ok, ServerPid, OriginPort} = gun_test:init_origin(tcp, http, ServerFun),
+	%% Client connects.
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [http],
+		retry => 0
+	}),
+	{ok, _Protocol} = gun:await_up(ConnPid),
+	receive {ServerPid, handshake_completed} -> ok end,
+	ConnRef = monitor(process, ConnPid),
+	StreamRef1 = gun:get(ConnPid, "/"),
+	StreamRef2 = gun:get(ConnPid, "/"),
+	%% We get the response headers with connection: close.
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
+	%% Pipelined request fails immediately.
+	{gun_error, ConnPid, StreamRef2, closing} = receive E2 -> E2 end,
+	{gun_data, ConnPid, StreamRef1, nofin, <<"Hello">>} =
+		receive PartialBody -> PartialBody end,
+	%% Request initiated when Gun is in closing state fails immediately.
+	StreamRef3 = gun:get(ConnPid, "/"),
+	{gun_error, ConnPid, StreamRef3, closing} = receive E3 -> E3 end,
+	{gun_data, ConnPid, StreamRef1, fin, <<" world!">>} =
+		receive RestBody -> RestBody end,
 	gun_is_down(ConnPid, ConnRef, normal).
 
 http2_gun_shutdown_no_streams(Config) ->
@@ -433,11 +474,20 @@ http2_server_goaway_many_streams(_) ->
 		{ok, <<SkipLen3:24, 1:8, _:8, 5:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Skip the header.
 		{ok, _} = gen_tcp:recv(Socket, SkipLen3, 1000),
-		%% Send a GOAWAY frame.
+		%% Stream 4.
+		%% Receive a HEADERS frame, but simulate that it is still
+		%% in-flight when the GOAWAY frame is sent.
+		{ok, <<SkipLen4:24, 1:8, _:8, 7:32>>} = Transport:recv(Socket, 9, 1000),
+		%% Skip the header.
+		{ok, _} = gen_tcp:recv(Socket, SkipLen4, 1000),
+		%% Send a GOAWAY frame. Simulate that GOAWAY was sent before
+		%% receiving stream 4 by including last stream ID of stream 3.
 		Transport:send(Socket, cow_http2:goaway(5, no_error, <<>>)),
-		%% Wait before sending the responses back and closing the connection.
+		%% Gun replies with GOAWAY.
+		{ok, <<SkipLen5:24, 7:8, _:8, 0:32>>} = Transport:recv(Socket, 9, 1000),
+		{ok, _SkippedPayload} = gen_tcp:recv(Socket, SkipLen5, 1000),
 		timer:sleep(500),
-		%% Send a HEADERS frame.
+		%% Send replies for streams 1-3.
 		{HeadersBlock1, State0} = cow_hpack:encode([
 			{<<":status">>, <<"200">>}
 		]),
@@ -456,7 +506,8 @@ http2_server_goaway_many_streams(_) ->
 		ok = Transport:send(Socket, [
 			cow_http2:headers(5, fin, HeadersBlock3)
 		]),
-		timer:sleep(500)
+		%% Gun closes the connection.
+		{error, closed} = gen_tcp:recv(Socket, 9)
 	end),
 	Protocol = http2,
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
@@ -468,7 +519,13 @@ http2_server_goaway_many_streams(_) ->
 	StreamRef1 = gun:get(ConnPid, "/"),
 	StreamRef2 = gun:get(ConnPid, "/"),
 	StreamRef3 = gun:get(ConnPid, "/"),
+	StreamRef4 = gun:get(ConnPid, "/"),
 	ConnRef = monitor(process, ConnPid),
+	%% GOAWAY received. Stream 4 is cancelled.
+	{gun_error, ConnPid, StreamRef4, Reason4} = receive E4 -> E4 end,
+	{goaway, no_error, _} = Reason4,
+	StreamRef5 = gun:get(ConnPid, "/"),
+	{gun_error, ConnPid, StreamRef5, closing} = receive E5 -> E5 end,
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef3),
