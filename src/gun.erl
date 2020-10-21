@@ -1364,6 +1364,27 @@ closing(state_timeout, closing_timeout, State=#state{status=Status}) ->
 		_ -> normal
 	end,
 	disconnect(State, Reason);
+%% When reconnect is disabled, fail HTTP/Websocket operations immediately.
+closing(cast, {headers, ReplyTo, StreamRef, _Method, _Path, _Headers, _InitialFlow},
+		State=#state{opts=#{retry := 0}}) ->
+	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	{keep_state, State};
+closing(cast, {request, ReplyTo, StreamRef, _Method, _Path, _Headers, _Body, _InitialFlow},
+		State=#state{opts=#{retry := 0}}) ->
+	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	{keep_state, State};
+closing(cast, {connect, ReplyTo, StreamRef, _Destination, _Headers, _InitialFlow},
+		State=#state{opts=#{retry := 0}}) ->
+	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	{keep_state, State};
+closing(cast, {ws_upgrade, ReplyTo, StreamRef, _Path, _Headers},
+		State=#state{opts=#{retry := 0}}) ->
+	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	{keep_state, State};
+closing(cast, {ws_upgrade, ReplyTo, StreamRef, _Path, _Headers, _WsOpts},
+		State=#state{opts=#{retry := 0}}) ->
+	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	{keep_state, State};
 closing(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
 

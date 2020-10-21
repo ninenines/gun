@@ -415,7 +415,7 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 						Status, Headers, Handlers0), EvHandlerState1}
 			end
 	end,
-	EvHandlerState = case IsFin of
+	EvHandlerState3 = case IsFin of
 		nofin ->
 			EvHandlerState2;
 		fin ->
@@ -433,17 +433,31 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 	%% We always reset in_state even if not chunked.
 	if
 		IsFin =:= fin, Conn2 =:= close ->
-			{close, CookieStore, EvHandlerState};
+			{close, CookieStore, EvHandlerState3};
 		IsFin =:= fin ->
 			handle(Rest, end_stream(State#http_state{in=In,
 				in_state={0, 0}, connection=Conn2,
 				streams=[Stream#stream{handler_state=Handlers}|Tail]}),
-				CookieStore, EvHandler, EvHandlerState);
+				CookieStore, EvHandler, EvHandlerState3);
+		Conn2 =:= close ->
+			close_streams(State, Tail, closing),
+			{CommandOrCommands, CookieStore1, EvHandlerState4} =
+				handle(Rest, State#http_state{in=In,
+					in_state={0, 0}, connection=Conn2,
+					streams=[Stream#stream{handler_state=Handlers}]},
+				       CookieStore, EvHandler, EvHandlerState3),
+			Commands = if
+				is_list(CommandOrCommands) ->
+					CommandOrCommands ++ [closing(State)];
+				true ->
+					[CommandOrCommands, closing(State)]
+			end,
+			{Commands, CookieStore1, EvHandlerState4};
 		true ->
 			handle(Rest, State#http_state{in=In,
 				in_state={0, 0}, connection=Conn2,
 				streams=[Stream#stream{handler_state=Handlers}|Tail]},
-				CookieStore, EvHandler, EvHandlerState)
+				CookieStore, EvHandler, EvHandlerState3)
 	end.
 
 %% The state must be first in order to retrieve it when the stream ended.
