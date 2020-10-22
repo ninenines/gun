@@ -34,25 +34,25 @@ groups() ->
 	HTTP1Tests = [T || T <- Tests, lists:sublist(atom_to_list(T), 6) =:= "http1_"],
 	%% Push is not possible over HTTP/1.1.
 	PushTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 5) =:= "push_"],
-	%% We currently do not support Websocket over HTTP/2.
-	WsTests = [T || T <- Tests, lists:sublist(atom_to_list(T), 3) =:= "ws_"],
 	[
 		{http, [parallel], Tests -- [cancel_remote, cancel_remote_connect|PushTests]},
-		{http2, [parallel], (Tests -- WsTests) -- HTTP1Tests}
+		{http2, [parallel], Tests -- HTTP1Tests}
 	].
 
 init_per_suite(Config) ->
-	ProtoOpts = #{env => #{
-		dispatch => cowboy_router:compile([{'_', [
-			{"/", hello_h, []},
-			{"/empty", empty_h, []},
-			{"/inform", inform_h, []},
-			{"/push", push_h, []},
-			{"/stream", stream_h, []},
-			{"/trailers", trailers_h, []},
-			{"/ws", ws_echo_h, []}
-		]}])
-	}},
+	Routes = [
+		{"/", hello_h, []},
+		{"/empty", empty_h, []},
+		{"/inform", inform_h, []},
+		{"/push", push_h, []},
+		{"/stream", stream_h, []},
+		{"/trailers", trailers_h, []},
+		{"/ws", ws_echo_h, []}
+	],
+	ProtoOpts = #{
+		enable_connect_protocol => true,
+		env => #{dispatch => cowboy_router:compile([{'_', Routes}])}
+	},
 	{ok, _} = cowboy:start_clear({?MODULE, tcp}, [], ProtoOpts),
 	TCPOriginPort = ranch:get_port({?MODULE, tcp}),
 	{ok, _} = cowboy:start_tls({?MODULE, tls}, ct_helper:get_certs_from_ets(), ProtoOpts),
@@ -1227,8 +1227,10 @@ http1_response_end_body_close(Config) ->
 
 ws_upgrade(Config) ->
 	doc("Confirm that the ws_upgrade event callback is called."),
+	Protocol = config(name, config(tc_group_properties, Config)),
 	{ok, Pid, _} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
+	{ok, Protocol} = gun:await_up(Pid),
+	ws_SUITE:do_await_enable_connect_protocol(Protocol, Pid),
 	StreamRef = gun:ws_upgrade(Pid, "/ws"),
 	ReplyTo = self(),
 	#{
@@ -1258,11 +1260,15 @@ do_ws_upgrade_connect(Config, ProxyProtocol) ->
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		protocols => [OriginProtocol]
+		protocols => [case OriginProtocol of
+			http -> http;
+			http2 -> {http2, #{notify_settings_changed => true}}
+		end]
 	}, []),
 	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
 	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
+	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
 	#{
 		stream_ref := StreamRef2,
@@ -1273,8 +1279,10 @@ do_ws_upgrade_connect(Config, ProxyProtocol) ->
 
 ws_upgrade_all_events(Config) ->
 	doc("Confirm that a Websocket upgrade triggers all relevant events."),
+	Protocol = config(name, config(tc_group_properties, Config)),
 	{ok, Pid, OriginPort} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
+	{ok, Protocol} = gun:await_up(Pid),
+	ws_SUITE:do_await_enable_connect_protocol(Protocol, Pid),
 	StreamRef = gun:ws_upgrade(Pid, "/ws"),
 	ReplyTo = self(),
 	#{
@@ -1283,11 +1291,15 @@ ws_upgrade_all_events(Config) ->
 		opts := #{}
 	} = do_receive_event(ws_upgrade),
 	Authority = iolist_to_binary([<<"localhost:">>, integer_to_list(OriginPort)]),
+	Method = case Protocol of
+		http -> <<"GET">>;
+		http2 -> <<"CONNECT">>
+	end,
 	#{
 		stream_ref := StreamRef,
 		reply_to := ReplyTo,
 		function := ws_upgrade,
-		method := <<"GET">>,
+		method := Method,
 		authority := EventAuthority1,
 		path := "/ws",
 		headers := [_|_]
@@ -1297,7 +1309,7 @@ ws_upgrade_all_events(Config) ->
 		stream_ref := StreamRef,
 		reply_to := ReplyTo,
 		function := ws_upgrade,
-		method := <<"GET">>,
+		method := Method,
 		authority := EventAuthority2,
 		path := "/ws",
 		headers := [_|_]
@@ -1311,12 +1323,26 @@ ws_upgrade_all_events(Config) ->
 		stream_ref := StreamRef,
 		reply_to := ReplyTo
 	} = do_receive_event(response_start),
-	#{
-		stream_ref := StreamRef,
-		reply_to := ReplyTo,
-		status := 101,
-		headers := [_|_]
-	} = do_receive_event(response_inform),
+	_ = case Protocol of
+		http ->
+			#{
+				stream_ref := StreamRef,
+				reply_to := ReplyTo,
+				status := 101,
+				headers := [_|_]
+			} = do_receive_event(response_inform);
+		http2 ->
+			#{
+				stream_ref := StreamRef,
+				reply_to := ReplyTo,
+				status := 200,
+				headers := [_|_]
+			} = do_receive_event(response_headers),
+			#{
+				stream_ref := StreamRef,
+				reply_to := ReplyTo
+			} = do_receive_event(response_end)
+	end,
 	#{
 		stream_ref := StreamRef,
 		protocol := ws
@@ -1343,16 +1369,27 @@ do_ws_upgrade_all_events_connect(Config, ProxyProtocol) ->
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		protocols => [OriginProtocol]
+		protocols => [case OriginProtocol of
+			http -> http;
+			http2 -> {http2, #{notify_settings_changed => true}}
+		end]
 	}, []),
 	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
 	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
+	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	%% Skip all CONNECT-related events that may conflict.
 	_ = do_receive_event(request_start),
 	_ = do_receive_event(request_headers),
 	_ = do_receive_event(request_end),
 	_ = do_receive_event(response_start),
+	case OriginProtocol of
+		http -> ok;
+		http2 ->
+			_ = do_receive_event(response_headers),
+%			_ = do_receive_event(response_end), @todo Probably should response_end CONNECT responses for both protocols.
+			ok
+	end,
 	_ = do_receive_event(protocol_changed),
 	%% Check the Websocket events.
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
@@ -1362,11 +1399,15 @@ do_ws_upgrade_all_events_connect(Config, ProxyProtocol) ->
 		opts := #{}
 	} = do_receive_event(ws_upgrade),
 	Authority = iolist_to_binary([<<"localhost:">>, integer_to_list(OriginPort)]),
+	Method = case OriginProtocol of
+		http -> <<"GET">>;
+		http2 -> <<"CONNECT">>
+	end,
 	#{
 		stream_ref := StreamRef2,
 		reply_to := ReplyTo,
 		function := ws_upgrade,
-		method := <<"GET">>,
+		method := Method,
 		authority := EventAuthority1,
 		path := "/ws",
 		headers := [_|_]
@@ -1376,7 +1417,7 @@ do_ws_upgrade_all_events_connect(Config, ProxyProtocol) ->
 		stream_ref := StreamRef2,
 		reply_to := ReplyTo,
 		function := ws_upgrade,
-		method := <<"GET">>,
+		method := Method,
 		authority := EventAuthority2,
 		path := "/ws",
 		headers := [_|_]
@@ -1390,12 +1431,26 @@ do_ws_upgrade_all_events_connect(Config, ProxyProtocol) ->
 		stream_ref := StreamRef2,
 		reply_to := ReplyTo
 	} = do_receive_event(response_start),
-	#{
-		stream_ref := StreamRef2,
-		reply_to := ReplyTo,
-		status := 101,
-		headers := [_|_]
-	} = do_receive_event(response_inform),
+	_ = case OriginProtocol of
+		http ->
+			#{
+				stream_ref := StreamRef2,
+				reply_to := ReplyTo,
+				status := 101,
+				headers := [_|_]
+			} = do_receive_event(response_inform);
+		http2 ->
+			#{
+				stream_ref := StreamRef2,
+				reply_to := ReplyTo,
+				status := 200,
+				headers := [_|_]
+			} = do_receive_event(response_headers),
+			#{
+				stream_ref := StreamRef2,
+				reply_to := ReplyTo
+			} = do_receive_event(response_end)
+	end,
 	#{
 		stream_ref := StreamRef2,
 		protocol := ws
@@ -1406,11 +1461,13 @@ do_ws_upgrade_all_events_connect(Config, ProxyProtocol) ->
 
 ws_recv_frame_start(Config) ->
 	doc("Confirm that the ws_recv_frame_start event callback is called."),
+	Protocol = config(name, config(tc_group_properties, Config)),
 	{ok, Pid, _} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
+	{ok, Protocol} = gun:await_up(Pid),
+	ws_SUITE:do_await_enable_connect_protocol(Protocol, Pid),
 	StreamRef = gun:ws_upgrade(Pid, "/ws"),
 	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
-	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	gun:ws_send(Pid, StreamRef, {text, <<"Hello!">>}),
 	ReplyTo = self(),
 	#{
 		stream_ref := StreamRef,
@@ -1440,11 +1497,15 @@ do_ws_recv_frame_start_connect(Config, ProxyProtocol) ->
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		protocols => [OriginProtocol]
+		protocols => [case OriginProtocol of
+			http -> http;
+			http2 -> {http2, #{notify_settings_changed => true}}
+		end]
 	}, []),
 	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
 	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
+	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
 	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef2),
 	gun:ws_send(ConnPid, StreamRef2, {text, <<"Hello!">>}),
@@ -1458,11 +1519,13 @@ do_ws_recv_frame_start_connect(Config, ProxyProtocol) ->
 
 ws_recv_frame_header(Config) ->
 	doc("Confirm that the ws_recv_frame_header event callback is called."),
+	Protocol = config(name, config(tc_group_properties, Config)),
 	{ok, Pid, _} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
+	{ok, Protocol} = gun:await_up(Pid),
+	ws_SUITE:do_await_enable_connect_protocol(Protocol, Pid),
 	StreamRef = gun:ws_upgrade(Pid, "/ws"),
 	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
-	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	gun:ws_send(Pid, StreamRef, {text, <<"Hello!">>}),
 	ReplyTo = self(),
 	#{
 		stream_ref := StreamRef,
@@ -1496,11 +1559,15 @@ do_ws_recv_frame_header_connect(Config, ProxyProtocol) ->
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		protocols => [OriginProtocol]
+		protocols => [case OriginProtocol of
+			http -> http;
+			http2 -> {http2, #{notify_settings_changed => true}}
+		end]
 	}, []),
 	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
 	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
+	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
 	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef2),
 	gun:ws_send(ConnPid, StreamRef2, {text, <<"Hello!">>}),
@@ -1518,11 +1585,13 @@ do_ws_recv_frame_header_connect(Config, ProxyProtocol) ->
 
 ws_recv_frame_end(Config) ->
 	doc("Confirm that the ws_recv_frame_end event callback is called."),
+	Protocol = config(name, config(tc_group_properties, Config)),
 	{ok, Pid, _} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
+	{ok, Protocol} = gun:await_up(Pid),
+	ws_SUITE:do_await_enable_connect_protocol(Protocol, Pid),
 	StreamRef = gun:ws_upgrade(Pid, "/ws"),
 	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
-	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	gun:ws_send(Pid, StreamRef, {text, <<"Hello!">>}),
 	ReplyTo = self(),
 	#{
 		stream_ref := StreamRef,
@@ -1553,11 +1622,15 @@ do_ws_recv_frame_end_connect(Config, ProxyProtocol) ->
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		protocols => [OriginProtocol]
+		protocols => [case OriginProtocol of
+			http -> http;
+			http2 -> {http2, #{notify_settings_changed => true}}
+		end]
 	}, []),
 	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
 	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
+	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
 	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef2),
 	gun:ws_send(ConnPid, StreamRef2, {text, <<"Hello!">>}),
@@ -1581,11 +1654,13 @@ ws_send_frame_end(Config) ->
 	do_ws_send_frame(Config, ?FUNCTION_NAME).
 
 do_ws_send_frame(Config, EventName) ->
+	Protocol = config(name, config(tc_group_properties, Config)),
 	{ok, Pid, _} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
+	{ok, Protocol} = gun:await_up(Pid),
+	ws_SUITE:do_await_enable_connect_protocol(Protocol, Pid),
 	StreamRef = gun:ws_upgrade(Pid, "/ws"),
 	{upgrade, [<<"websocket">>], _} = gun:await(Pid, StreamRef),
-	gun:ws_send(Pid, {text, <<"Hello!">>}),
+	gun:ws_send(Pid, StreamRef, {text, <<"Hello!">>}),
 	ReplyTo = self(),
 	#{
 		stream_ref := StreamRef,
@@ -1621,11 +1696,15 @@ do_ws_send_frame_connect(Config, ProxyProtocol, EventName) ->
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		protocols => [OriginProtocol]
+		protocols => [case OriginProtocol of
+			http -> http;
+			http2 -> {http2, #{notify_settings_changed => true}}
+		end]
 	}, []),
 	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
 	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
+	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
 	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef2),
 	gun:ws_send(ConnPid, StreamRef2, {text, <<"Hello!">>}),
@@ -1641,8 +1720,10 @@ do_ws_send_frame_connect(Config, ProxyProtocol, EventName) ->
 
 ws_protocol_changed(Config) ->
 	doc("Confirm that the protocol_changed event callback is called on Websocket upgrade success."),
+	Protocol = config(name, config(tc_group_properties, Config)),
 	{ok, Pid, _} = do_gun_open(Config),
-	{ok, _} = gun:await_up(Pid),
+	{ok, Protocol} = gun:await_up(Pid),
+	ws_SUITE:do_await_enable_connect_protocol(Protocol, Pid),
 	_ = gun:ws_upgrade(Pid, "/ws"),
 	#{
 		protocol := ws
@@ -1668,11 +1749,15 @@ do_ws_protocol_changed_connect(Config, ProxyProtocol) ->
 	StreamRef1 = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		protocols => [OriginProtocol]
+		protocols => [case OriginProtocol of
+			http -> http;
+			http2 -> {http2, #{notify_settings_changed => true}}
+		end]
 	}, []),
 	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
 	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
+	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	#{
 		stream_ref := StreamRef1,
 		protocol := OriginProtocol
@@ -1951,6 +2036,7 @@ do_gun_open(Config) ->
 do_gun_open(OriginPort, Config) ->
 	Opts = #{
 		event_handler => {?MODULE, self()},
+		http2_opts => #{notify_settings_changed => true},
 		protocols => [config(name, config(tc_group_properties, Config))]
 	},
 	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
@@ -1960,6 +2046,7 @@ do_gun_open_tls(Config) ->
 	OriginPort = config(tls_origin_port, Config),
 	Opts = #{
 		event_handler => {?MODULE, self()},
+		http2_opts => #{notify_settings_changed => true},
 		protocols => [config(name, config(tc_group_properties, Config))],
 		transport => tls
 	},

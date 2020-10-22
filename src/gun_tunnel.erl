@@ -340,12 +340,12 @@ connect(State=#tunnel_state{info=#{origin_host := Host, origin_port := Port},
 		EvHandler, EvHandlerState0),
 	{State#tunnel_state{protocol_state=ProtoState}, EvHandlerState}.
 
-cancel(State0=#tunnel_state{protocol=Proto, protocol_state=ProtoState},
+cancel(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
 		StreamRef0, ReplyTo, EvHandler, EvHandlerState0) ->
-	StreamRef = maybe_dereference(State0, StreamRef0),
-	{Commands, EvHandlerState1} = Proto:cancel(ProtoState, StreamRef, ReplyTo, EvHandler, EvHandlerState0),
-	{State, EvHandlerState} = commands(Commands, State0, EvHandler, EvHandlerState1),
-	{{state, State}, EvHandlerState}.
+	StreamRef = maybe_dereference(State, StreamRef0),
+	{ProtoState, EvHandlerState} = Proto:cancel(ProtoState0, StreamRef,
+		ReplyTo, EvHandler, EvHandlerState0),
+	{State#tunnel_state{protocol_state=ProtoState}, EvHandlerState}.
 
 timeout(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0}, Msg, TRef) ->
 	case Proto:timeout(ProtoState0, Msg, TRef) of

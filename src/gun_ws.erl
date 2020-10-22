@@ -15,12 +15,15 @@
 -module(gun_ws).
 
 -export([check_options/1]).
+-export([select_extensions/3]).
+-export([select_protocol/2]).
 -export([name/0]).
 -export([opts_name/0]).
 -export([has_keepalive/0]).
 -export([default_keepalive/0]).
 -export([init/4]).
 -export([handle/5]).
+-export([handle_continue/6]).
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
@@ -88,6 +91,47 @@ do_check_options([{user_opts, _}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([Opt|_]) ->
 	{error, {options, {ws, Opt}}}.
+
+select_extensions(Headers, Extensions0, Opts) ->
+	case lists:keyfind(<<"sec-websocket-extensions">>, 1, Headers) of
+		false ->
+			#{};
+		{_, ExtHd} ->
+			ParsedExtHd = cow_http_hd:parse_sec_websocket_extensions(ExtHd),
+			validate_extensions(ParsedExtHd, Extensions0, Opts, #{})
+	end.
+
+validate_extensions([], _, _, Acc) ->
+	Acc;
+validate_extensions([{Name = <<"permessage-deflate">>, Params}|Tail], Extensions, Opts, Acc0) ->
+	case lists:member(Name, Extensions) of
+		true ->
+			case cow_ws:validate_permessage_deflate(Params, Acc0, Opts) of
+				{ok, Acc} -> validate_extensions(Tail, Extensions, Opts, Acc);
+				error -> close
+			end;
+		%% Fail the connection if extension was not requested.
+		false ->
+			close
+	end;
+%% Fail the connection on unknown extension.
+validate_extensions(_, _, _, _) ->
+	close.
+
+%% @todo Validate protocols.
+select_protocol(Headers, Opts) ->
+	case lists:keyfind(<<"sec-websocket-protocol">>, 1, Headers) of
+		false ->
+			maps:get(default_protocol, Opts, gun_ws_h);
+		{_, Proto} ->
+			ProtoOpt = maps:get(protocols, Opts, []),
+			case lists:keyfind(Proto, 1, ProtoOpt) of
+				{_, Handler} ->
+					Handler;
+				false ->
+					close
+			end
+	end.
 
 name() -> ws.
 opts_name() -> ws_opts.
@@ -175,6 +219,11 @@ handle(Data, State=#ws_state{in=In=#payload{type=Type, rsv=Rsv, len=Len, mask_ke
 		Error = {error, _Reason} ->
 			closing(Error, State, EvHandler, EvHandlerState)
 	end.
+
+handle_continue(ContinueStreamRef, {data, _ReplyTo, _StreamRef, IsFin, Data},
+		#ws_state{}, CookieStore, _EvHandler, EvHandlerState)
+		when is_reference(ContinueStreamRef) ->
+	{{send, IsFin, Data}, CookieStore, EvHandlerState}.
 
 maybe_active(State=#ws_state{flow=Flow}, EvHandlerState) ->
 	{[

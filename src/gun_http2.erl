@@ -38,17 +38,19 @@
 -export([ws_upgrade/11]).
 -export([ws_send/6]).
 
+-record(websocket_info, {
+	extensions :: [binary()],
+	opts :: gun:ws_opts()
+}).
+
 -record(tunnel, {
-	%% The tunnel can either go requested->established
-	%% or requested->tls_handshake->established, or get
-	%% canceled.
 	state = requested :: requested | established,
 
 	%% Destination information.
-	destination = undefined :: gun:connect_destination(),
+	destination = undefined :: undefined | gun:connect_destination(),
 
 	%% Tunnel information.
-	info = undefined :: gun:tunnel_info(),
+	info = undefined :: gun:tunnel_info() | #websocket_info{},
 
 	%% Protocol module and state of the outer layer. Only initialized
 	%% after the TLS handshake has completed when TLS is involved.
@@ -81,6 +83,7 @@
 }).
 
 -record(http2_state, {
+	reply_to :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	opts = #{} :: gun:http2_opts(),
@@ -136,6 +139,8 @@ do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
+do_check_options([{notify_settings_changed, B}|Opts]) when is_boolean(B) ->
+	do_check_options(Opts);
 do_check_options([Opt={Name, _}|Opts]) ->
 	%% We blindly accept all cow_http2_machine options.
 	HTTP2MachineOpts = [
@@ -166,7 +171,7 @@ opts_name() -> http2_opts.
 has_keepalive() -> true.
 default_keepalive() -> infinity.
 
-init(_ReplyTo, Socket, Transport, Opts0) ->
+init(ReplyTo, Socket, Transport, Opts0) ->
 	%% We have different defaults than the protocol in order
 	%% to optimize for performance when receiving responses.
 	Opts = Opts0#{
@@ -178,8 +183,8 @@ init(_ReplyTo, Socket, Transport, Opts0) ->
 	TunnelTransport = maps:get(tunnel_transport, Opts, undefined),
 	{ok, Preface, HTTP2Machine} = cow_http2_machine:init(client, Opts#{message_tag => BaseStreamRef}),
 	%% @todo Better validate the preface being received.
-	State = #http2_state{socket=Socket, transport=Transport, opts=Opts,
-		base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
+	State = #http2_state{reply_to=ReplyTo, socket=Socket, transport=Transport,
+		opts=Opts, base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
 		content_handlers=Handlers, http2_machine=HTTP2Machine},
 	Transport:send(Socket, Preface),
 	{connected, State}.
@@ -283,7 +288,7 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 			{update_window(State#http2_state{http2_machine=HTTP2Machine}),
 				CookieStore, EvHandlerState};
 		{ok, HTTP2Machine} ->
-			{maybe_ack(State#http2_state{http2_machine=HTTP2Machine}, Frame),
+			{maybe_ack_or_notify(State#http2_state{http2_machine=HTTP2Machine}, Frame),
 				CookieStore, EvHandlerState};
 		{ok, {data, StreamID, IsFin, Data}, HTTP2Machine} ->
 			data_frame(State#http2_state{http2_machine=HTTP2Machine}, StreamID, IsFin, Data,
@@ -313,7 +318,7 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 				CookieStore, EvHandlerState};
 		{send, SendData, HTTP2Machine} ->
 			{StateRet, EvHandlerStateRet} = send_data(
-				maybe_ack(State#http2_state{http2_machine=HTTP2Machine}, Frame),
+				maybe_ack_or_notify(State#http2_state{http2_machine=HTTP2Machine}, Frame),
 				SendData, EvHandler, EvHandlerState),
 			{StateRet, CookieStore, EvHandlerStateRet};
 		{error, {stream_error, StreamID, Reason, Human}, HTTP2Machine} ->
@@ -325,11 +330,23 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 				CookieStore, EvHandlerState}
 	end.
 
-maybe_ack(State=#http2_state{socket=Socket, transport=Transport}, Frame) ->
+maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
+		transport=Transport, opts=Opts, http2_machine=HTTP2Machine}, Frame) ->
 	case Frame of
-		{settings, _} -> Transport:send(Socket, cow_http2:settings_ack());
-		{ping, Opaque} -> Transport:send(Socket, cow_http2:ping_ack(Opaque));
-		_ -> ok
+		{settings, _} ->
+			%% We notify remote settings changes only if the user requested it.
+			_ = case Opts of
+				#{notify_settings_changed := true} ->
+					ReplyTo ! {gun_notify, self(), settings_changed,
+						cow_http2_machine:get_remote_settings(HTTP2Machine)};
+				_ ->
+					ok
+			end,
+			Transport:send(Socket, cow_http2:settings_ack());
+		{ping, Opaque} ->
+			Transport:send(Socket, cow_http2:ping_ack(Opaque));
+		_ ->
+			ok
 	end,
 	State.
 
@@ -363,7 +380,13 @@ tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
 		State, EvHandler, EvHandlerState);
 tunnel_commands([{error, _Reason}|_], #stream{id=StreamID},
 		State, _EvHandler, EvHandlerState) ->
-	{delete_stream(State, StreamID), EvHandlerState}.
+	{delete_stream(State, StreamID), EvHandlerState};
+%% @todo Set a timeout for closing the Websocket stream.
+tunnel_commands([{closing, _}|Tail], Stream, State, EvHandler, EvHandlerState) ->
+	tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState);
+%% @todo Maybe we should stop increasing the window when not in active mode. (HTTP/2 Websocket only.)
+tunnel_commands([{active, _}|Tail], Stream, State, EvHandler, EvHandlerState) ->
+	tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState).
 
 continue_stream_ref(#http2_state{socket=#{handle_continue_stream_ref := ContinueStreamRef}}, StreamRef) ->
 	case ContinueStreamRef of
@@ -409,133 +432,212 @@ data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 	end,
 	{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState}.
 
-%% @todo Make separate functions for inform/connect/normal.
-headers_frame(State=#http2_state{transport=Transport, opts=Opts,
-		tunnel_transport=TunnelTransport, content_handlers=Handlers0},
+headers_frame(State0=#http2_state{opts=Opts},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
 		CookieStore0, EvHandler, EvHandlerState0) ->
-	Stream = get_stream_by_id(State, StreamID),
+	Stream = get_stream_by_id(State0, StreamID),
 	#stream{
-		ref=StreamRef,
-		reply_to=ReplyTo,
 		authority=Authority,
 		path=Path,
 		tunnel=Tunnel
 	} = Stream,
-	CookieStore = gun_cookies:set_cookie_header(scheme(State),
+	CookieStore = gun_cookies:set_cookie_header(scheme(State0),
 		Authority, Path, Status, Headers, CookieStore0, Opts),
-	RealStreamRef = stream_ref(State, StreamRef),
-	if
+	{State, EvHandlerState} = if
 		Status >= 100, Status =< 199 ->
-			ReplyTo ! {gun_inform, self(), RealStreamRef, Status, Headers},
-			EvHandlerState = EvHandler:response_inform(#{
-				stream_ref => RealStreamRef,
-				reply_to => ReplyTo,
-				status => Status,
-				headers => Headers
-			}, EvHandlerState0),
-			{State, CookieStore, EvHandlerState};
-		Status >= 200, Status =< 299, element(#tunnel.state, Tunnel) =:= requested ->
-			#tunnel{destination=Destination, info=TunnelInfo0} = Tunnel,
-			#{host := DestHost, port := DestPort} = Destination,
-			TunnelInfo = TunnelInfo0#{
-				origin_host => DestHost,
-				origin_port => DestPort
-			},
-			ReplyTo ! {gun_response, self(), RealStreamRef, IsFin, Status, Headers},
-			EvHandlerState1 = EvHandler:response_headers(#{
-				stream_ref => RealStreamRef,
-				reply_to => ReplyTo,
-				status => Status,
-				headers => Headers
-			}, EvHandlerState0),
-			EvHandlerState2 = EvHandler:origin_changed(#{
-				stream_ref => RealStreamRef,
-				type => connect,
-				origin_scheme => case Destination of
-					#{transport := tls} -> <<"https">>;
-					_ -> <<"http">>
-				end,
-				origin_host => DestHost,
-				origin_port => DestPort
-			}, EvHandlerState1),
-			ContinueStreamRef = continue_stream_ref(State, StreamRef),
-			OriginSocket = #{
-				gun_pid => self(),
-				reply_to => ReplyTo,
-				stream_ref => RealStreamRef,
-				handle_continue_stream_ref => ContinueStreamRef
-			},
-			Proto = gun_tunnel,
-			ProtoOpts = case Destination of
-				#{transport := tls} ->
-					Protocols = maps:get(protocols, Destination, [http2, http]),
-					TLSOpts = gun:ensure_alpn_sni(Protocols, maps:get(tls_opts, Destination, []), DestHost),
-					HandshakeEvent = #{
-						stream_ref => RealStreamRef,
-						reply_to => ReplyTo,
-						tls_opts => TLSOpts,
-						timeout => maps:get(tls_handshake_timeout, Destination, infinity)
-					},
-					Opts#{
-						stream_ref => RealStreamRef,
-						tunnel => #{
-							type => connect,
-							transport_name => case TunnelTransport of
-								undefined -> Transport:name();
-								_ -> TunnelTransport
-							end,
-							protocol_name => http2,
-							info => TunnelInfo,
-							handshake_event => HandshakeEvent,
-							protocols => Protocols
-						}
-					};
-				_ ->
-					[NewProtocol] = maps:get(protocols, Destination, [http]),
-					Opts#{
-						stream_ref => RealStreamRef,
-						tunnel => #{
-							type => connect,
-							transport_name => case TunnelTransport of
-								undefined -> Transport:name();
-								_ -> TunnelTransport
-							end,
-							protocol_name => http2,
-							info => TunnelInfo,
-							new_protocol => NewProtocol
-						}
-					}
-			end,
-			{tunnel, ProtoState, EvHandlerState} = Proto:init(
-				ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState2),
-			{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{
-				info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}}),
-				CookieStore, EvHandlerState};
+			headers_frame_inform(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
+		Status >= 200, Status =< 299, element(#tunnel.state, Tunnel) =:= requested, IsFin =:= nofin ->
+			headers_frame_connect(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
 		true ->
-			ReplyTo ! {gun_response, self(), RealStreamRef, IsFin, Status, Headers},
-			EvHandlerState1 = EvHandler:response_headers(#{
+			headers_frame_response(State0, Stream, IsFin, Status, Headers, EvHandler, EvHandlerState0)
+	end,
+	{State, CookieStore, EvHandlerState}.
+
+headers_frame_inform(State, #stream{ref=StreamRef, reply_to=ReplyTo},
+		Status, Headers, EvHandler, EvHandlerState0) ->
+	RealStreamRef = stream_ref(State, StreamRef),
+	ReplyTo ! {gun_inform, self(), RealStreamRef, Status, Headers},
+	EvHandlerState = EvHandler:response_inform(#{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo,
+		status => Status,
+		headers => Headers
+	}, EvHandlerState0),
+	{State, EvHandlerState}.
+
+headers_frame_connect(State0=#http2_state{http2_machine=HTTP2Machine0},
+		Stream=#stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, tunnel=#tunnel{
+			info=#websocket_info{extensions=Extensions0, opts=WsOpts}}},
+		Status, Headers, EvHandler, EvHandlerState0) ->
+	RealStreamRef = stream_ref(State0, StreamRef),
+	EvHandlerState1 = EvHandler:response_headers(#{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo,
+		status => Status,
+		headers => Headers
+	}, EvHandlerState0),
+	%% Websocket CONNECT response headers terminate the response but not the stream.
+	EvHandlerState = EvHandler:response_end(#{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo
+	}, EvHandlerState1),
+	case gun_ws:select_extensions(Headers, Extensions0, WsOpts) of
+		close ->
+			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
+			State1 = State0#http2_state{http2_machine=HTTP2Machine},
+			State = reset_stream(State1, StreamID, {stream_error, cancel,
+				'The sec-websocket-extensions header is invalid. (RFC6455 9.1, RFC7692 7)'}),
+			{State, EvHandlerState};
+		Extensions ->
+			case gun_ws:select_protocol(Headers, WsOpts) of
+				close ->
+					{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
+					State1 = State0#http2_state{http2_machine=HTTP2Machine},
+					State = reset_stream(State1, StreamID, {stream_error, cancel,
+						'The sec-websocket-protocol header is invalid. (RFC6455 4.1)'}),
+					{State, EvHandlerState};
+				Handler ->
+					headers_frame_connect_websocket(State0, Stream, Headers,
+						EvHandler, EvHandlerState, Extensions, Handler)
+			end
+	end;
+headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_transport=TunnelTransport},
+		Stream=#stream{ref=StreamRef, reply_to=ReplyTo, tunnel=Tunnel=#tunnel{
+		destination=Destination=#{host := DestHost, port := DestPort}, info=TunnelInfo0}},
+		Status, Headers, EvHandler, EvHandlerState0) ->
+	RealStreamRef = stream_ref(State, StreamRef),
+	TunnelInfo = TunnelInfo0#{
+		origin_host => DestHost,
+		origin_port => DestPort
+	},
+	ReplyTo ! {gun_response, self(), RealStreamRef, nofin, Status, Headers},
+	EvHandlerState1 = EvHandler:response_headers(#{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo,
+		status => Status,
+		headers => Headers
+	}, EvHandlerState0),
+	EvHandlerState2 = EvHandler:origin_changed(#{
+		stream_ref => RealStreamRef,
+		type => connect,
+		origin_scheme => case Destination of
+			#{transport := tls} -> <<"https">>;
+			_ -> <<"http">>
+		end,
+		origin_host => DestHost,
+		origin_port => DestPort
+	}, EvHandlerState1),
+	ContinueStreamRef = continue_stream_ref(State, StreamRef),
+	OriginSocket = #{
+		gun_pid => self(),
+		reply_to => ReplyTo,
+		stream_ref => RealStreamRef,
+		handle_continue_stream_ref => ContinueStreamRef
+	},
+	Proto = gun_tunnel,
+	ProtoOpts = case Destination of
+		#{transport := tls} ->
+			Protocols = maps:get(protocols, Destination, [http2, http]),
+			TLSOpts = gun:ensure_alpn_sni(Protocols, maps:get(tls_opts, Destination, []), DestHost),
+			HandshakeEvent = #{
 				stream_ref => RealStreamRef,
 				reply_to => ReplyTo,
-				status => Status,
-				headers => Headers
-			}, EvHandlerState0),
-			{Handlers, EvHandlerState} = case IsFin of
-				fin ->
-					EvHandlerState2 = EvHandler:response_end(#{
-						stream_ref => RealStreamRef,
-						reply_to => ReplyTo
-					}, EvHandlerState1),
-					{undefined, EvHandlerState2};
-				nofin ->
-					{gun_content_handler:init(ReplyTo, RealStreamRef,
-						Status, Headers, Handlers0), EvHandlerState1}
-			end,
-			%% @todo Disable the tunnel if any.
-			{maybe_delete_stream(store_stream(State, Stream#stream{handler_state=Handlers}),
-				StreamID, remote, IsFin),
-				CookieStore, EvHandlerState}
-	end.
+				tls_opts => TLSOpts,
+				timeout => maps:get(tls_handshake_timeout, Destination, infinity)
+			},
+			Opts#{
+				stream_ref => RealStreamRef,
+				tunnel => #{
+					type => connect,
+					transport_name => case TunnelTransport of
+						undefined -> Transport:name();
+						_ -> TunnelTransport
+					end,
+					protocol_name => http2,
+					info => TunnelInfo,
+					handshake_event => HandshakeEvent,
+					protocols => Protocols
+				}
+			};
+		_ ->
+			[NewProtocol] = maps:get(protocols, Destination, [http]),
+			Opts#{
+				stream_ref => RealStreamRef,
+				tunnel => #{
+					type => connect,
+					transport_name => case TunnelTransport of
+						undefined -> Transport:name();
+						_ -> TunnelTransport
+					end,
+					protocol_name => http2,
+					info => TunnelInfo,
+					new_protocol => NewProtocol
+				}
+			}
+	end,
+	{tunnel, ProtoState, EvHandlerState} = Proto:init(
+		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState2),
+	{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
+		info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}}),
+		EvHandlerState}.
+
+headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
+		tunnel=Tunnel=#tunnel{info=#websocket_info{opts=WsOpts}}},
+		Headers, EvHandler, EvHandlerState0, Extensions, Handler) ->
+	RealStreamRef = stream_ref(State, StreamRef),
+	ContinueStreamRef = continue_stream_ref(State, StreamRef),
+	OriginSocket = #{
+		gun_pid => self(),
+		reply_to => ReplyTo,
+		stream_ref => RealStreamRef,
+		handle_continue_stream_ref => ContinueStreamRef
+	},
+	ReplyTo ! {gun_upgrade, self(), RealStreamRef, [<<"websocket">>], Headers},
+	Proto = gun_ws,
+	EvHandlerState = EvHandler:protocol_changed(#{
+		stream_ref => RealStreamRef,
+		protocol => Proto:name()
+	}, EvHandlerState0),
+	ProtoOpts = #{
+		stream_ref => RealStreamRef,
+		headers => Headers,
+		extensions => Extensions,
+		flow => maps:get(flow, WsOpts, infinity),
+		handler => Handler,
+		opts => WsOpts
+	},
+	{connected_ws_only, ProtoState} = Proto:init(
+		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts),
+	{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
+		protocol=Proto, protocol_state=ProtoState}}),
+		EvHandlerState}.
+
+headers_frame_response(State=#http2_state{content_handlers=Handlers0},
+		Stream=#stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},
+		IsFin, Status, Headers, EvHandler, EvHandlerState0) ->
+	RealStreamRef = stream_ref(State, StreamRef),
+	ReplyTo ! {gun_response, self(), RealStreamRef, IsFin, Status, Headers},
+	EvHandlerState1 = EvHandler:response_headers(#{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo,
+		status => Status,
+		headers => Headers
+	}, EvHandlerState0),
+	{Handlers, EvHandlerState} = case IsFin of
+		fin ->
+			EvHandlerState2 = EvHandler:response_end(#{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo
+			}, EvHandlerState1),
+			{undefined, EvHandlerState2};
+		nofin ->
+			{gun_content_handler:init(ReplyTo, RealStreamRef,
+				Status, Headers, Handlers0), EvHandlerState1}
+	end,
+	%% We disable the tunnel, if any, when receiving any non 2xx response.
+	{maybe_delete_stream(store_stream(State,
+		Stream#stream{handler_state=Handlers, tunnel=undefined}),
+		StreamID, remote, IsFin), EvHandlerState}.
 
 trailers_frame(State, StreamID, Trailers, EvHandler, EvHandlerState0) ->
 	#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, StreamID),
@@ -1195,7 +1297,58 @@ stream_info(State, RealStreamRef=[StreamRef|_]) ->
 down(#http2_state{stream_refs=Refs}) ->
 	maps:keys(Refs).
 
-%% Websocket upgrades are currently only accepted when tunneled.
+ws_upgrade(State=#http2_state{socket=Socket, transport=Transport,
+		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo,
+		Host, Port, Path, Headers0, WsOpts,
+		CookieStore0, EvHandler, EvHandlerState0)
+		when is_reference(StreamRef) ->
+	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(
+		<<"CONNECT">>, HTTP2Machine0),
+	{ok, PseudoHeaders, Headers1, CookieStore} = prepare_headers(State,
+		<<"CONNECT">>, Host, Port, Path, Headers0, CookieStore0),
+	{Headers2, GunExtensions} = case maps:get(compress, WsOpts, false) of
+		true ->
+			{[{<<"sec-websocket-extensions">>,
+				<<"permessage-deflate; client_max_window_bits; server_max_window_bits=15">>}
+			|Headers1], [<<"permessage-deflate">>]};
+		false ->
+			{Headers1, []}
+	end,
+	Headers3 = case maps:get(protocols, WsOpts, []) of
+		[] ->
+			Headers2;
+		ProtoOpt ->
+			<< _, _, Proto/bits >> = iolist_to_binary([[<<", ">>, P] || {P, _} <- ProtoOpt]),
+			[{<<"sec-websocket-protocol">>, Proto}|Headers2]
+	end,
+	Headers = [{<<"sec-websocket-version">>, <<"13">>}|Headers3],
+	Authority = maps:get(authority, PseudoHeaders),
+	RealStreamRef = stream_ref(State, StreamRef),
+	RequestEvent = #{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo,
+		function => ?FUNCTION_NAME,
+		method => <<"CONNECT">>,
+		authority => Authority,
+		path => Path,
+		headers => Headers
+	},
+	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
+	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
+		StreamID, HTTP2Machine1, nofin, PseudoHeaders#{protocol => <<"websocket">>}, Headers),
+	Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)),
+	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+	RequestEndEvent = #{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo
+	},
+	EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
+	InitialFlow = maps:get(flow, WsOpts, infinity),
+	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
+		authority=Authority, path=Path, tunnel=#tunnel{info=#websocket_info{
+			extensions=GunExtensions, opts=WsOpts}}},
+	{create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream),
+		CookieStore, EvHandlerState};
 ws_upgrade(State, RealStreamRef=[StreamRef|_], ReplyTo,
 		Host, Port, Path, Headers, WsOpts, CookieStore0, EvHandler, EvHandlerState0) ->
 	case get_stream_by_ref(State, StreamRef) of
@@ -1210,7 +1363,11 @@ ws_upgrade(State, RealStreamRef=[StreamRef|_], ReplyTo,
 		%% @todo Error conditions?
 	end.
 
-ws_send(Frames, State0, RealStreamRef=[StreamRef|_], ReplyTo, EvHandler, EvHandlerState0) ->
+ws_send(Frames, State0, RealStreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
+	StreamRef = case RealStreamRef of
+		[SR|_] -> SR;
+		_ -> RealStreamRef
+	end,
 	case get_stream_by_ref(State0, StreamRef) of
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState}} ->
 			{Commands, EvHandlerState1} = Proto:ws_send(Frames, ProtoState,

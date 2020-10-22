@@ -229,6 +229,7 @@
 	cookie_ignore_informational => boolean(),
 	flow => pos_integer(),
 	keepalive => timeout(),
+	notify_settings_changed => boolean(),
 
 	%% Options copied from cow_http2_machine.
 	connection_window_margin_size => 0..16#7fffffff,
@@ -708,6 +709,8 @@ connect(ServerPid, Destination, Headers, ReqOpts) ->
 	| {push, stream_ref(), binary(), binary(), resp_headers()}
 	| {upgrade, [binary()], resp_headers()}
 	| {ws, ws_frame()}
+	| {up, http | http2 | raw | socks}
+	| {notify, settings_changed, map()}
 	| {error, {stream_error | connection_error | down, any()} | timeout}.
 
 -spec await(pid(), stream_ref()) -> await_result().
@@ -747,6 +750,8 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{ws, Frame};
 		{gun_tunnel_up, ServerPid, StreamRef, Protocol} ->
 			{up, Protocol};
+		{gun_notify, ServerPid, Type, Info} ->
+			{notify, Type, Info};
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->
@@ -1223,7 +1228,8 @@ connected_ws_only(cast, {ws_send, ReplyTo, StreamRef, Frames}, State=#state{
 		protocol=Protocol=gun_ws, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, EvHandlerState} = Protocol:ws_send(Frames,
-		ProtoState, StreamRef, ReplyTo, EvHandler, EvHandlerState0),
+		ProtoState, dereference_stream_ref(StreamRef, State),
+		ReplyTo, EvHandler, EvHandlerState0),
 	commands(Commands, State#state{event_handler_state=EvHandlerState});
 connected_ws_only(cast, {ws_send, ReplyTo, Frames}, State=#state{
 		protocol=Protocol=gun_ws, protocol_state=ProtoState,
@@ -1312,10 +1318,10 @@ connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts},
 %% @todo Maybe better standardize the protocol callbacks argument orders.
 connected(cast, {ws_send, ReplyTo, StreamRef, Frames}, State=#state{
 		protocol=Protocol, protocol_state=ProtoState,
-		event_handler=EvHandler, event_handler_state=EvHandlerState0})
-		when is_list(StreamRef) ->
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, EvHandlerState} = Protocol:ws_send(Frames,
-		ProtoState, StreamRef, ReplyTo, EvHandler, EvHandlerState0),
+		ProtoState, dereference_stream_ref(StreamRef, State),
+		ReplyTo, EvHandler, EvHandlerState0),
 	commands(Commands, State#state{event_handler_state=EvHandlerState});
 %% Catch-all for the StreamRef-free variant.
 connected(cast, {ws_send, ReplyTo, _}, _) ->

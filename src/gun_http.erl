@@ -955,56 +955,23 @@ ws_handshake(Buffer, State, Ws=#websocket{key=Key}, Headers) ->
 		{_, Accept} ->
 			case cow_ws:encode_key(Key) of
 				Accept ->
-					ws_handshake_extensions(Buffer, State, Ws, Headers);
+					ws_handshake_extensions_and_protocol(Buffer, State, Ws, Headers);
 				_ ->
 					close
 			end
 	end.
 
-ws_handshake_extensions(Buffer, State, Ws=#websocket{extensions=Extensions0, opts=Opts}, Headers) ->
-	case lists:keyfind(<<"sec-websocket-extensions">>, 1, Headers) of
-		false ->
-			ws_handshake_protocols(Buffer, State, Ws, Headers, #{});
-		{_, ExtHd} ->
-			ParsedExtHd = cow_http_hd:parse_sec_websocket_extensions(ExtHd),
-			case ws_validate_extensions(ParsedExtHd, Extensions0, #{}, Opts) of
+ws_handshake_extensions_and_protocol(Buffer, State,
+		Ws=#websocket{extensions=Extensions0, opts=WsOpts}, Headers) ->
+	case gun_ws:select_extensions(Headers, Extensions0, WsOpts) of
+		close ->
+			close;
+		Extensions ->
+			case gun_ws:select_protocol(Headers, WsOpts) of
 				close ->
 					close;
-				Extensions ->
-					ws_handshake_protocols(Buffer, State, Ws, Headers, Extensions)
-			end
-	end.
-
-ws_validate_extensions([], _, Acc, _) ->
-	Acc;
-ws_validate_extensions([{Name = <<"permessage-deflate">>, Params}|Tail], GunExts, Acc, Opts) ->
-	case lists:member(Name, GunExts) of
-		true ->
-			case cow_ws:validate_permessage_deflate(Params, Acc, Opts) of
-				{ok, Acc2} -> ws_validate_extensions(Tail, GunExts, Acc2, Opts);
-				error -> close
-			end;
-		%% Fail the connection if extension was not requested.
-		false ->
-			close
-	end;
-%% Fail the connection on unknown extension.
-ws_validate_extensions(_, _, _, _) ->
-	close.
-
-%% @todo Validate protocols.
-ws_handshake_protocols(Buffer, State, Ws=#websocket{opts=Opts}, Headers, Extensions) ->
-	case lists:keyfind(<<"sec-websocket-protocol">>, 1, Headers) of
-		false ->
-			ws_handshake_end(Buffer, State, Ws, Headers, Extensions,
-				maps:get(default_protocol, Opts, gun_ws_h));
-		{_, Proto} ->
-			ProtoOpt = maps:get(protocols, Opts, []),
-			case lists:keyfind(Proto, 1, ProtoOpt) of
-				{_, Handler} ->
-					ws_handshake_end(Buffer, State, Ws, Headers, Extensions, Handler);
-				false ->
-					close
+				Handler ->
+					ws_handshake_end(Buffer, State, Ws, Headers, Extensions, Handler)
 			end
 	end.
 
