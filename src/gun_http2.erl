@@ -517,7 +517,11 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 		status => Status,
 		headers => Headers
 	}, EvHandlerState0),
-	EvHandlerState2 = EvHandler:origin_changed(#{
+	EvHandlerState2 = EvHandler:response_end(#{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo
+	}, EvHandlerState1),
+	EvHandlerState3 = EvHandler:origin_changed(#{
 		stream_ref => RealStreamRef,
 		type => connect,
 		origin_scheme => case Destination of
@@ -526,7 +530,7 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 		end,
 		origin_host => DestHost,
 		origin_port => DestPort
-	}, EvHandlerState1),
+	}, EvHandlerState2),
 	ContinueStreamRef = continue_stream_ref(State, StreamRef),
 	OriginSocket = #{
 		gun_pid => self(),
@@ -576,7 +580,7 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 			}
 	end,
 	{tunnel, ProtoState, EvHandlerState} = Proto:init(
-		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState2),
+		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState3),
 	{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
 		info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}}),
 		EvHandlerState}.

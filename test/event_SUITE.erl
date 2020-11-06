@@ -1142,11 +1142,10 @@ do_response_end_connect(Config, EventName, Path) ->
 		port => OriginPort,
 		protocols => [Protocol]
 	}, []),
-	%% @todo Figure out whether the response should end when the tunnel is established.
-%	#{
-%		stream_ref := StreamRef1,
-%		reply_to := ReplyTo
-%	} = do_receive_event(EventName),
+	#{
+		stream_ref := StreamRef1,
+		reply_to := ReplyTo
+	} = do_receive_event(EventName),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, Path, [{<<"te">>, <<"trailers">>}], #{tunnel => StreamRef1}),
@@ -1195,11 +1194,10 @@ http1_response_end_body_close(Config) ->
 %		port => OriginPort,
 %		protocols => [{http, #{version => 'HTTP/1.0'}}]
 %	}, []),
-%	%% @todo Figure out whether the response should end when the tunnel is established.
-%%	#{
-%%		stream_ref := StreamRef1,
-%%		reply_to := ReplyTo
-%%	} = do_receive_event(EventName),
+%	#{
+%		stream_ref := StreamRef1,
+%		reply_to := ReplyTo
+%	} = do_receive_event(response_end),
 %	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 %	{up, http} = gun:await(ConnPid, StreamRef1),
 %	StreamRef2 = gun:get(ConnPid, "/stream", [], #{tunnel => StreamRef1}),
@@ -1367,13 +1365,8 @@ do_ws_upgrade_all_events_connect(Config, ProxyProtocol) ->
 	_ = do_receive_event(request_headers),
 	_ = do_receive_event(request_end),
 	_ = do_receive_event(response_start),
-	case OriginProtocol of
-		http -> ok;
-		http2 ->
-			_ = do_receive_event(response_headers),
-%			_ = do_receive_event(response_end), @todo Probably should response_end CONNECT responses for both protocols.
-			ok
-	end,
+	_ = do_receive_event(response_headers),
+	_ = do_receive_event(response_end),
 	_ = do_receive_event(protocol_changed),
 	%% Check the Websocket events.
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),

@@ -324,6 +324,10 @@ handle_connect(Rest, State=#http_state{
 		status => Status,
 		headers => Headers
 	}, EvHandlerState0),
+	EvHandlerState = EvHandler:response_end(#{
+		stream_ref => RealStreamRef,
+		reply_to => ReplyTo
+	}, EvHandlerState1),
 	%% We expect there to be no additional data after the CONNECT response.
 	%% @todo That's probably wrong.
 	<<>> = Rest,
@@ -342,7 +346,7 @@ handle_connect(Rest, State=#http_state{
 			{[
 				{origin, <<"https">>, NewHost, NewPort, connect},
 				{tls_handshake, HandshakeEvent, Protocols, ReplyTo}
-			], CookieStore, EvHandlerState1};
+			], CookieStore, EvHandlerState};
 		_ ->
 			[NewProtocol0] = maps:get(protocols, Destination, [http]),
 			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, RealStreamRef),
@@ -351,7 +355,7 @@ handle_connect(Rest, State=#http_state{
 			{[
 				{origin, <<"http">>, NewHost, NewPort, connect},
 				{switch_protocol, NewProtocol, ReplyTo}
-			], CookieStore, EvHandlerState1}
+			], CookieStore, EvHandlerState}
 	end.
 
 %% @todo We probably shouldn't send info messages if the stream is not alive.
