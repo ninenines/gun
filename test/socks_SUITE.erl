@@ -449,7 +449,7 @@ do_socks5_through_h2_connect_proxy(_OriginScheme, OriginTransport, ProxyScheme, 
 		<<":method">> := <<"CONNECT">>,
 		<<":authority">> := Authority1
 	}} = receive_from(Proxy1Pid),
-	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	%% First the HTTP/2 tunnel is up, then the SOCKS tunnel to the origin HTTP server.
 	{up, socks} = gun:await(ConnPid, StreamRef),
 	{up, http} = gun:await(ConnPid, StreamRef),

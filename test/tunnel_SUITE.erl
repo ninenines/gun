@@ -886,8 +886,7 @@ do_proxy2(State=#st{proxy2=Type, proxy2_pid=Proxy2Pid, proxy2_port=Port}, ConnPi
 				Protocol
 		end]
 	}),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	do_handshake_completed(Protocol, Proxy2Pid),
 	StreamRef1.
@@ -908,8 +907,7 @@ do_origin(#st{origin=Type, origin_port=Port}, ConnPid, StreamRef1) ->
 		transport => Transport,
 		protocols => [Protocol]
 	}, [], #{tunnel => StreamRef1}),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef2),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
 	{up, Protocol} = gun:await(ConnPid, StreamRef2),
 	StreamRef2.
 

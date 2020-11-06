@@ -193,8 +193,7 @@ set_cookie_connect_tcp(Config) ->
 		transport => Transport,
 		protocols => [Protocol]
 	}),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/cookie-set?prefix", #{
 		<<"please-set-cookie">> => <<"a=b">>
@@ -226,8 +225,7 @@ set_cookie_connect_tls(Config) ->
 		transport => Transport,
 		protocols => [Protocol]
 	}),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/cookie-set?prefix", #{
 		<<"please-set-cookie">> => <<"a=b">>

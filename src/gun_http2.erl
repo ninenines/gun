@@ -510,7 +510,7 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 		origin_host => DestHost,
 		origin_port => DestPort
 	},
-	ReplyTo ! {gun_response, self(), RealStreamRef, nofin, Status, Headers},
+	ReplyTo ! {gun_response, self(), RealStreamRef, fin, Status, Headers},
 	EvHandlerState1 = EvHandler:response_headers(#{
 		stream_ref => RealStreamRef,
 		reply_to => ReplyTo,

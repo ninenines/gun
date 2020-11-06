@@ -521,7 +521,7 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 		<<":method">> := <<"CONNECT">>,
 		<<":authority">> := Authority
 	}} = receive_from(ProxyPid),
-	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef),
 	ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
@@ -624,7 +624,7 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 			<<":method">> := <<"CONNECT">>,
 			<<":authority">> := Authority
 		}} = receive_from(ProxyPid),
-		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+		{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 		{up, OriginProtocol} = gun:await(ConnPid, StreamRef),
 		ProxiedStreamRef = gun:get(ConnPid, "/proxied", #{}, #{tunnel => StreamRef}),
 		timer:sleep(1000), %% @todo Why?
@@ -673,7 +673,7 @@ connect_handshake_timeout(_) ->
 		port => OriginPort,
 		protocols => [{http2, #{preface_timeout => 500}}]
 	}),
-	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	{up, http2} = gun:await(ConnPid, StreamRef),
 	%% @todo The error should be normalized.
 	%% @todo Do we want to indicate that a connection_error occurred within the tunnel stream?
@@ -721,7 +721,7 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 			<<":method">> := <<"CONNECT">>,
 			<<":authority">> := Authority1
 		}} = receive_from(Proxy1Pid),
-		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
+		{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 		{up, Proxy2Protocol} = gun:await(ConnPid, StreamRef1),
 		%% Origin.
 		StreamRef2 = gun:connect(ConnPid, #{
@@ -732,7 +732,6 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 		}, [], #{tunnel => StreamRef1}),
 		Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 		{request, <<"CONNECT">>, Authority2, 'HTTP/1.1', _} = receive_from(Proxy2Pid),
-		%% @todo OK there's a mismatch between HTTP/1.1 (fin) and HTTP/2 (nofin).
 		{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
 		{up, OriginProtocol} = gun:await(ConnPid, StreamRef2),
 		%% Tunneled request to the origin.

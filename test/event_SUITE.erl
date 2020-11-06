@@ -530,8 +530,7 @@ do_request_event_connect(Config, EventName) ->
 	%% Gun doesn't send headers with an HTTP/2 CONNECT request
 	%% so we only check that the headers are given as a list.
 	true = is_list(Headers1),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/", [], #{tunnel => StreamRef1}),
 	#{
@@ -575,8 +574,7 @@ do_request_event_headers_connect(Config, EventName) ->
 	%% Gun doesn't send headers with an HTTP/2 CONNECT request
 	%% so we only check that the headers are given as a list.
 	true = is_list(Headers1),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:put(ConnPid, "/", [
 		{<<"content-type">>, <<"text/plain">>}
@@ -685,8 +683,7 @@ do_request_end_connect(Config, EventName) ->
 		stream_ref := StreamRef1,
 		reply_to := ReplyTo
 	} = do_receive_event(EventName),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/", [], #{tunnel => StreamRef1}),
 	#{
@@ -715,8 +712,7 @@ do_request_end_headers_connect(Config, EventName) ->
 		stream_ref := StreamRef1,
 		reply_to := ReplyTo
 	} = do_receive_event(EventName),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:put(ConnPid, "/", [
 		{<<"content-type">>, <<"text/plain">>}
@@ -749,8 +745,7 @@ do_request_end_headers_content_length_connect(Config, EventName) ->
 		stream_ref := StreamRef1,
 		reply_to := ReplyTo
 	} = do_receive_event(EventName),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:put(ConnPid, "/", [
 		{<<"content-type">>, <<"text/plain">>},
@@ -784,8 +779,7 @@ do_request_end_headers_content_length_0_connect(Config, EventName) ->
 		stream_ref := StreamRef1,
 		reply_to := ReplyTo
 	} = do_receive_event(EventName),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:put(ConnPid, "/", [
 		{<<"content-type">>, <<"text/plain">>},
@@ -836,8 +830,7 @@ do_push_promise_start_connect(Config, ProxyProtocol) ->
 		port => OriginPort,
 		protocols => [http2]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, http2} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/push", [], #{tunnel => StreamRef1}),
 	ReplyTo = self(),
@@ -895,8 +888,7 @@ do_push_promise_end_connect(Config, ProxyProtocol) ->
 		port => OriginPort,
 		protocols => [http2]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, http2} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/push", [], #{tunnel => StreamRef1}),
 	ReplyTo = self(),
@@ -966,8 +958,7 @@ response_start_connect(Config) ->
 		stream_ref := StreamRef1,
 		reply_to := ReplyTo
 	} = do_receive_event(response_start),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/", [], #{tunnel => StreamRef1}),
 	#{
@@ -1014,8 +1005,7 @@ response_inform_connect(Config) ->
 		port => OriginPort,
 		protocols => [Protocol]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/inform", [], #{tunnel => StreamRef1}),
 	#{
@@ -1071,8 +1061,7 @@ response_headers_connect(Config) ->
 		headers := Headers1
 	} = do_receive_event(response_headers),
 	true = is_list(Headers1),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/", [], #{tunnel => StreamRef1}),
 	#{
@@ -1101,8 +1090,7 @@ response_trailers(Config) ->
 		port => OriginPort,
 		protocols => [Protocol]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/trailers", [{<<"te">>, <<"trailers">>}], #{tunnel => StreamRef1}),
 	#{
@@ -1159,8 +1147,7 @@ do_response_end_connect(Config, EventName, Path) ->
 %		stream_ref := StreamRef1,
 %		reply_to := ReplyTo
 %	} = do_receive_event(EventName),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, Path, [{<<"te">>, <<"trailers">>}], #{tunnel => StreamRef1}),
 	#{
@@ -1213,8 +1200,7 @@ http1_response_end_body_close(Config) ->
 %%		stream_ref := StreamRef1,
 %%		reply_to := ReplyTo
 %%	} = do_receive_event(EventName),
-%	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-%	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+%	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 %	{up, http} = gun:await(ConnPid, StreamRef1),
 %	StreamRef2 = gun:get(ConnPid, "/stream", [], #{tunnel => StreamRef1}),
 %	#{
@@ -1265,8 +1251,7 @@ do_ws_upgrade_connect(Config, ProxyProtocol) ->
 			http2 -> {http2, #{notify_settings_changed => true}}
 		end]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
 	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
@@ -1374,8 +1359,7 @@ do_ws_upgrade_all_events_connect(Config, ProxyProtocol) ->
 			http2 -> {http2, #{notify_settings_changed => true}}
 		end]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
 	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	%% Skip all CONNECT-related events that may conflict.
@@ -1502,8 +1486,7 @@ do_ws_recv_frame_start_connect(Config, ProxyProtocol) ->
 			http2 -> {http2, #{notify_settings_changed => true}}
 		end]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
 	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
@@ -1564,8 +1547,7 @@ do_ws_recv_frame_header_connect(Config, ProxyProtocol) ->
 			http2 -> {http2, #{notify_settings_changed => true}}
 		end]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
 	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
@@ -1627,8 +1609,7 @@ do_ws_recv_frame_end_connect(Config, ProxyProtocol) ->
 			http2 -> {http2, #{notify_settings_changed => true}}
 		end]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
 	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
@@ -1701,8 +1682,7 @@ do_ws_send_frame_connect(Config, ProxyProtocol, EventName) ->
 			http2 -> {http2, #{notify_settings_changed => true}}
 		end]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
 	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	StreamRef2 = gun:ws_upgrade(ConnPid, "/ws", [], #{tunnel => StreamRef1}),
@@ -1754,8 +1734,7 @@ do_ws_protocol_changed_connect(Config, ProxyProtocol) ->
 			http2 -> {http2, #{notify_settings_changed => true}}
 		end]
 	}, []),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, OriginProtocol} = gun:await(ConnPid, StreamRef1),
 	ws_SUITE:do_await_enable_connect_protocol(OriginProtocol, ConnPid),
 	#{
@@ -1955,8 +1934,7 @@ cancel_connect(Config) ->
 		port => OriginPort,
 		protocols => [Protocol]
 	}),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:post(ConnPid, "/stream", [], #{tunnel => StreamRef1}),
 	gun:cancel(ConnPid, StreamRef2),
@@ -1987,8 +1965,7 @@ cancel_remote_connect(Config) ->
 		port => OriginPort,
 		protocols => [Protocol]
 	}),
-	%% @todo _IsFin is 'fin' for HTTP and 'nofin' for HTTP/2...
-	{response, _IsFin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
 	{up, Protocol} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:post(ConnPid, "/stream", [], #{tunnel => StreamRef1}),
 	ReplyTo = self(),

@@ -139,7 +139,7 @@ do_connect_raw(OriginTransport, ProxyTransport) ->
 		protocols => [raw]
 	}),
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
-	{response, fin, 200, _} = gun:await(ConnPid, StreamRef), %% @todo Why fin?
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, raw} = gun:await(ConnPid, StreamRef),
 	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
@@ -294,7 +294,7 @@ do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
 		<<":method">> := <<"CONNECT">>,
 		<<":authority">> := Authority
 	}} = receive_from(ProxyPid),
-	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	handshake_completed = receive_from(OriginPid),
 	{up, raw} = gun:await(ConnPid, StreamRef),
 	gun:data(ConnPid, StreamRef, nofin, <<"Hello world!">>),
