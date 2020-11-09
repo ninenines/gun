@@ -148,11 +148,12 @@ Handshake timeout for tunneled TLS connections.
 [source,erlang]
 ----
 http_opts() :: #{
-    closing_timeout       => timeout(),
-    flow                  => pos_integer(),
-    keepalive             => timeout(),
-    transform_header_name => fun((binary()) -> binary()),
-    version               => 'HTTP/1.1' | 'HTTP/1.0'
+    closing_timeout             => timeout(),
+    cookie_ignore_informational => boolean(),
+    flow                        => pos_integer(),
+    keepalive                   => timeout(),
+    transform_header_name       => fun((binary()) -> binary()),
+    version                     => 'HTTP/1.1' | 'HTTP/1.0'
 }
 ----
 
@@ -167,6 +168,11 @@ closing_timeout (15000)::
 Time to wait before brutally closing the connection when a
 graceful shutdown was requested via a call to
 link:man:gun:shutdown(3)[gun:shutdown(3)].
+
+cookie_ignore_informational (false)::
+
+Whether cookies received inside informational responses
+(1xx status code) must be ignored.
 
 flow - see below::
 
@@ -199,9 +205,10 @@ HTTP version to use.
 [source,erlang]
 ----
 http2_opts() :: #{
-    closing_timeout => timeout(),
-    flow            => pos_integer(),
-    keepalive       => timeout(),
+    closing_timeout             => timeout(),
+    cookie_ignore_informational => boolean(),
+    flow                        => pos_integer(),
+    keepalive                   => timeout(),
 
     %% HTTP/2 state machine configuration.
     connection_window_margin_size  => 0..16#7fffffff,
@@ -235,6 +242,11 @@ closing_timeout (15000)::
 Time to wait before brutally closing the connection when a
 graceful shutdown was requested either via a call to
 link:man:gun:shutdown(3)[gun:shutdown(3)] or by the server.
+
+cookie_ignore_informational (false)::
+
+Whether cookies received inside informational responses
+(1xx status code) must be ignored.
 
 flow - see below::
 
@@ -373,9 +385,12 @@ Options specific to the Websocket protocol.
 
 [source,erlang]
 ----
-protocols() :: http | {http, http_opts()}
-             | http2 | {http2, http2_opts()}
-             | socks | {socks, socks_opts()}
+Protocol :: http | {http, http_opts()}
+          | http2 | {http2, http2_opts()}
+          | raw | {raw, raw_opts()}
+          | socks | {socks, socks_opts()}
+
+protocols() :: [Protocol]
 ----
 
 Ordered list of preferred protocols. When the transport is `tcp`,
@@ -387,6 +402,18 @@ preferred protocols is set to only accept `socks`.
 
 Defaults to `[http]` when the transport is `tcp`,
 and `[http2, http]` when the transport is `tls`.
+
+=== raw_opts()
+
+[source,erlang]
+----
+raw_opts() :: #{
+}
+----
+
+Configuration for the "raw" protocol.
+
+// The default value is given next to the option name:
 
 === req_headers()
 
@@ -479,6 +506,18 @@ version (5)::
 
 Version of the Socks protocol to use.
 
+=== stream_ref()
+
+[source,erlang]
+----
+stream_ref() - see below
+----
+
+Unique identifier for a stream.
+
+The exact type is considered to be an implementation
+detail.
+
 === ws_opts()
 
 [source,erlang]
@@ -535,9 +574,11 @@ when receiving a ping.
 
 == Changelog
 
+* *2.0*: The `stream_ref()` type was added.
 * *2.0*: The option `cookie_store` was added. It can be used
          to configure a cookie store that Gun will use
-         automatically.
+         automatically. A related option, `cookie_ignore_informational`,
+         was added to both `http_opts()` and `http2_opts()`.
 * *2.0*: The types `protocols()` and `socks_opts()` have been
          added. Support for the Socks protocol has been added
          in every places where protocol selection is available.
@@ -561,6 +602,7 @@ when receiving a ping.
 * *2.0*: The `keepalive` option is now set to `infinity` by
          default for all protocols. This means it is disabled.
 * *2.0*: Websocket options `keepalive` and `silence_pings` introduced.
+* *2.0*: Remove the `protocol` option from `connect_destination()`.
 * *1.3*: Add the CONNECT destination's `protocols` option and
          deprecate the previously introduced `protocol` option.
 * *1.2*: Introduce the type `connect_destination()`.
