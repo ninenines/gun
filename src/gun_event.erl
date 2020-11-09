@@ -49,7 +49,7 @@
 	lookup_info := gun_tcp:lookup_info(),
 	timeout := timeout(),
 	socket => inet:socket(),
-	protocol => http | http2 | socks, %% Only when transport is tcp.
+	protocol => http | http2 | socks | raw, %% Only when transport is tcp.
 	error => any()
 }.
 -export_type([connect_event/0]).
@@ -70,7 +70,7 @@
 	socket := inet:socket() | ssl:sslsocket() | pid(), %% The socket before/after will be different.
 	tls_opts := [ssl:tls_client_option()],
 	timeout := timeout(),
-	protocol => http | http2 | socks,
+	protocol => http | http2 | socks | raw,
 	error => any()
 }.
 -export_type([tls_handshake_event/0]).
@@ -254,8 +254,8 @@
 %% event, following a successful CONNECT request or a SOCKS tunnel.
 
 -type protocol_changed_event() :: #{
-	stream_ref := gun:stream_ref(),
-	protocol := http | http2 | socks | ws
+	stream_ref => gun:stream_ref(),
+	protocol := http | http2 | socks | raw | ws
 }.
 -export_type([protocol_changed_event/0]).
 
@@ -264,8 +264,8 @@
 %% origin_changed.
 
 -type origin_changed_event() :: #{
-	stream_ref := gun:stream_ref(),
-	type := connect, %% @todo socks?
+	stream_ref => gun:stream_ref(),
+	type := connect | socks5,
 	origin_scheme := binary(),
 	origin_host := inet:hostname() | inet:ip_address(),
 	origin_port := inet:port_number()
@@ -306,7 +306,9 @@
 %% terminate.
 
 -type terminate_event() :: #{
-	state := not_connected | domain_lookup | connecting | tls_handshake | connected,
+	state := not_connected
+        | domain_lookup | connecting | initial_tls_handshake | tls_handshake
+        | connected | connected_data_only | connected_ws_only,
 	reason := normal | shutdown | {shutdown, any()} | any()
 }.
 -export_type([terminate_event/0]).

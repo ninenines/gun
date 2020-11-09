@@ -1,0 +1,509 @@
+= gun_event(3)
+
+== Name
+
+gun_event - Events
+
+== Description
+
+The `gun_event` module provides the callback interface
+and types for implementing event handlers.
+
+== Callbacks
+
+Event handlers implement the following interface.
+Because types are tied to specific events, they
+are documented alongside them. All event types
+are exported and can be referred to as `gun_event:Type()`.
+
+The events are ordered by the order they are likely
+to be triggered, with the most frequent events listed
+first.
+
+=== init
+
+[source,erlang]
+----
+init_event() :: #{
+    owner := pid(),
+    transport := tcp | tls,
+    origin_scheme := binary(),
+    origin_host := inet:hostname() | inet:ip_address(),
+    origin_port := inet:port_number(),
+    opts := gun:opts()
+}
+
+init(init_event(), State) -> State
+----
+
+Gun is initializing.
+
+=== domain_lookup_start
+
+[source,erlang]
+----
+domain_lookup_event() :: #{
+    host := inet:hostname() | inet:ip_address(),
+    port := inet:port_number(),
+    tcp_opts := [gen_tcp:connect_option()],
+    timeout := timeout(),
+    lookup_info => gun_tcp:lookup_info(),
+    error => any()
+}
+
+domain_lookup_start(domain_lookup_event(), State) -> State
+----
+
+Gun is starting to resolve the host address.
+
+The `lookup_info` and `error` keys are never set
+for this event.
+
+=== domain_lookup_end
+
+[source,erlang]
+----
+domain_lookup_end(domain_lookup_event(), State) -> State
+----
+
+Gun has finished resolving the host address.
+
+The `lookup_info` key is only set when the lookup is
+successful. The `error` key is set otherwise.
+
+=== connect_start
+
+[source,erlang]
+----
+connect_event() :: #{
+    lookup_info := gun_tcp:lookup_info(),
+    timeout := timeout(),
+    socket => inet:socket(),
+    protocol => http | http2 | socks | raw,
+    error => any()
+}
+
+connect_start(connect_event(), State) -> State
+----
+
+Gun is starting to connect to the host address and port.
+
+The `socket`, `protocol` and `error` keys are never set
+for this event.
+
+=== connect_end
+
+[source,erlang]
+----
+connect_end(connect_event(), State) -> State
+----
+
+Gun has finished connecting to the host address and port.
+
+The `socket` key is set on connect success. The `error`
+key is set otherwise.
+
+The `protocol` key is only set when the transport is
+`tcp` and the connection is successful. The protocol
+is only known in the `tls_handshake_end` event otherwise.
+
+=== tls_handshake_start
+
+[source,erlang]
+----
+tls_handshake_event() :: #{
+    stream_ref => gun:stream_ref(),
+    reply_to => pid(),
+    socket := inet:socket() | ssl:sslsocket() | pid(), %% The socket before/after will be different.
+    tls_opts := [ssl:tls_client_option()],
+    timeout := timeout(),
+    protocol => http | http2 | socks | raw,
+    error => any()
+}
+
+tls_handshake_start(tls_handshake_event(), State) -> State
+----
+
+Gun has started a TLS handshake.
+
+This and the `tls_handshake_end` event only occur when
+connecting to a TLS server or when upgrading the connection
+or a stream to use TLS, for example when using CONNECT or
+when connecting to a secure SOCKS server.
+
+The `stream_ref` and `reply_to` keys are only set when the
+TLS handshake occurs as a result of a CONNECT request or
+inside an existing CONNECT tunnel.
+
+The `protocol` and `error` keys are never set for this event.
+
+=== tls_handshake_end
+
+[source,erlang]
+----
+tls_handshake_end(tls_handshake_event(), State) -> State
+----
+
+Gun has finished a TLS handshake.
+
+The `protocol` key is set on TLS handshake success. The
+`error` key is set otherwise.
+
+=== request_start
+
+[source,erlang]
+----
+request_start_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    function := headers | request | ws_upgrade | connect,
+    method := iodata(),
+    scheme => binary(),
+    authority := iodata(),
+    path => iodata(),
+    headers := [{binary(), iodata()}]
+}
+
+request_start(request_start_event(), State) -> State
+----
+
+Gun is starting to send a request.
+
+The `scheme` and `path` keys are never set when the `function`
+is set to `connect`.
+
+=== request_headers
+
+[source,erlang]
+----
+request_headers(request_start_event(), State) -> State
+----
+
+Gun has finished sending the request headers.
+
+=== request_end
+
+[source,erlang]
+----
+request_end_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid()
+}
+
+request_end(request_end_event(), State) -> State
+----
+
+Gun has finished sending the request.
+
+=== push_promise_start
+
+[source,erlang]
+----
+push_promise_start_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid()
+}
+
+push_promise_start(push_promise_start_event(), State) -> State
+----
+
+Gun has begun receiving a promised request (server push).
+
+=== push_promise_end
+
+[source,erlang]
+----
+push_promise_end_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    promised_stream_ref => gun:stream_ref(),
+    method := binary(),
+    uri := binary(),
+    headers := [{binary(), iodata()}]
+}
+
+push_promise_end(push_promise_end_event(), State) -> State
+----
+
+Gun has finished receiving a promised request (server push).
+Promised requests never include a body.
+
+Promised requests received during the graceful shutdown of the
+connection get canceled immediately.
+
+// @todo The cancel event should probably trigger as well.
+
+=== response_start
+
+[source,erlang]
+----
+response_start_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid()
+}
+
+response_start(response_start_event(), State) -> State
+----
+
+Gun has begun receiving a response.
+
+=== response_inform
+
+[source,erlang]
+----
+response_headers_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    status := non_neg_integer(),
+    headers := [{binary(), binary()}]
+}
+
+response_inform(response_headers_event(), State) -> State
+----
+
+Gun has received an informational response (1xx status code).
+
+A `status` with value 101 indicates that the response has
+concluded as the stream will be upgraded to a new protocol.
+
+=== response_headers
+
+[source,erlang]
+----
+response_headers(response_headers_event(), State) -> State
+----
+
+Gun has finished receiving response headers.
+
+=== response_trailers
+
+[source,erlang]
+----
+response_trailers_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    headers := [{binary(), binary()}]
+}
+
+response_trailers(response_trailers_event(), State) -> State
+----
+
+Gun has received response trailers.
+
+=== response_end
+
+[source,erlang]
+----
+response_end_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid()
+}
+
+response_end(response_end_event(), State) -> State
+----
+
+Gun has finished receiving a response.
+
+=== ws_upgrade
+
+[source,erlang]
+----
+ws_upgrade_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    opts := gun:ws_opts()
+}
+
+ws_upgrade(ws_upgrade_event(), State) -> State
+----
+
+A Websocket upgrade was requested.
+
+Success is indicated by a response (101 informational
+if HTTP/1.1, 2xx if HTTP/2) followed by a `protocol_changed`
+event.
+
+=== ws_recv_frame_start
+
+[source,erlang]
+----
+ws_recv_frame_start_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    frag_state := cow_ws:frag_state(),
+    extensions := cow_ws:extensions()
+}
+
+ws_recv_frame_start(ws_recv_frame_start_event(), State) -> State
+----
+
+Gun has begun receiving a Websocket frame.
+
+=== ws_recv_frame_header
+
+[source,erlang]
+----
+ws_recv_frame_header_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    frag_state := cow_ws:frag_state(),
+    extensions := cow_ws:extensions(),
+    type := cow_ws:frame_type(),
+    rsv := cow_ws:rsv(),
+    len := non_neg_integer(),
+    mask_key := cow_ws:mask_key()
+}
+
+ws_recv_frame_header(ws_recv_frame_header_event(), State) -> State
+----
+
+Gun has received the header part of a Websocket frame.
+
+It will be immediately be followed by the frame's payload.
+
+=== ws_recv_frame_end
+
+[source,erlang]
+----
+ws_recv_frame_end_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    extensions := cow_ws:extensions(),
+    close_code := undefined | cow_ws:close_code(),
+    payload := binary()
+}
+
+ws_recv_frame_end(ws_recv_frame_end_event(), State) -> State
+----
+
+Gun has finished receiving a Websocket frame.
+
+=== ws_send_frame_start
+
+[source,erlang]
+----
+ws_send_frame_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    extensions := cow_ws:extensions(),
+    frame := gun:ws_frame()
+}
+
+ws_send_frame_start(ws_send_frame_event(), State) -> State
+----
+
+Gun has started sending a Websocket frame.
+
+=== ws_send_frame_end
+
+[source,erlang]
+----
+ws_send_frame_end(ws_send_frame_event(), State) -> State
+----
+
+Gun has finished sending a Websocket frame.
+
+=== protocol_changed
+
+[source,erlang]
+----
+protocol_changed_event() :: #{
+    stream_ref := gun:stream_ref(),
+    protocol := http | http2 | socks | raw | ws
+}
+
+protocol_changed(protocol_changed_event(), State) -> State
+----
+
+The protocol has changed for either the entire Gun connection
+or for a specific stream.
+
+The `stream_ref` key is only set when the protocol has
+changed for a specific stream or inside a CONNECT tunnel.
+
+This event occurs during successful Websocket upgrades,
+as a result of successful CONNECT requests or after a
+SOCKS tunnel was successfully established.
+
+=== origin_changed
+
+[source,erlang]
+----
+origin_changed_event() :: #{
+    stream_ref => gun:stream_ref(),
+    type := connect | socks5,
+    origin_scheme := binary(),
+    origin_host := inet:hostname() | inet:ip_address(),
+    origin_port := inet:port_number()
+}
+
+origin_changed(origin_changed_event(), State) -> State
+----
+
+The origin server has changed for either the Gun connection
+or for a specific stream.
+
+The `stream_ref` key is only set when the origin has
+changed for a specific stream or inside a CONNECT tunnel.
+
+=== cancel
+
+[source,erlang]
+----
+cancel_event() :: #{
+    stream_ref := gun:stream_ref(),
+    reply_to := pid(),
+    endpoint := local | remote,
+    reason := atom()
+}
+
+cancel(cancel_event(), State) -> State
+----
+
+A stream has been canceled.
+
+HTTP/1.1 streams can't be canceled at the protocol level. In
+this case Gun will silence the stream for the user but events
+may still occur.
+
+HTTP/2 streams can be canceled both by the client and the
+server. Events may still occur for a short time after the
+stream has been canceled.
+
+=== disconnect
+
+[source,erlang]
+----
+disconnect_event() :: #{
+    reason := normal | closed | {error, any()}
+}
+
+disconnect(disconnect_event(), State) -> State
+----
+
+Gun has been disconnected from the server.
+
+=== terminate
+
+[source,erlang]
+----
+terminate_event() :: #{
+    state := not_connected
+        | domain_lookup | connecting | initial_tls_handshake | tls_handshake
+        | connected | connected_data_only | connected_ws_only,
+    reason := normal | shutdown | {shutdown, any()} | any()
+}
+
+terminate(terminate_event(), State) -> State
+----
+
+Gun is terminating.
+
+== Changelog
+
+* *2.0*: Module introduced.
+
+== See also
+
+link:man:gun(7)[gun(7)],
+link:man:gun(3)[gun(3)]
