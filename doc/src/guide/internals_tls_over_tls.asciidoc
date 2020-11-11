@@ -1,0 +1,177 @@
+== Internals: TLS over TLS
+
+The `ssl` application that comes with Erlang/OTP implements
+TLS using an interface equivalent to the `gen_tcp` interface:
+you get and manipulate a socket. The TLS encoding and
+decoding is applied transparently to the data sent and
+received.
+
+In order to have a TLS layer inside another TLS layer we
+need a way to encode the data of the inner layer before
+we pass it to the outer layer. We cannot do this with
+a socket interface. Thankfully, the `ssl` application comes
+with options that allow to transform an `sslsocket()` into
+an encoder/decoder.
+
+The implementation is however a little convoluted as a
+result. This chapter aims to give an overview of how it
+all works under the hood.
+
+=== gun_tls_proxy
+
+The module `gun_tls_proxy` implements an intermediary process
+that sits between the Gun process and the TLS process. It is
+responsible for routing data from the Gun process to the TLS
+process, and from the TLS process to the Gun process.
+
+In order to obtain the TLS encoded data the `cb_info` option
+is given to the `ssl:connect/3` function. This replaces the
+default TCP outer socket module with our own custom module.
+Gun uses the `gun_tls_proxy_cb` module instead. This module
+will forward all messages to the `gun_tls_proxy` process.
+
+The resulting operations looks like this:
+
+----
+Gun process <-> gun_tls_proxy <-> sslsocket() <-> gun_tls_proxy <-> "inner socket"
+----
+
+The "inner socket" is the socket for the Gun connection.
+The `gun_tls_proxy` process decides where to send or
+receive the data based on where it's coming from. This
+is how it knows whether the data has been encoded/decoded
+or not.
+
+Because the `ssl:connect/3` function call is blocking,
+a temporary process is used while connecting. This is required
+because the `gun_tls_proxy` needs to forward data even while
+performing the TLS handshake, otherwise the `ssl:connect/3`
+call will not complete.
+
+The result of the `ssl:connect/3` call is forward to the Gun
+process, along with the negotiated protocols when the connection
+was successful.
+
+The `gun_tls_proxy_cb` module does not actually implement
+`{active,N}` as requested by the `ssl` application. Instead
+it uses `{active,true}`.
+
+The behavior of the `gun_tls_proxy` process will vary depending
+on whether the TLS over TLS is done connection-wide or only
+stream-wide.
+
+=== Connection-wide TLS over TLS
+
+When used for the entire connection, the `gun_tls_proxy` process
+will act like a real socket once connected. The only difference
+is how the connection is performed. As mentioned earlier, the
+result of the `ssl:connect/3` call is sent back to the Gun process.
+
+When doing TLS over TLS the processes will end up looking like
+this:
+
+----
+Gun process <-> gun_tls_proxy <-> "inner socket"
+----
+
+The details of the interactions between `gun_tls_proxy` and
+its associated `sslsocket()` have been removed in order to
+better illustrate the concept.
+
+When adding another layer this becomes:
+
+----
+Gun process <-> gun_tls_proxy <-> gun_tls_proxy <-> sslsocket()
+----
+
+This is what is done when only HTTP/1.1 and SOCKS proxies are
+involved.
+
+=== Stream-wide TLS over TLS
+
+The same cannot be done for HTTP/2 proxies. This is because the
+HTTP/2 CONNECT method does not apply to the entire connection,
+but only to a stream. The proxied data must be wrapped inside
+a DATA frame. It cannot be sent directly. This is what must be
+done:
+
+----
+Gun process -> gun_tls_proxy -> Gun process -> "inner socket"
+----
+
+The "inner socket" is the socket for the HTTP/2 connection.
+
+In order to tell Gun to continue processing the data, the
+`handle_continue` mechanism is introduced. When `gun_tls_proxy`
+has TLS encoded the data it sends it back to the Gun process,
+wrapped in a `handle_continue` tuple. This tuple contains
+enough information to figure out what stream the data belongs
+to and what should be done next. Gun will therefore route the
+data to the correct layer and continue sending it.
+
+This solution is also used for receiving data, except in the
+reverse order.
+
+=== Routing to the right stream
+
+In order to know where to route the data, the `stream_ref`
+had to be modified to contain all the references to the
+individual streams. So if the tunnel is identified by
+`StreamA` and a request on this tunnel is identified
+by `StreamB`, then the stream is known as `[StreamA, StreamB]`
+to the user. Gun then routes first to `StreamA`, a
+tunnel, which continues routing to `StreamB`.
+
+A problem comes up if an intermediary is a SOCKS server,
+for example in the following scenario:
+
+----
+HTTP/2 proxy <-> SOCKS proxy <-> HTTP/1.1 origin
+----
+
+The SOCKS protocol doesn't have a concept of stream,
+therefore when we refer to request to the origin server
+they are `[StreamA, StreamB]`, not `[StreamA, StreamB, StreamC]`.
+This is a problem for routing encoded/decoded TLS data
+to the SOCKS layer: we don't have a built-in way of referring
+to the SOCKS layer.
+
+The solution is to have a separate `handle_continue_stream_ref`
+value that assigns a reference to the SOCKS layers. Gun will
+then be able to forward `handle_continue` message, and only
+them, to the appropriate layer.
+
+Gun therefore has two different routing avenues, but the
+mechanism remains the same otherwise.
+
+=== gun_tunnel
+
+In order to simplify the routing, the `gun_tunnel` module
+was introduced. For each intermediary (including the original
+CONNECT stream at the HTTP/2 layer) there is a `gun_tunnel`
+module.
+
+Going back to the example above:
+
+----
+HTTP/2 proxy <-> SOCKS proxy <-> HTTP/1.1 origin
+----
+
+In this case the modules involved to handle the request
+will be as follow:
+
+----
+gun_http2 <-> gun_tunnel <-> gun_tunnel <-> gun_http
+----
+
+The `gun_http2` module doesn't do any routing, it just
+passes everything to the `gun_tunnel` module. The `gun_tunnel`
+module will then do the routing, which involves removing
+`StreamA` from `[StreamA, StreamB]` where appropriate.
+
+The `gun_tunnel` module also receives the TLS encoded/decoded
+data and forwards it appropriately. When it comes to sending
+data, it will return a `send` command that allows the previous
+module to continue sending the data. The `gun_http2` module
+will ultimately wrap the data to be sent in a DATA frame and
+send it to the "inner socket".
