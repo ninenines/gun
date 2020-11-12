@@ -62,17 +62,17 @@ do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
 	Parent ! {self(), Port},
 	{ok, ClientSocket} = case Transport of
 		gun_tcp ->
-			gen_tcp:accept(ListenSocket, 5000);
+			gen_tcp:accept(ListenSocket, infinity);
 		gun_tls ->
-			{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 5000),
-			ssl:ssl_accept(ClientSocket0, 5000),
+			{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, infinity),
+			ssl:ssl_accept(ClientSocket0, infinity),
 			{ok, ClientSocket0}
 	end,
 	{ok, Data} = case Transport of
 		gun_tcp ->
-			gen_tcp:recv(ClientSocket, 0, 1000);
+			gen_tcp:recv(ClientSocket, 0, infinity);
 		gun_tls ->
-			ssl:recv(ClientSocket, 0, 1000)
+			ssl:recv(ClientSocket, 0, infinity)
 	end,
 	{Method= <<"CONNECT">>, Authority, Version, Rest} = cow_http:parse_request_line(Data),
 	{Headers, <<>>} = cow_http:parse_headers(Rest),
@@ -95,7 +95,7 @@ do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
 			inet:setopts(OriginSocket, [{active, true}]),
 			do_proxy_loop(Transport, ClientSocket, OriginSocket);
 		true ->
-			timer:sleep(2000)
+			timer:sleep(infinity)
 	end.
 
 do_proxy_loop(Transport, ClientSocket, OriginSocket) ->

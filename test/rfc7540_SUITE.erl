@@ -68,10 +68,10 @@ do_proxy_init(Proxy=#proxy{parent=Parent, transport=Transport}) ->
 	Parent ! {self(), Port},
 	{ok, Socket} = case Transport of
 		gun_tcp ->
-			gen_tcp:accept(ListenSocket, 5000);
+			gen_tcp:accept(ListenSocket, infinity);
 		gun_tls ->
-			{ok, Socket0} = ssl:transport_accept(ListenSocket, 5000),
-			ssl:handshake(Socket0, 5000),
+			{ok, Socket0} = ssl:transport_accept(ListenSocket, infinity),
+			ssl:handshake(Socket0, infinity),
 			{ok, <<"h2">>} = ssl:negotiated_protocol(Socket0),
 			{ok, Socket0}
 	end,

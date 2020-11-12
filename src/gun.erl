@@ -1698,29 +1698,41 @@ commands([TLSHandshake={tls_handshake, _, _, _}], State) ->
 		{next_event, internal, TLSHandshake}}.
 
 disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
-		socket=Socket, transport=Transport,
+		intermediaries=Intermediaries, socket=Socket, transport=Transport0,
 		protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason) ->
 	EvHandlerState1 = Protocol:close(Reason, ProtoState, EvHandler, EvHandlerState0),
-	_ = Transport:close(Socket),
+	_ = Transport0:close(Socket),
 	EvHandlerState = EvHandler:disconnect(#{reason => Reason}, EvHandlerState1),
-	State = State0#state{event_handler_state=EvHandlerState},
+	State1 = State0#state{event_handler_state=EvHandlerState},
 	case Status of
 		{down, DownReason} ->
-			owner_down(DownReason, State);
+			owner_down(DownReason, State1);
 		shutdown ->
-			{stop, shutdown, State};
+			{stop, shutdown, State1};
 		{up, _} ->
 			%% We closed the socket, discard any remaining socket events.
-			disconnect_flush(State),
+			disconnect_flush(State1),
 			KilledStreams = Protocol:down(ProtoState),
 			Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams},
 			Retry = maps:get(retry, Opts, 5),
-			%% @todo We need to reset the origin_scheme/host/port and the transport
-			%% as well as remove the intermediaries.
-			{next_state, not_connected,
-				keepalive_cancel(State#state{socket=undefined,
-					protocol=undefined, protocol_state=undefined}),
+			State2 = keepalive_cancel(State1#state{
+				socket=undefined, protocol=undefined, protocol_state=undefined}),
+			State = case Intermediaries of
+				[] ->
+					State2;
+				_ ->
+					#{host := OriginHost, port := OriginPort,
+						transport := OriginTransport} = lists:last(Intermediaries),
+					{OriginScheme, Transport} = case OriginTransport of
+						tcp -> {<<"http">>, gun_tcp};
+						tls -> {<<"https">>, gun_tls}
+					end,
+					State2#state{transport=Transport, origin_scheme=OriginScheme,
+						origin_host=OriginHost, origin_port=OriginPort,
+						intermediaries=[]}
+			end,
+			{next_state, not_connected, State,
 				{next_event, internal, {retries, Retry, Reason}}}
 	end.
 
