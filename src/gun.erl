@@ -183,11 +183,7 @@
 
 	%% Origin.
 	origin_host => inet:hostname() | inet:ip_address(),
-	origin_port => inet:port_number(),
-
-	%% Non-stream intermediaries (for example SOCKS).
-	%% @todo I think this is not used anymore.
-	intermediaries => [intermediary()]
+	origin_port => inet:port_number()
 }.
 -export_type([tunnel_info/0]).
 
