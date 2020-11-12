@@ -182,7 +182,6 @@ init(ReplyTo, Socket, Transport, Opts0) ->
 	BaseStreamRef = maps:get(stream_ref, Opts, undefined),
 	TunnelTransport = maps:get(tunnel_transport, Opts, undefined),
 	{ok, Preface, HTTP2Machine} = cow_http2_machine:init(client, Opts#{message_tag => BaseStreamRef}),
-	%% @todo Better validate the preface being received.
 	State = #http2_state{reply_to=ReplyTo, socket=Socket, transport=Transport,
 		opts=Opts, base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
 		content_handlers=Handlers, http2_machine=HTTP2Machine},

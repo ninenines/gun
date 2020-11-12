@@ -368,7 +368,6 @@ handle_inform(Rest, State=#http_state{
 		status => Status,
 		headers => Headers
 	}, EvHandlerState0),
-	%% @todo We might want to switch to the HTTP/2 protocol or to the TLS transport as well.
 	case {Version, Status, StreamRef} of
 		{'HTTP/1.1', 101, #websocket{}} ->
 			{ws_handshake(Rest, State, StreamRef, Headers), CookieStore, EvHandlerState};

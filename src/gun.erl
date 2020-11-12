@@ -193,10 +193,6 @@
 }.
 -export_type([raw_opts/0]).
 
-%% @todo When/if HTTP/2 CONNECT gets implemented, we will want an option here
-%% to indicate that the request must be sent on an existing CONNECT stream.
-%% This is of course not required for HTTP/1.1 since the CONNECT takes over
-%% the entire connection.
 -type req_opts() :: #{
 	flow => pos_integer(),
 	reply_to => pid(),
@@ -912,9 +908,6 @@ cancel(ServerPid, StreamRef) ->
 stream_info(ServerPid, StreamRef) ->
 	gen_statem:call(ServerPid, {stream_info, StreamRef}).
 
-%% @todo Allow upgrading an HTTP/1.1 connection to HTTP/2.
-%% http2_upgrade
-
 %% Websocket.
 
 -spec ws_upgrade(pid(), iodata()) -> stream_ref().
@@ -934,7 +927,6 @@ ws_upgrade(ServerPid, Path, Headers, Opts0) ->
 	ok = gun_ws:check_options(Opts),
 	StreamRef = make_stream_ref(Tunnel),
 	ReplyTo = maps:get(reply_to, Opts, self()),
-	%% @todo Also accept tunnel option.
 	gen_statem:cast(ServerPid, {ws_upgrade, ReplyTo, StreamRef, Path, normalize_headers(Headers), Opts}),
 	StreamRef.
 
@@ -1291,8 +1283,6 @@ connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow}
 	{keep_state, State#state{protocol_state=ProtoState2,
 		event_handler_state=EvHandlerState}};
 %% Public Websocket interface.
-%% @todo Maybe make an interface in the protocol module instead of checking on protocol name.
-%% An interface would also make sure that HTTP/1.0 can't upgrade.
 connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers}, State=#state{opts=Opts}) ->
 	WsOpts = maps:get(ws_opts, Opts, #{}),
 	connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts}, State);
@@ -1418,9 +1408,6 @@ handle_common_connected_no_input(info, {handle_continue, StreamRef, Msg}, _,
 	maybe_active(commands(Commands, State0#state{cookie_store=CookieStore,
 		event_handler_state=EvHandlerState}));
 %% Timeouts.
-%% @todo HTTP/2 requires more timeouts than just the keepalive timeout.
-%% We should have a timeout function in protocols that deal with
-%% received timeouts. Currently the timeout messages are ignored.
 handle_common_connected_no_input(info, keepalive, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState0,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
@@ -1443,7 +1430,6 @@ handle_common_connected_no_input({call, From}, {stream_info, StreamRef}, _,
 	{keep_state_and_data, {reply, From,
 		if
 			%% The stream_ref refers to an intermediary.
-			%% @todo This is probably wrong.
 			length(StreamRef) =< length(Intermediaries) ->
 				Intermediary = lists:nth(length(StreamRef), lists:reverse(Intermediaries)),
 				{Intermediaries1, Tail} = lists:splitwith(
@@ -1576,7 +1562,7 @@ handle_common(cast, shutdown, StateName, State=#state{
 		{undefined, _} ->
 			{stop, shutdown};
 		{_, undefined} ->
-			%% @todo This is missing the disconnect event.
+			%% @todo This is missing the disconnect/terminate events.
 			Transport:close(Socket),
 			{stop, shutdown};
 		_ when StateName =:= closing, element(1, Status) =:= up ->
@@ -1596,7 +1582,7 @@ handle_common(info, {'DOWN', OwnerRef, process, Owner, Reason}, StateName, State
 		_ ->
 			case Protocol of
 				undefined ->
-					%% @todo This is missing the disconnect event.
+					%% @todo This is missing the disconnect/terminate events.
 					Transport:close(Socket),
 					owner_down(Reason, State);
 				%% We are already closing so no need to initiate closing again.
@@ -1719,7 +1705,6 @@ disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 		{up, _} ->
 			%% We closed the socket, discard any remaining socket events.
 			disconnect_flush(State),
-			%% @todo Stop keepalive timeout, flush message.
 			KilledStreams = Protocol:down(ProtoState),
 			Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams},
 			Retry = maps:get(retry, Opts, 5),

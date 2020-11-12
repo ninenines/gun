@@ -121,8 +121,6 @@ init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tun
 			}, EvHandlerState0),
 			%% When the tunnel protocol is HTTP/1.1 or SOCKS
 			%% the gun_tunnel_up message was already sent.
-			%%
-			%% @todo There's probably a better way.
 			_ = case TunnelProtocol of
 				http -> ok;
 				socks -> ok;
