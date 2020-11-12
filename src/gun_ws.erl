@@ -28,7 +28,6 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([ws_send/5]).
 -export([ws_send/6]).
 -export([down/1]).
 
@@ -343,6 +342,7 @@ ws_send([Frame|Tail], State, ReplyTo, EvHandler, EvHandlerState0) ->
 			Other
 	end.
 
+%% @todo We should probably check the _StreamRef value.
 ws_send(Frames, State, _StreamRef, ReplyTo, EvHandler, EvHandlerState) ->
 	ws_send(Frames, State, ReplyTo, EvHandler, EvHandlerState).
 

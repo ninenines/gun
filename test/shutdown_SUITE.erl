@@ -534,7 +534,7 @@ ws_gun_send_close_frame(Config) ->
 	%% We send a close frame. We expect the same frame back
 	%% before the connection is closed.
 	Frame = {close, 3333, <<>>},
-	gun:ws_send(ConnPid, Frame),
+	gun:ws_send(ConnPid, StreamRef, Frame),
 	{ws, Frame} = gun:await(ConnPid, StreamRef),
 	gun_is_down(ConnPid, ConnRef, normal).
 
@@ -563,7 +563,7 @@ closing_gun_shutdown(Config) ->
 	%% We send a close frame then immediately call gun:shutdown/1.
 	%% We expect Gun to go down without retrying to reconnect.
 	Frame = {close, 3333, <<>>},
-	gun:ws_send(ConnPid, Frame),
+	gun:ws_send(ConnPid, StreamRef, Frame),
 	gun:shutdown(ConnPid),
 	{ws, Frame} = gun:await(ConnPid, StreamRef),
 	gun_is_down(ConnPid, ConnRef, shutdown).
@@ -586,7 +586,7 @@ do_closing_owner_down(Config, ExitReason, DownReason) ->
 		{ok, http} = gun:await_up(ConnPid),
 		StreamRef = gun:ws_upgrade(ConnPid, "/ws_frozen", []),
 		{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
-		gun:ws_send(ConnPid, {close, 3333, <<>>}),
+		gun:ws_send(ConnPid, StreamRef, {close, 3333, <<>>}),
 		timer:sleep(100),
 		exit(ExitReason)
 	end),

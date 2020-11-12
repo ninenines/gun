@@ -49,7 +49,7 @@ undocumented and must be set to `gun_ws_h`.
 .Upgrade to Websocket with protocol negotiation
 [source,erlang]
 ----
-gun:ws_upgrade(ConnPid, "/websocket", []
+StreamRef = gun:ws_upgrade(ConnPid, "/websocket", []
     #{protocols => [{<<"xmpp">>, gun_ws_h}]}).
 ----
 
@@ -88,18 +88,18 @@ Once the Websocket upgrade has completed successfully, you no
 longer have access to functions for performing requests. You
 can only send and receive Websocket messages.
 
-Use `gun:ws_send/2` to send messages to the server.
+Use `gun:ws_send/3` to send messages to the server.
 
 .Send a text frame
 [source,erlang]
 ----
-gun:ws_send(ConnPid, {text, "Hello!"}).
+gun:ws_send(ConnPid, StreamRef, {text, "Hello!"}).
 ----
 
 .Send a text frame, a binary frame and then close the connection
 [source,erlang]
 ----
-gun:ws_send(ConnPid, [
+gun:ws_send(ConnPid, StreamRef, [
     {text, "Hello!"},
     {binary, BinaryValue},
     close

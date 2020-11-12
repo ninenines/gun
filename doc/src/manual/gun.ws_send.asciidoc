@@ -8,13 +8,14 @@ gun:ws_send - Send Websocket frames
 
 [source,erlang]
 ----
-ws_send(ConnPid, Frames) -> ok
+ws_send(ConnPid, StreamRef, Frames) -> ok
 
-ConnPid :: pid()
-Frames  :: Frame | [Frame]
-Frame   :: close | ping | pong
-         | {text | binary | close | ping | pong, iodata()}
-         | {close, non_neg_integer(), iodata()}
+ConnPid   :: pid()
+StreamRef :: gun:stream_ref()
+Frames    :: Frame | [Frame]
+Frame     :: close | ping | pong
+           | {text | binary | close | ping | pong, iodata()}
+           | {close, non_neg_integer(), iodata()}
 ----
 
 Send Websocket frames.
@@ -28,6 +29,10 @@ ConnPid::
 
 The pid of the Gun connection process.
 
+StreamRef::
+
+Identifier of the stream that was upgraded to Websocket.
+
 Frames::
 
 One or more Websocket frame(s).
@@ -38,6 +43,8 @@ The atom `ok` is returned.
 
 == Changelog
 
+* *2.0*: The mandatory `StreamRef` argument was added.
+* *2.0*: It is now possible to send multiple frames at once.
 * *1.0*: Function introduced.
 
 == Examples
@@ -45,13 +52,13 @@ The atom `ok` is returned.
 .Send a single frame
 [source,erlang]
 ----
-gun:ws_send(ConnPid, {text, <<"Hello world!">>}).
+gun:ws_send(ConnPid, StreamRef, {text, <<"Hello world!">>}).
 ----
 
 .Send many frames including a close frame
 [source,erlang]
 ----
-gun:ws_send(ConnPid, [
+gun:ws_send(ConnPid, StreamRef, [
     {text, <<"See you later, world!">>},
     close
 ]).

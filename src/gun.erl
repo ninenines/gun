@@ -92,7 +92,6 @@
 -export([ws_upgrade/2]).
 -export([ws_upgrade/3]).
 -export([ws_upgrade/4]).
--export([ws_send/2]).
 -export([ws_send/3]).
 
 %% Internals.
@@ -930,12 +929,6 @@ ws_upgrade(ServerPid, Path, Headers, Opts0) ->
 	gen_statem:cast(ServerPid, {ws_upgrade, ReplyTo, StreamRef, Path, normalize_headers(Headers), Opts}),
 	StreamRef.
 
-%% @todo ws_send/2 will need to be deprecated in favor of a variant with StreamRef.
-%% But it can be kept for the time being since it can still work for HTTP/1.1 (connected_ws_only).
--spec ws_send(pid(), ws_frame() | [ws_frame()]) -> ok.
-ws_send(ServerPid, Frames) ->
-	gen_statem:cast(ServerPid, {ws_send, self(), Frames}).
-
 -spec ws_send(pid(), stream_ref(), ws_frame() | [ws_frame()]) -> ok.
 ws_send(ServerPid, StreamRef, Frames) ->
 	gen_statem:cast(ServerPid, {ws_send, self(), StreamRef, Frames}).
@@ -1219,11 +1212,6 @@ connected_ws_only(cast, {ws_send, ReplyTo, StreamRef, Frames}, State=#state{
 		ProtoState, dereference_stream_ref(StreamRef, State),
 		ReplyTo, EvHandler, EvHandlerState0),
 	commands(Commands, State#state{event_handler_state=EvHandlerState});
-connected_ws_only(cast, {ws_send, ReplyTo, Frames}, State=#state{
-		protocol=Protocol=gun_ws, protocol_state=ProtoState,
-		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:ws_send(Frames, ProtoState, ReplyTo, EvHandler, EvHandlerState0),
-	commands(Commands, State#state{event_handler_state=EvHandlerState});
 connected_ws_only(cast, Msg, _)
 		when element(1, Msg) =:= headers; element(1, Msg) =:= request; element(1, Msg) =:= data;
 			element(1, Msg) =:= connect; element(1, Msg) =:= ws_upgrade ->
@@ -1309,12 +1297,6 @@ connected(cast, {ws_send, ReplyTo, StreamRef, Frames}, State=#state{
 		ProtoState, dereference_stream_ref(StreamRef, State),
 		ReplyTo, EvHandler, EvHandlerState0),
 	commands(Commands, State#state{event_handler_state=EvHandlerState});
-%% Catch-all for the StreamRef-free variant.
-connected(cast, {ws_send, ReplyTo, _}, _) ->
-	ReplyTo ! {gun_error, self(), {badstate,
-		"Connection needs to be upgraded to Websocket "
-		"before the gun:ws_send/1 function can be used."}},
-	keep_state_and_data;
 connected(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
 

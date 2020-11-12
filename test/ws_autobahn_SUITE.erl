@@ -115,13 +115,13 @@ run_cases(N, Total) ->
 loop(Pid, MRef, StreamRef) ->
 	receive
 		{gun_ws, Pid, StreamRef, close} ->
-			gun:ws_send(Pid, close),
+			gun:ws_send(Pid, StreamRef, close),
 			loop(Pid, MRef, StreamRef);
 		{gun_ws, Pid, StreamRef, {close, Code, _}} ->
-			gun:ws_send(Pid, {close, Code, <<>>}),
+			gun:ws_send(Pid, StreamRef, {close, Code, <<>>}),
 			loop(Pid, MRef, StreamRef);
 		{gun_ws, Pid, StreamRef, Frame} ->
-			gun:ws_send(Pid, Frame),
+			gun:ws_send(Pid, StreamRef, Frame),
 			loop(Pid, MRef, StreamRef);
 		{gun_down, Pid, ws, _, _} ->
 			close(Pid, MRef);

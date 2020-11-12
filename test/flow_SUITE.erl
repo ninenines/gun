@@ -183,9 +183,9 @@ flow_ws(_) ->
 		%% We send 2 frames with some time in between to make sure that
 		%% Gun handles them in separate Protocol:handle calls.
 		Frame = {text, <<"Hello!">>},
-		gun:ws_send(ConnPid, Frame),
+		gun:ws_send(ConnPid, StreamRef, Frame),
 		timer:sleep(500),
-		gun:ws_send(ConnPid, Frame),
+		gun:ws_send(ConnPid, StreamRef, Frame),
 		%% We set the flow to 1 therefore we will receive 1 data message,
 		%% and then nothing because Gun doesn't read from the socket.
 		{ws, _} = gun:await(ConnPid, StreamRef),
@@ -193,9 +193,9 @@ flow_ws(_) ->
 		%% We then update the flow, send 2 frames with some time in between
 		%% and get 2 more data messages but no more.
 		gun:update_flow(ConnPid, StreamRef, 2),
-		gun:ws_send(ConnPid, Frame),
+		gun:ws_send(ConnPid, StreamRef, Frame),
 		timer:sleep(500),
-		gun:ws_send(ConnPid, Frame),
+		gun:ws_send(ConnPid, StreamRef, Frame),
 		{ws, _} = gun:await(ConnPid, StreamRef),
 		{ws, _} = gun:await(ConnPid, StreamRef),
 		{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
@@ -259,9 +259,9 @@ no_flow_ws(_) ->
 		{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
 		gun:update_flow(ConnPid, StreamRef, 2),
 		Frame = {text, <<"Hello!">>},
-		gun:ws_send(ConnPid, Frame),
+		gun:ws_send(ConnPid, StreamRef, Frame),
 		timer:sleep(100),
-		gun:ws_send(ConnPid, Frame),
+		gun:ws_send(ConnPid, StreamRef, Frame),
 		{ws, _} = gun:await(ConnPid, StreamRef),
 		{ws, _} = gun:await(ConnPid, StreamRef),
 		gun:close(ConnPid)

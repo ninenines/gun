@@ -65,10 +65,6 @@ cancellation mechanism which allows Gun to inform the
 server to stop sending a response for this particular
 request, saving resources.
 
-It is not currently possible to upgrade an HTTP/2 connection
-to Websocket. Support for this will be added in a future
-release.
-
 === Websocket
 
 Websocket is a binary protocol built on top of HTTP that
@@ -76,12 +72,9 @@ allows asynchronous concurrent communication between the
 client and the server. A Websocket server can push data to
 the client at any time.
 
-Websocket is only available as a connection upgrade over
-an HTTP/1.1 connection.
-
-Once the Websocket connection is established, the only
-operation available on this connection is sending Websocket
-frames using `gun:ws_send/2`.
+Once the Websocket connection is established over an HTTP/1.1
+connection, the only operation available on this connection
+is sending Websocket frames using `gun:ws_send/3`.
 
 Gun will send a `gun_ws` message for every frame received.
 
@@ -108,7 +101,7 @@ current protocol.
 | await_body | yes      | yes    | no
 | flush      | yes      | yes    | no
 | cancel     | yes      | yes    | no
-| ws_upgrade | yes      | no     | no
+| ws_upgrade | yes      | yes    | no
 | ws_send    | no       | no     | yes
 |===
 
@@ -122,6 +115,6 @@ current protocol.
 | gun_data              | yes      | yes    | no
 | gun_trailers          | yes      | yes    | no
 | gun_error             | yes      | yes    | yes
-| gun_upgrade           | yes      | no     | no
+| gun_upgrade           | yes      | yes    | no
 | gun_ws                | no       | no     | yes
 |===

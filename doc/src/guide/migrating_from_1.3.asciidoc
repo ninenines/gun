@@ -104,7 +104,7 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   example.
 
 * It is now possible to send many Websocket frames in
-  a single `gun:ws_send/2` call.
+  a single `gun:ws_send/3` call.
 
 * Gun may now send Websocket ping frames automatically
   at intervals determined by the `keepalive` option. It
@@ -185,6 +185,10 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   `gun:headers/4,5` and `gun:request/5,6`. This provides a
   cleaner separation between requests that are followed by
   a body and those that don't.
+
+* The function `gun:ws_send/2` has been replaced with the
+  function `gun:ws_send/3`. The stream reference for the
+  corresponding Websocket upgrade request must now be given.
 
 === Messages added
 
