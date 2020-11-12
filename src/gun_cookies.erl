@@ -465,9 +465,8 @@ wpt_http_state_test_files() ->
 wpt_http_state_test_files(TestPath) ->
 	filelib:wildcard(TestPath ++ "wpt/cookies/*-test") -- [
 		TestPath ++ "wpt/cookies/attribute0023-test", %% Doesn't match the spec (path override).
-		TestPath ++ "wpt/cookies/disabled-chromium0020-test", %% Doesn't match the spec (empty names).
-		TestPath ++ "wpt/cookies/disabled-chromium0022-test", %% Nonsense.
-		TestPath ++ "wpt/cookies/optional-domain0042-test" %% Doesn't match the spec (empty domain override).
+		TestPath ++ "wpt/cookies/disabled-chromium0020-test", %% Maximum cookie name of 4096 characters.
+		TestPath ++ "wpt/cookies/disabled-chromium0022-test" %% Nonsense.
 	].
 
 wpt_http_state_test_() ->

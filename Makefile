@@ -14,7 +14,7 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib 2.10.0
+dep_cowlib = git https://github.com/ninenines/cowlib master
 
 DOC_DEPS = asciideck
 
