@@ -137,7 +137,8 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{ref=StreamRef, reply_to=ReplyTo, op
 	end,
 	%% @todo Maybe an event indicating success.
 	#{host := NewHost, port := NewPort} = Opts,
-	%% @todo The origin scheme is wrong when the next protocol is not HTTP.
+	%% There is no origin scheme when not using HTTP but we act as if
+	%% there is and simply correct the value in the info functions.
 	case Opts of
 		#{transport := tls} ->
 			HandshakeEvent0 = #{

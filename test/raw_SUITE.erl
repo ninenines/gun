@@ -50,7 +50,7 @@ do_direct_raw(OriginTransport) ->
 	#{
 		transport := OriginTransport,
 		protocol := raw,
-		origin_scheme := _, %% @todo This should be 'undefined'.
+		origin_scheme := undefined,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := []
@@ -98,7 +98,7 @@ do_socks5_raw(OriginTransport, ProxyTransport) ->
 	#{
 		transport := OriginTransport,
 		protocol := raw,
-		origin_scheme := _, %% @todo This should be 'undefined'.
+		origin_scheme := undefined,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -147,7 +147,7 @@ do_connect_raw(OriginTransport, ProxyTransport) ->
 	#{
 		transport := OriginTransport,
 		protocol := raw,
-		origin_scheme := _, %% @todo This should be 'undefined'.
+		origin_scheme := undefined,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := [#{
@@ -223,7 +223,7 @@ do_http11_upgrade_raw(OriginTransport) ->
 	#{
 		transport := OriginTransport,
 		protocol := raw,
-		origin_scheme := _, %% @todo This should be 'undefined'.
+		origin_scheme := undefined,
 		origin_host := "localhost",
 		origin_port := OriginPort,
 		intermediaries := []
@@ -315,7 +315,7 @@ do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
 		tunnel := #{
 			transport := OriginTransport,
 			protocol := raw,
-			origin_scheme := _, %% @todo This should be 'undefined'.
+			origin_scheme := undefined,
 			origin_host := "localhost",
 			origin_port := OriginPort
 		}

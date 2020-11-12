@@ -466,6 +466,7 @@ info(ServerPid) ->
 		end,
 		origin_scheme => case Protocol of
 			gun_raw -> undefined;
+			gun_socks -> undefined;
 			_ -> OriginScheme
 		end,
 		origin_host => OriginHost,
@@ -943,7 +944,8 @@ start_link(Owner, Host, Port, Opts) ->
 init({Owner, Host, Port, Opts}) ->
 	Retry = maps:get(retry, Opts, 5),
 	OriginTransport = maps:get(transport, Opts, default_transport(Port)),
-	%% @todo The OriginScheme is not http when we connect to socks/raw.
+	%% The OriginScheme is not really http when we connect to socks/raw.
+	%% This is corrected in the gun:info/1 and gun:stream_info/2 functions where applicable.
 	{OriginScheme, Transport} = case OriginTransport of
 		tcp -> {<<"http">>, gun_tcp};
 		tls -> {<<"https">>, gun_tls}
@@ -1542,7 +1544,10 @@ tunnel_info_from_state(#state{origin_scheme=OriginScheme,
 			<<"https">> -> tls
 		end,
 		protocol => Proto:name(),
-		origin_scheme => OriginScheme,
+		origin_scheme => case Proto of
+			gun_raw -> undefined;
+			_ -> OriginScheme
+		end,
 		origin_host => OriginHost,
 		origin_port => OriginPort
 	}.

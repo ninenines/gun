@@ -29,7 +29,7 @@ Intermediary :: #{
 Tunnel :: #{
     transport     => tcp | tls,
     protocol      => http | http2 | socks | raw,
-    origin_scheme => binary(),
+    origin_scheme => binary() | undefined,
     origin_host   => inet:hostname() | inet:ip_address(),
     origin_port   => inet:port_number()
 }

@@ -1256,16 +1256,18 @@ stream_info(State, StreamRef) when is_reference(StreamRef) ->
 				info=#{origin_host := OriginHost, origin_port := OriginPort},
 				protocol=Proto, protocol_state=ProtoState}} ->
 			Transport = maps:get(transport, Destination, tcp),
+			Protocol = Proto:tunneled_name(ProtoState, true),
 			{ok, #{
 				ref => StreamRef,
 				reply_to => ReplyTo,
 				state => running,
 				tunnel => #{
 					transport => Transport,
-					protocol => Proto:tunneled_name(ProtoState, true),
-					origin_scheme => case Transport of
-						tcp -> <<"http">>;
-						tls -> <<"https">>
+					protocol => Protocol,
+					origin_scheme => case {Transport, Protocol} of
+						{_, raw} -> undefined;
+						{tcp, _} -> <<"http">>;
+						{tls, _} -> <<"https">>
 					end,
 					origin_host => OriginHost,
 					origin_port => OriginPort

@@ -362,19 +362,21 @@ stream_info(#tunnel_state{transport=Transport0, stream_ref=TunnelStreamRef, repl
 		gun_tcp_proxy -> tcp;
 		gun_tls_proxy -> tls
 	end,
+	Protocol = case Proto of
+		gun_tunnel -> Proto:tunneled_name(ProtoState, false);
+		_ -> Proto:name()
+	end,
 	{ok, #{
 		ref => TunnelStreamRef,
 		reply_to => ReplyTo,
 		state => running,
 		tunnel => #{
 			transport => Transport,
-			protocol => case Proto of
-				gun_tunnel -> Proto:tunneled_name(ProtoState, false);
-				_ -> Proto:name()
-			end,
-			origin_scheme => case Transport of
-				tcp -> <<"http">>;
-				tls -> <<"https">>
+			protocol => Protocol,
+			origin_scheme => case {Transport, Protocol} of
+				{_, raw} -> undefined;
+				{tcp, _} -> <<"http">>;
+				{tls, _} -> <<"https">>
 			end,
 			origin_host => OriginHost,
 			origin_port => OriginPort
