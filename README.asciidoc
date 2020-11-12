@@ -18,10 +18,12 @@ developers to focus on writing their code without worrying.
 == Sponsors
 
 The project is currently sponsored by
-https://sameroom.io/[Sameroom] and https://pleroma.social/[Pleroma].
+https://pleroma.social/[Pleroma].
 
 The now removed SPDY implementation was sponsored by
 http://leo-project.net/leofs/[LeoFS Cloud Storage].
+
+It was previously sponsored by https://sameroom.io/[Sameroom].
 
 == Online documentation
 
