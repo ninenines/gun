@@ -11,7 +11,7 @@ gun_inform - Informational response
 {gun_inform, ConnPid, StreamRef, Status, Headers}
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 Status    :: 100..199
 Headers   :: [{binary(), binary()}]
 ----

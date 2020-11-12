@@ -11,7 +11,7 @@ gun:data - Stream the body of a request
 data(ConnPid, StreamRef, IsFin, Data) -> ok
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 IsFin     :: fin | nofin
 Data      :: iodata()
 ----

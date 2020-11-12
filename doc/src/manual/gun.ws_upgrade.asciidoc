@@ -21,7 +21,7 @@ ConnPid   :: pid()
 Path      :: iodata()
 Headers   :: gun:req_headers()
 WsOpts    :: gun:ws_opts
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 ----
 
 Upgrade to Websocket.

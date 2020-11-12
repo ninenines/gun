@@ -19,7 +19,7 @@ Method    :: binary()
 Path      :: iodata()
 Headers   :: gun:req_headers()
 ReqOpts   :: gun:req_opts()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 ----
 
 Initiate the given request.

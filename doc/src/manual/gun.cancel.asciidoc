@@ -11,7 +11,7 @@ gun:cancel - Cancel the given stream
 cancel(ConnPid, StreamRef) -> ok
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 ----
 
 Cancel the given stream.

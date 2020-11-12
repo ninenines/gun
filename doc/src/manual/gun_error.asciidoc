@@ -12,7 +12,7 @@ gun_error - Stream or connection-wide error
 {gun_error, ConnPid, Reason}
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 Reason    :: any()
 ----
 

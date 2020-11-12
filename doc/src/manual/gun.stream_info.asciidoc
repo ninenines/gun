@@ -11,9 +11,9 @@ gun:stream_info - Obtain information about a stream
 stream_info(ConnPid, StreamRef) -> {ok, undefined | Info} | {error, not_connected}
 
 ConnPid :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 Info :: #{
-    ref => reference(),
+    ref => gun:stream_ref(),
     reply_to => pid(),
     state => running | stopping
 }

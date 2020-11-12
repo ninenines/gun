@@ -21,7 +21,7 @@ await_body(ConnPid, StreamRef, Timeout, MonitorRef)
     -> {ok, Body} | {ok, Body, Trailers} | {error, Reason}
 
 ConnPid    :: pid()
-StreamRef  :: reference()
+StreamRef  :: gun:stream_ref()
 MonitorRef :: reference()
 Timeout    :: timeout()
 Body       :: binary()

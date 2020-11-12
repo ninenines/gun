@@ -11,7 +11,7 @@ gun:update_flow - Update a stream's flow control value
 update_flow(ConnPid, StreamRef, Flow) -> ok
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 Flow      :: pos_integer()
 ----
 

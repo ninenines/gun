@@ -11,7 +11,7 @@ gun_response - Response
 {gun_response, ConnPid, StreamRef, IsFin, Status, Headers}
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 IsFin     :: fin | nofin
 Status    :: non_neg_integer()
 Headers   :: [{binary(), binary()}]

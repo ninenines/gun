@@ -11,7 +11,7 @@ gun_upgrade - Successful protocol upgrade
 {gun_upgrade, ConnPid, StreamRef, Protocols, Headers}
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 Protocols :: [<<"websocket">>]
 Headers   :: [{binary(), binary()}]
 ----

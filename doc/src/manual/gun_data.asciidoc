@@ -11,7 +11,7 @@ gun_data - Response body
 {gun_data, ConnPid, StreamRef, IsFin, Data}
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 IsFin     :: fin | nofin
 Data      :: binary()
 ----

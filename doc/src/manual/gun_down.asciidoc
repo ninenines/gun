@@ -13,7 +13,7 @@ gun_down - The connection is down
 ConnPid            :: pid()
 Protocol           :: http | http2 | socks | ws
 Reason             :: any()
-KilledStreams      :: [reference()]
+KilledStreams      :: [gun:stream_ref()]
 ----
 
 The connection is down.

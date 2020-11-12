@@ -11,7 +11,7 @@ gun_trailers - Response trailers
 {gun_trailers, ConnPid, StreamRef, Headers}
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 Headers   :: [{binary(), binary()}]
 ----
 

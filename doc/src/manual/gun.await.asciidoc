@@ -21,7 +21,7 @@ await(ConnPid, StreamRef, Timeout, MonitorRef)
     -> Result
 
 ConnPid    :: pid()
-StreamRef  :: reference()
+StreamRef  :: gun:stream_ref()
 MonitorRef :: reference()
 Timeout    :: timeout()
 Result     :: tuple() - see below

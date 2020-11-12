@@ -11,7 +11,7 @@ gun_ws - Websocket frame
 {gun_ws, ConnPid, StreamRef, Frame}
 
 ConnPid   :: pid()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 Frame     :: close | ping | pong
            | {text | binary | close, binary()}
            | {close, non_neg_integer(), binary()}

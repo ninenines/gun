@@ -20,7 +20,7 @@ Path      :: iodata()
 Headers   :: gun:req_headers()
 Body      :: iodata()
 ReqOpts   :: gun:req_opts()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 ----
 
 Perform the given request.

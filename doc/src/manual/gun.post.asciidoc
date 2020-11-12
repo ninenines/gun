@@ -25,7 +25,7 @@ Path      :: iodata()
 Headers   :: gun:req_headers()
 Body      :: iodata()
 ReqOpts   :: gun:req_opts()
-StreamRef :: reference()
+StreamRef :: gun:stream_ref()
 ----
 
 Process the enclosed representation according to a resource's
