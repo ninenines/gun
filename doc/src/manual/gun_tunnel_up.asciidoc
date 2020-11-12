@@ -4,38 +4,36 @@
 
 gun_tunnel_up - The tunnel is up
 
-// @todo Update with StreamRef
-
 == Description
 
 [source,erlang]
 ----
-{gun_tunnel_up, ConnPid, Protocol}
+{gun_tunnel_up, ConnPid, StreamRef, Protocol}
 
-ConnPid  :: pid()
-Protocol :: http | http2 | socks
+ConnPid   :: pid()
+StreamRef :: gun:stream_ref() | undefined
+Protocol  :: http | http2 | socks
 ----
 
-The Socks connection is up.
+The tunnel is up.
 
 This message informs the owner/calling process that the connection
-completed through the configured Socks proxy.
+completed through the SOCKS or CONNECT proxy.
 
-If Gun is configured to connect to another Socks server, then the
+If Gun is configured to connect to another SOCKS server, then the
 connection is not usable yet. One or more
 link:man:gun_tunnel_up(3)[gun_tunnel_up(3)] messages will follow.
-
-Otherwise, Gun will start processing the messages it received while
-waiting for the connection to be up. If this is a reconnection,
-then this may not be desirable for all requests. Those requests
-should be cancelled when the connection goes down, and any
-subsequent messages ignored.
 
 == Elements
 
 ConnPid::
 
 The pid of the Gun connection process.
+
+StreamRef::
+
+The stream reference the tunnel is running on, or `undefined`
+if there are no underlying stream.
 
 Protocol::
 
@@ -51,7 +49,7 @@ to determine the capabilities of the server.
 .Receive a gun_tunnel_up message in a gen_server
 [source,erlang]
 ----
-handle_info({gun_tunnel_up, ConnPid, _Protocol},
+handle_info({gun_tunnel_up, ConnPid, _StreamRef, _Protocol},
             State=#state{conn_pid=ConnPid}) ->
     %% Do something.
     {noreply, State}.
