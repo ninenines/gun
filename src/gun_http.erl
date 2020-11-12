@@ -605,11 +605,12 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		undefined -> request_io_from_headers(Headers2);
 		_ -> head
 	end,
-	%% @todo Move this inside the case clause.
-	Authority0 = host_header(Transport, Host, Port),
 	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
-		false -> {Authority0, [{<<"host">>, Authority0}|Headers2]};
-		{_, Authority1} -> {Authority1, Headers2}
+		false ->
+			Authority0 = host_header(Transport, Host, Port),
+			{Authority0, [{<<"host">>, Authority0}|Headers2]};
+		{_, Authority1} ->
+			{Authority1, Headers2}
 	end,
 	Headers4 = transform_header_names(State, Headers3),
 	Headers5 = case {Body, Out} of
