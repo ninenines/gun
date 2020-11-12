@@ -13,9 +13,25 @@ stream_info(ConnPid, StreamRef) -> {ok, undefined | Info} | {error, not_connecte
 ConnPid :: pid()
 StreamRef :: gun:stream_ref()
 Info :: #{
-    ref => gun:stream_ref(),
-    reply_to => pid(),
-    state => running | stopping
+    ref            => gun:stream_ref(),
+    reply_to       => pid(),
+    state          => running | stopping,
+    intermediaries => [Intermediary],
+    tunnel         => Tunnel
+}
+Intermediary :: #{
+    type      => connect | socks5,
+    host      => inet:hostname() | inet:ip_address(),
+    port      => inet:port_number(),
+    transport => tcp | tls,
+    protocol  => http | http2 | socks | raw
+}
+Tunnel :: #{
+    transport     => tcp | tls,
+    protocol      => http | http2 | socks | raw,
+    origin_scheme => binary(),
+    origin_host   => inet:hostname() | inet:ip_address(),
+    origin_port   => inet:port_number()
 }
 ----
 

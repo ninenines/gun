@@ -978,6 +978,7 @@ do_proxy2_stream_info(#st{proxy1=Proxy1, proxy1_port=Proxy1Port, proxy2=Proxy2,
 		_ -> connect
 	end,
 	{OriginTransport, OriginProtocol} = do_type(Origin),
+	%% @todo The OriginScheme should probably be undefined if Origin is raw|rawtls.
 	OriginScheme = case OriginTransport of
 		tcp -> <<"http">>;
 		tls -> <<"https">>
