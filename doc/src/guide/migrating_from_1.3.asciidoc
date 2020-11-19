@@ -2,7 +2,7 @@
 == Migrating from Gun 1.3 to 2.0
 
 Gun 2.0 includes state of the art tunnel support. With
-Gun 2.0 it is possible to make request or data go through
+Gun 2.0 it is possible to make requests or data go through
 any number of proxy endpoints using any combination of
 TCP or TLS transports and HTTP/1.1, HTTP/2 or SOCKS5
 protocols. All combinations of the scenario Proxy1 ->
