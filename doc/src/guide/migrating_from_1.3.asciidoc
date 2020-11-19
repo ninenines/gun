@@ -135,7 +135,7 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   (for example during state transitions when switching
   protocols or connecting to proxies).
 
-* Update Cowlib to 2.10.0.
+* Update Cowlib to 2.10.1.
 
 === Features removed
 
