@@ -32,6 +32,20 @@ AUTO_CI_OTP ?= OTP-22+
 # AUTO_CI_ERLLVM ?= OTP-LATEST
 AUTO_CI_WINDOWS ?= OTP-22+
 
+# Hex configuration.
+
+define HEX_TARBALL_EXTRA_METADATA
+#{
+	licenses => [<<"ISC">>],
+	links => #{
+		<<"Function reference">> => <<"https://ninenines.eu/docs/en/gun/2.0/manual/">>,
+		<<"User guide">> => <<"https://ninenines.eu/docs/en/gun/2.0/guide/">>,
+		<<"GitHub">> => <<"https://github.com/ninenines/gun">>,
+		<<"Sponsor">> => <<"https://github.com/sponsors/essen">>
+	}
+}
+endef
+
 # Standard targets.
 
 include erlang.mk
@@ -122,6 +136,8 @@ update-cookie-tests:
 # Prepare for the release.
 
 prepare_tag:
+	$(verbose) $(warning Hex metadata: $(HEX_TARBALL_EXTRA_METADATA))
+	$(verbose) echo
 	$(verbose) echo -n "Most recent tag:            "
 	$(verbose) git tag | tail -n1
 	$(verbose) git verify-tag `git tag | tail -n1`
