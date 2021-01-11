@@ -979,7 +979,7 @@ prepare_headers(State=#http2_state{transport=Transport},
 	Scheme = scheme(State),
 	Authority = case lists:keyfind(<<"host">>, 1, Headers0) of
 		{_, Host} -> Host;
-		_ -> gun_http:host_header(Transport, Host0, Port)
+		_ -> gun_http:host_header(Transport:name(), Host0, Port)
 	end,
 	%% @todo We also must remove any header found in the connection header.
 	%% @todo Much of this is duplicated in cow_http2_machine; sort things out.

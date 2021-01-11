@@ -83,7 +83,7 @@
 -type request_start_event() :: #{
 	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
-	function := headers | request | ws_upgrade,
+	function := headers | request | ws_upgrade, %% @todo connect?
 	method := iodata(),
 	scheme => binary(),
 	authority := iodata(),

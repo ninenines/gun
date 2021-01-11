@@ -35,7 +35,7 @@
 -export([down/1]).
 -export([ws_upgrade/11]).
 
-%% Functions shared with gun_http2.
+%% Functions shared with gun_http2 and gun_pool.
 -export([host_header/3]).
 
 -type io() :: head | {body, non_neg_integer()} | body_close | body_chunked | body_trailer.
@@ -607,7 +607,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 	end,
 	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
 		false ->
-			Authority0 = host_header(Transport, Host, Port),
+			Authority0 = host_header(Transport:name(), Host, Port),
 			{Authority0, [{<<"host">>, Authority0}|Headers2]};
 		{_, Authority1} ->
 			{Authority1, Headers2}
@@ -648,7 +648,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 	end,
 	{Authority, Conn, Out, CookieStore, EvHandlerState}.
 
-host_header(Transport, Host0, Port) ->
+host_header(TransportName, Host0, Port) ->
 	Host = case Host0 of
 		{local, _SocketPath} -> <<>>;
 		Tuple when tuple_size(Tuple) =:= 8 -> [$[, inet:ntoa(Tuple), $]]; %% IPv6.
@@ -656,7 +656,7 @@ host_header(Transport, Host0, Port) ->
 		Atom when is_atom(Atom) -> atom_to_list(Atom);
 		_ -> Host0
 	end,
-	case {Transport:name(), Port} of
+	case {TransportName, Port} of
 		{tcp, 80} -> Host;
 		{tls, 443} -> Host;
 		_ -> [Host, $:, integer_to_binary(Port)]

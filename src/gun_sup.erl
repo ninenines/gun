@@ -12,7 +12,6 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-%% @private
 -module(gun_sup).
 -behaviour(supervisor).
 
@@ -22,17 +21,17 @@
 %% supervisor.
 -export([init/1]).
 
--define(SUPERVISOR, ?MODULE).
-
 %% API.
 
 -spec start_link() -> {ok, pid()}.
 start_link() ->
-	supervisor:start_link({local, ?SUPERVISOR}, ?MODULE, []).
+	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% supervisor.
 
 init([]) ->
-	Procs = [{gun, {gun, start_link, []},
-		temporary, 5000, worker, [gun]}],
-	{ok, {{simple_one_for_one, 10, 10}, Procs}}.
+	Procs = [
+		#{id => gun_conns_sup, start => {gun_conns_sup, start_link, []}, type => supervisor},
+		#{id => gun_pools_sup, start => {gun_pools_sup, start_link, []}, type => supervisor}
+	],
+	{ok, {#{}, Procs}}.

@@ -11,7 +11,7 @@ gun_up - The connection is up
 {gun_up, ConnPid, Protocol}
 
 ConnPid  :: pid()
-Protocol :: http | http2 | socks
+Protocol :: http | http2 | raw | socks
 ----
 
 The connection is up.

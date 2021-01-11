@@ -1,4 +1,4 @@
-%% Copyright (c) 2013-2020, Loïc Hoguin <essen@ninenines.eu>
+%% Copyright (c) 2021, Loïc Hoguin <essen@ninenines.eu>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
@@ -12,19 +12,26 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-%% @private
--module(gun_app).
--behaviour(application).
+-module(gun_pools_sup).
+-behaviour(supervisor).
 
 %% API.
--export([start/2]).
--export([stop/1]).
+-export([start_link/0]).
+
+%% supervisor.
+-export([init/1]).
 
 %% API.
 
-start(_Type, _Args) ->
-	gun_pools = ets:new(gun_pools, [ordered_set, public, named_table]),
-	gun_sup:start_link().
+-spec start_link() -> {ok, pid()}.
+start_link() ->
+	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-stop(_State) ->
-	ok.
+%% supervisor.
+
+init([]) ->
+	%% @todo Review restart strategies.
+	Procs = [
+		#{id => gun_pool, start => {gun_pool, start_link, []}, restart => transient}
+	],
+	{ok, {#{strategy => simple_one_for_one}, Procs}}.
