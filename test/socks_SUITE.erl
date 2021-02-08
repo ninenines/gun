@@ -59,8 +59,8 @@ do_proxy_init(Parent, Transport, Auth) ->
 			gen_tcp:accept(ListenSocket, 5000);
 		gun_tls ->
 			{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 5000),
-			ssl:ssl_accept(ClientSocket0, 5000),
-			{ok, ClientSocket0}
+			{ok, ClientSocket1} = ssl:handshake(ClientSocket0, 5000),
+			{ok, ClientSocket1}
 	end,
 	Recv = case Transport of
 		gun_tcp -> fun gen_tcp:recv/3;

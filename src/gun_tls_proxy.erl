@@ -41,10 +41,6 @@
 -module(gun_tls_proxy).
 -behaviour(gen_statem).
 
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{ssl, ssl_accept, 2}]}).
--endif.
-
 %% Gun-specific interface.
 -export([start_link/7]).
 
@@ -460,8 +456,8 @@ do_proxy_init(Parent, Host, Port) ->
 	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false}|Opts]),
 	{ok, {_, ListenPort}} = ssl:sockname(ListenSocket),
 	Parent ! {self(), ListenPort},
-	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 10000),
-	ok = ssl:ssl_accept(ClientSocket, 10000),
+	{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 10000),
+	{ok, ClientSocket} = ssl:handshake(ClientSocket0, 10000),
 	{ok, OriginSocket} = gen_tcp:connect(
 		Host, Port,
 		[binary, {active, false}]),

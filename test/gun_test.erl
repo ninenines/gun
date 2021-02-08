@@ -16,10 +16,6 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{ssl, ssl_accept, 2}]}).
--endif.
-
 %% Cowboy listeners.
 
 init_cowboy_tcp(Ref, ProtoOpts, Config) ->
@@ -69,8 +65,8 @@ init_origin(Parent, tls, Protocol, Fun) ->
 	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false}|Opts]),
 	{ok, {_, Port}} = ssl:sockname(ListenSocket),
 	Parent ! {self(), Port},
-	{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
-	ok = ssl:ssl_accept(ClientSocket, 5000),
+	{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 5000),
+	{ok, ClientSocket} = ssl:handshake(ClientSocket0, 5000),
 	case Protocol of
 		http2 ->
 			{ok, <<"h2">>} = ssl:negotiated_protocol(ClientSocket),

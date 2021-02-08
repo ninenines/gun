@@ -16,10 +16,6 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{ssl, ssl_accept, 2}]}).
--endif.
-
 -import(ct_helper, [doc/1]).
 -import(gun_test, [init_origin/1]).
 -import(gun_test, [init_origin/2]).
@@ -65,8 +61,8 @@ do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
 			gen_tcp:accept(ListenSocket, infinity);
 		gun_tls ->
 			{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, infinity),
-			ssl:ssl_accept(ClientSocket0, infinity),
-			{ok, ClientSocket0}
+			{ok, ClientSocket1} = ssl:handshake(ClientSocket0, infinity),
+			{ok, ClientSocket1}
 	end,
 	{ok, Data} = case Transport of
 		gun_tcp ->
