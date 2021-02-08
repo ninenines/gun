@@ -96,7 +96,7 @@
 -export([terminate/3]).
 
 -type setup_msg() :: {gun_up, pid(), http | http2 | raw | socks}
-	| {gun_upgrade, pid(), gun:stream_ref(), [<<"websocket">>], [{binary(), binary()}]}.
+	| {gun_upgrade, pid(), gun:stream_ref(), [binary()], [{binary(), binary()}]}.
 
 -type opts() :: #{
 	conn_opts => gun:opts(),
