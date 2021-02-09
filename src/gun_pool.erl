@@ -165,10 +165,17 @@ start_pool(Host, Port, Opts) ->
 stop_pool(Host, Port) ->
 	stop_pool(Host, Port, #{}).
 
--spec stop_pool(inet:hostname() | inet:ip_address(), inet:port_number(), req_opts())
+-type stop_opts() :: #{
+	scope => any(),
+	transport => tcp | tls
+}.
+
+-spec stop_pool(inet:hostname() | inet:ip_address(), inet:port_number(), stop_opts())
 	-> ok | {error, pool_not_found, atom()}.
-stop_pool(Host, Port, ReqOpts) ->
-	case get_pool(iolist_to_binary([Host, $:, integer_to_binary(Port)]), ReqOpts) of
+stop_pool(Host, Port, StopOpts) ->
+	Transport = maps:get(transport, StopOpts, gun:default_transport(Port)),
+	Authority = gun_http:host_header(Transport, Host, Port),
+	case get_pool(Authority, StopOpts) of
 		undefined ->
 			{error, pool_not_found,
 				'No pool was found for the given scope and authority.'};

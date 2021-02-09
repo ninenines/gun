@@ -374,3 +374,10 @@ reconnect_h2(Config) ->
 	end || {async, StreamRef} <- Streams2].
 
 %% @todo reconnect_ws
+
+stop_pool(Config) ->
+	doc("Confirm the pool can be used for HTTP/1.1 connections."),
+	Port = config(port, Config),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{scope => ?FUNCTION_NAME}),
+	gun_pool:await_up(ManagerPid),
+	gun_pool:stop_pool("localhost", Port, #{scope => ?FUNCTION_NAME}).
