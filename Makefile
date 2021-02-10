@@ -18,9 +18,10 @@ dep_cowlib = git https://github.com/ninenines/cowlib 2.10.1
 
 DOC_DEPS = asciideck
 
-TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper cowboy
+TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper cowboy ranch
 dep_ct_helper = git https://github.com/extend/ct_helper.git master
 dep_cowboy_commit = master
+dep_ranch_commit = 2.0.0
 
 # CI configuration.
 
