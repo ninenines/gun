@@ -1098,20 +1098,19 @@ ensure_alpn_sni(Protocols0, TransOpts0, OriginHost) ->
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 	|TransOpts0],
-	%% Only add SNI if not already present
+	%% SNI.
+	%%
+	%% Normally only DNS hostnames are supported for SNI. However, the ssl
+	%% application itself allows any string through so we do the same.
+	%%
+	%% Only add SNI if not already present and OriginHost isn't an IP
 	case lists:keymember(server_name_indication, 1, TransOpts) of
-	    true ->
-		TransOpts;
-	    false ->
-		%% SNI.
-		%%
-		%% Normally only DNS hostnames are supported for SNI. However, the ssl
-		%% application itself allows any string through so we do the same.
-		if
-		    is_list(OriginHost) -> [{server_name_indication, OriginHost}|TransOpts];
-		    is_atom(OriginHost) -> [{server_name_indication, atom_to_list(OriginHost)}|TransOpts];
-		    true -> TransOpts
-		end
+		false when is_list(OriginHost) ->
+			[{server_name_indication, OriginHost}|TransOpts];
+		false when is_atom(OriginHost) ->
+			[{server_name_indication, atom_to_list(OriginHost)}|TransOpts];
+		_ ->
+			TransOpts
 	end.
 
 %% Normal TLS handshake.
