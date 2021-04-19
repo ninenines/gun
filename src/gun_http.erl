@@ -692,10 +692,10 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			DataLength = iolist_size(Data),
 			case Out of
 				body_chunked when Version =:= 'HTTP/1.1', IsFin =:= fin ->
-					case Data of
-						<<>> ->
+					if
+						DataLength =:= 0 ->
 							Transport:send(Socket, cow_http_te:last_chunk());
-						_ ->
+						true ->
 							Transport:send(Socket, [
 								cow_http_te:chunk(Data),
 								cow_http_te:last_chunk()

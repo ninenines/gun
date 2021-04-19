@@ -107,6 +107,21 @@ ignore_empty_data_http(_) ->
 	1 = length(Zero),
 	gun:close(Pid).
 
+ignore_empty_data_fin_http(_) ->
+	doc("When gun:data/4 is called with fin and empty data, it must send a final empty chunk."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	Ref = gun:post(Pid, "/", []),
+	gun:data(Pid, Ref, nofin, "hello"),
+	gun:data(Pid, Ref, fin, ["", <<>>]),
+	Data = receive_all_from(OriginPid, 500),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	Zero = [Z || <<"0">> = Z <- Lines],
+	1 = length(Zero),
+	gun:close(Pid).
+
 ignore_empty_data_http2(_) ->
 	doc("When gun:data/4 is called with nofin and empty data, it must be ignored."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2),
