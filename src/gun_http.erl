@@ -310,7 +310,7 @@ handle_head(Data, State=#http_state{opts=Opts,
 
 handle_connect(Rest, State=#http_state{
 		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
-		CookieStore, EvHandler, EvHandlerState0, 'HTTP/1.1', Status, Headers) ->
+		CookieStore, EvHandler, EvHandlerState0, V, Status, Headers) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
 	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 	_ = case Stream of
