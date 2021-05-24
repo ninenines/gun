@@ -12,6 +12,10 @@ Gun 2.0 adds many more features such as Websocket over
 HTTP/2, a built-in cookie store, graceful shutdown, flow
 control for data messages, event handlers and more.
 
+Gun 2.0 also introduces an experimental pool module that
+automatically maintains connections and routes requests
+to the right process, in a similar way as browsers do.
+
 Gun 2.0 greatly improves the HTTP/2 performance when it
 comes to receiving large response bodies; and when receiving
 response bodies from many separate requests concurrently.
@@ -135,7 +139,20 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   (for example during state transitions when switching
   protocols or connecting to proxies).
 
-* Update Cowlib to 2.10.1.
+* Update Cowlib to 2.11.0.
+
+=== Experimental features added
+
+* The `gun_pool` module was introduced. Its interface
+  is very similar to the `gun` module, but as it is an
+  experimental feature, it has not been documented yet.
+  The intent is to obtain feedback and document it in
+  an upcoming minor release. Pools are created for each
+  authority (host/port) and scope (user-defined value)
+  pairs and are resolved accordingly using the information
+  provided in the request and request options. Connections
+  may concurrently handle multiple requests/responses
+  from as many different processes as required.
 
 === Features removed
 

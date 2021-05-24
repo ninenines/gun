@@ -2,7 +2,7 @@
 
 PROJECT = gun
 PROJECT_DESCRIPTION = HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP.
-PROJECT_VERSION = 2.0.0-rc.1
+PROJECT_VERSION = 2.0.0-rc.2
 
 # Options.
 
@@ -14,13 +14,13 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib master
+dep_cowlib = git https://github.com/ninenines/cowlib 2.11.0
 
 DOC_DEPS = asciideck
 
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper cowboy ranch
 dep_ct_helper = git https://github.com/extend/ct_helper.git master
-dep_cowboy_commit = master
+dep_cowboy_commit = 2.9.0
 dep_ranch_commit = 2.0.0
 
 # CI configuration.
@@ -155,3 +155,10 @@ prepare_tag:
 		echo $$f:; \
 		grep == $$f; \
 	done
+	$(verbose) echo
+	$(verbose) echo "Dependencies:"
+	$(verbose) grep ^DEPS Makefile || echo "DEPS ="
+	$(verbose) grep ^dep_ Makefile || true
+	$(verbose) echo
+	$(verbose) echo "rebar.config:"
+	$(verbose) cat rebar.config || true
