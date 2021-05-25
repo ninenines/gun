@@ -862,6 +862,8 @@ flush_pid(ServerPid) ->
 			flush_pid(ServerPid);
 		{gun_error, ServerPid, _} ->
 			flush_pid(ServerPid);
+		{gun_tunnel_up, ServerPid, _, _} ->
+			flush_pid(ServerPid);
 		{gun_upgrade, ServerPid, _, _, _} ->
 			flush_pid(ServerPid);
 		{gun_ws, ServerPid, _, _} ->
@@ -886,6 +888,8 @@ flush_ref(StreamRef) ->
 		{gun_push, _, StreamRef, _, _, _, _, _} ->
 			flush_ref(StreamRef);
 		{gun_error, _, StreamRef, _} ->
+			flush_ref(StreamRef);
+		{gun_tunnel_up, _, StreamRef, _} ->
 			flush_ref(StreamRef);
 		{gun_upgrade, _, StreamRef, _, _} ->
 			flush_ref(StreamRef);
