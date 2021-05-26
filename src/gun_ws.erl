@@ -299,8 +299,7 @@ close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
 
 keepalive(State=#ws_state{reply_to=ReplyTo}, EvHandler, EvHandlerState0) ->
-	{[], EvHandlerState} = send(ping, State, ReplyTo, EvHandler, EvHandlerState0),
-	{State, EvHandlerState}.
+	send(ping, State, ReplyTo, EvHandler, EvHandlerState0).
 
 %% Send one frame.
 send(Frame, State=#ws_state{stream_ref=StreamRef,
@@ -313,20 +312,25 @@ send(Frame, State=#ws_state{stream_ref=StreamRef,
 		frame => Frame
 	},
 	EvHandlerState1 = EvHandler:ws_send_frame_start(WsSendFrameEvent, EvHandlerState0),
-	Transport:send(Socket, cow_ws:masked_frame(Frame, Extensions)),
-	EvHandlerState = EvHandler:ws_send_frame_end(WsSendFrameEvent, EvHandlerState1),
-	if
-		Frame =:= close; element(1, Frame) =:= close ->
-			{[
-				{state, State#ws_state{out=close}},
-				%% We can close immediately if we already received a close frame.
-				case In of
-					close -> close;
-					_ -> closing(State)
-				end
-			], EvHandlerState};
-		true ->
-			{[], EvHandlerState}
+	case Transport:send(Socket, cow_ws:masked_frame(Frame, Extensions)) of
+		ok ->
+			EvHandlerState = EvHandler:ws_send_frame_end(WsSendFrameEvent, EvHandlerState1),
+			if
+				Frame =:= close; element(1, Frame) =:= close ->
+					{[
+						{state, State#ws_state{out=close}},
+						%% We can close immediately if we already
+						%% received a close frame.
+						case In of
+							close -> close;
+							_ -> closing(State)
+						end
+					], EvHandlerState};
+				true ->
+					{[], EvHandlerState}
+			end;
+		Error={error, _} ->
+			{Error, EvHandlerState0}
 	end.
 
 %% Send many frames.
