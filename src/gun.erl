@@ -1094,25 +1094,31 @@ ensure_alpn_sni(Protocols0, TransOpts0, OriginHost) ->
 		({http2, _}, Acc) -> [<<"h2">>|Acc];
 		(_, Acc) -> Acc
 	end, [], Protocols0),
-	CustomFun = public_key:pkix_verify_hostname_match_fun(https),
-	TransOpts = [
-		{customize_hostname_check, [{match_fun, CustomFun}]},
+	TransOpts1 = [
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
-	|TransOpts0],
+		|TransOpts0],
 	%% SNI.
 	%%
 	%% Normally only DNS hostnames are supported for SNI. However, the ssl
 	%% application itself allows any string through so we do the same.
 	%%
 	%% Only add SNI if not already present and OriginHost isn't an IP
-	case lists:keymember(server_name_indication, 1, TransOpts) of
-		false when is_list(OriginHost) ->
-			[{server_name_indication, OriginHost}|TransOpts];
-		false when is_atom(OriginHost) ->
-			[{server_name_indication, atom_to_list(OriginHost)}|TransOpts];
-		_ ->
-			TransOpts
+	TransOpts2 =
+		case proplists:is_defined(server_name_indication, TransOpts1) of
+			false when is_list(OriginHost) ->
+				[{server_name_indication, OriginHost}|TransOpts1];
+			false when is_atom(OriginHost) ->
+				[{server_name_indication, atom_to_list(OriginHost)}|TransOpts1];
+			_ ->
+				TransOpts1
+		end,
+	case proplists:is_defined(customize_hostname_check, TransOpts2) of
+		true ->
+			TransOpts2;
+		false ->
+			CustomFun = public_key:pkix_verify_hostname_match_fun(https),
+			[{customize_hostname_check, [{match_fun, CustomFun}]}|TransOpts2]
 	end.
 
 %% Normal TLS handshake.
