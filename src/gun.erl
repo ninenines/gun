@@ -1094,7 +1094,9 @@ ensure_alpn_sni(Protocols0, TransOpts0, OriginHost) ->
 		({http2, _}, Acc) -> [<<"h2">>|Acc];
 		(_, Acc) -> Acc
 	end, [], Protocols0),
+	CustomFun = public_key:pkix_verify_hostname_match_fun(https),
 	TransOpts = [
+		{customize_hostname_check, [{match_fun, CustomFun}]},
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 	|TransOpts0],
