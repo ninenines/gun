@@ -141,6 +141,7 @@
 	http_opts => http_opts(),
 	http2_opts => http2_opts(),
 	protocols => protocols(),
+	raw_opts => raw_opts(),
 	retry => non_neg_integer(),
 	retry_fun => fun((non_neg_integer(), opts())
 		-> #{retries => non_neg_integer(), timeout => pos_integer()}),
@@ -188,6 +189,7 @@
 -export_type([tunnel_info/0]).
 
 -type raw_opts() :: #{
+	flow => pos_integer(),
 	%% Internal.
 	tunnel_transport => tcp | tls
 }.
@@ -368,6 +370,13 @@ check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 	case check_protocols_opt(L) of
 		ok -> check_options(Opts);
 		error -> {error, {options, Opt}}
+	end;
+check_options([{raw_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
+	case gun_raw:check_options(ProtoOpts) of
+		ok ->
+			check_options(Opts);
+		Error ->
+			Error
 	end;
 check_options([{retry, R}|Opts]) when is_integer(R), R >= 0 ->
 	check_options(Opts);
