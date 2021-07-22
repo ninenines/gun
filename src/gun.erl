@@ -274,6 +274,9 @@
 }.
 -export_type([ws_opts/0]).
 
+-export_type([await_result/0]).
+-export_type([await_body_result/0]).
+
 -record(state, {
 	owner :: pid(),
 	status :: {up, reference()} | {down, any()} | shutdown,
@@ -431,12 +434,12 @@ check_protocols_opt(Protocols) ->
 
 consider_tracing(ServerPid, #{trace := true}) ->
 	dbg:tracer(),
-	dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
-	dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
-	dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
-	dbg:tpl(gun_raw, [{'_', [], [{return_trace}]}]),
-	dbg:tpl(gun_socks, [{'_', [], [{return_trace}]}]),
-	dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
+	_ = dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
+	_ = dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
+	_ = dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
+	_ = dbg:tpl(gun_raw, [{'_', [], [{return_trace}]}]),
+	_ = dbg:tpl(gun_socks, [{'_', [], [{return_trace}]}]),
+	_ = dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
 	dbg:p(ServerPid, all);
 consider_tracing(_, _) ->
 	ok.
@@ -841,6 +844,7 @@ flush(ServerPid) when is_pid(ServerPid) ->
 flush(StreamRef) ->
 	flush_ref(StreamRef).
 
+-spec flush_pid(pid()) -> ok.
 flush_pid(ServerPid) ->
 	receive
 		{gun_up, ServerPid, _} ->
@@ -871,10 +875,11 @@ flush_pid(ServerPid) ->
 		ok
 	end.
 
+-spec flush_ref(stream_ref()) -> ok.
 flush_ref(StreamRef) ->
 	receive
 		{gun_inform, _, StreamRef, _, _} ->
-			flush_pid(StreamRef);
+			flush_ref(StreamRef);
 		{gun_response, _, StreamRef, _, _, _} ->
 			flush_ref(StreamRef);
 		{gun_data, _, StreamRef, _, _} ->

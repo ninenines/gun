@@ -18,6 +18,9 @@ dep_cowlib = git https://github.com/ninenines/cowlib 2.11.0
 
 DOC_DEPS = asciideck
 
+DIALYZER_OPTS = -Werror_handling -Wrace_conditions -Wunmatched_returns -Wunknown
+PLT_APPS = crypto public_key runtime_tools
+
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper cowboy ranch
 dep_ct_helper = git https://github.com/extend/ct_helper.git master
 dep_cowboy_commit = 2.9.0
