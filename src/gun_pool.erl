@@ -381,7 +381,7 @@ authority(Headers) ->
 	{_, Authority} = lists:keyfind(<<"host">>, 1, Headers),
 	Authority.
 
--spec get_pool(iolist(), map()) -> pid() | undefined.
+-spec get_pool(iolist(), req_opts() | ws_send_opts() | stop_opts()) -> pid() | undefined.
 get_pool(Authority0, ReqOpts) ->
 	Authority = iolist_to_binary(Authority0),
 	%% @todo Perhaps rename this to temporary.
