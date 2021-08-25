@@ -30,23 +30,26 @@ groups() ->
 
 direct_raw_tcp(_) ->
 	doc("Directly connect to a remote endpoint using the raw protocol over TCP."),
-	do_direct_raw(tcp).
+	do_direct_raw(tcp, flow_control_disabled, client_side_close).
 
 direct_raw_tls(_) ->
 	doc("Directly connect to a remote endpoint using the raw protocol over TLS."),
-	do_direct_raw(tls).
+	do_direct_raw(tls, flow_control_disabled, client_side_close).
 
-do_direct_raw(OriginTransport) ->
+do_direct_raw(OriginTransport, FlowControl, CloseSide) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
-	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+	Opts0 = #{
 		transport => OriginTransport,
 		protocols => [raw]
-	}),
+	},
+	Opts = do_maybe_add_flow(FlowControl, Opts0),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, Opts),
 	{ok, raw} = gun:await_up(ConnPid),
 	handshake_completed = receive_from(OriginPid),
 	%% When we take over the entire connection there is no stream reference.
 	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
 	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined),
+	do_test_flow_control(FlowControl, ConnPid),
 	#{
 		transport := OriginTransport,
 		protocol := raw,
@@ -55,7 +58,46 @@ do_direct_raw(OriginTransport) ->
 		origin_port := OriginPort,
 		intermediaries := []
 	} = gun:info(ConnPid),
-	gun:close(ConnPid).
+	do_close(CloseSide, ConnPid).
+
+do_maybe_add_flow(flow_control_enabled, Opts) ->
+	Opts#{raw_opts => #{flow => 1}};
+do_maybe_add_flow(flow_control_disabled, Opts) ->
+	Opts.
+
+do_test_flow_control(flow_control_enabled, ConnPid) ->
+	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
+	{error, timeout} = gun:await(ConnPid, undefined, 1000),
+	ok = gun:update_flow(ConnPid, undefined, 1),
+	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined);
+do_test_flow_control(flow_control_disabled, _ConnPid) ->
+	ok.
+
+do_close(client_side_close, ConnPid) ->
+	gun:close(ConnPid);
+do_close(server_side_close, ConnPid) ->
+	gun:data(ConnPid, undefined, nofin, <<"close">>),
+	receive
+		{gun_down, ConnPid, raw, closed, []} -> ok
+	after
+		1000 -> error(timeout)
+	end.
+
+raw_tcp_with_flow_control(_) ->
+	doc("Test flow control feature with raw protocol over TCP."),
+	do_direct_raw(tcp, flow_control_enabled, client_side_close).
+
+raw_tls_with_flow_control(_) ->
+	doc("Test flow control feature with raw protocol over TLS."),
+	do_direct_raw(tls, flow_control_enabled, client_side_close).
+
+raw_tcp_with_server_side_close(_) ->
+	doc("Test scenario when server side closes the socket with raw procotol over TCP"),
+	do_direct_raw(tcp, flow_control_disabled, server_side_close).
+
+raw_tls_with_server_side_close(_) ->
+	doc("Test scenario when server side closes the socket with raw procotol over TLS"),
+	do_direct_raw(tls, flow_control_disabled, server_side_close).
 
 socks5_tcp_raw_tcp(_) ->
 	doc("Use Socks5 over TCP to connect to a remote endpoint using the raw protocol over TCP."),
@@ -326,6 +368,8 @@ do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
 
 do_echo(Parent, ClientSocket, ClientTransport) ->
 	case ClientTransport:recv(ClientSocket, 0, 5000) of
+		{ok, <<"close">>} ->
+			ok = ClientTransport:close(ClientSocket);
 		{ok, Data} ->
 			ClientTransport:send(ClientSocket, Data),
 			do_echo(Parent, ClientSocket, ClientTransport);
