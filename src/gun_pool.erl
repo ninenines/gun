@@ -125,7 +125,7 @@
 	checkout_call_timeout => timeout(),
 	checkout_retry => [pos_integer()],
 	scope => any(),
-	start_pool_if_missing => boolean()
+	start_pool_if_missing => false | opts()
 }.
 -export_type([req_opts/0]).
 
@@ -136,7 +136,7 @@
 	checkout_call_timeout => timeout(),
 	checkout_retry => [pos_integer()],
 	scope => any(),
-	start_pool_if_missing => boolean()
+	start_pool_if_missing => false | opts()
 }.
 -export_type([ws_send_opts/0]).
 
@@ -391,8 +391,12 @@ get_pool(Authority0, ReqOpts) ->
 	StartPoolIfMissing = maps:get(start_pool_if_missing, ReqOpts, false),
 	Scope = maps:get(scope, ReqOpts, default),
 	case ets:lookup(gun_pools, {Scope, Authority}) of
-		[] when StartPoolIfMissing ->
-			start_missing_pool(Authority, ReqOpts);
+		[] when is_map(StartPoolIfMissing) ->
+			ManagerPid = start_missing_pool(Authority, StartPoolIfMissing),
+			%% If the pool is started dynamically we need it to be ready
+			%% in order to perform the call so an await_up is forced
+			await_up(ManagerPid),
+			ManagerPid;
 		[] ->
 			undefined;
 		[{_, ManagerPid}] ->
@@ -403,8 +407,20 @@ get_pool(Authority0, ReqOpts) ->
 			ManagerPid
 	end.
 
-start_missing_pool(_Authority, _ReqOpts) ->
-	undefined.
+start_missing_pool({Host, Port}, Opts) ->
+	case start_pool(Host, Port, Opts) of
+		{error, {pool_exists, ManagerPid}} ->
+			ManagerPid;
+		{ok, ManagerPid} ->
+			ManagerPid
+	end;
+start_missing_pool(Authority, Opts) ->
+	case binary:split(Authority, [<<$:>>]) of
+		[H, P] ->
+			start_missing_pool({binary_to_list(H), binary_to_integer(P)}, Opts);
+		[H] ->
+			start_missing_pool({binary_to_list(H), 80}, Opts)
+	end.
 
 %% Streaming data.
 
@@ -512,25 +528,31 @@ start_link(Host, Port, Opts) ->
 
 init({Host, Port, Opts}) ->
 	process_flag(trap_exit, true),
-	true = ets:insert_new(gun_pools, {gun_pools_key(Host, Port, Opts), self()}),
-	Tid = ets:new(gun_pooled_conns, [ordered_set, public]),
-	Size = maps:get(size, Opts, 8),
-	%% @todo Only start processes in static mode.
-	ConnOpts = conn_opts(Tid, Opts),
-	Conns = maps:from_list([begin
-		{ok, ConnPid} = gun:open(Host, Port, ConnOpts),
-		_ = monitor(process, ConnPid),
-		{ConnPid, down}
-	end || _ <- lists:seq(1, Size)]),
-	State = #state{
-		host=Host,
-		port=Port,
-		opts=Opts,
-		table=Tid,
-		conns=Conns
-	},
-	%% If Size is 0 then we can never be operational.
-	{ok, degraded, State}.
+	PoolKey = gun_pools_key(Host, Port, Opts),
+	case ets:insert_new(gun_pools, {PoolKey, self()}) of
+	false ->
+		[{_,ManagerPid}] = ets:lookup(gun_pools, PoolKey),
+		{stop, {error, {pool_exists, ManagerPid}}};
+	true ->
+		Tid = ets:new(gun_pooled_conns, [ordered_set, public]),
+		Size = maps:get(size, Opts, 8),
+		%% @todo Only start processes in static mode.
+		ConnOpts = conn_opts(Tid, Opts),
+		Conns = maps:from_list([begin
+			{ok, ConnPid} = gun:open(Host, Port, ConnOpts),
+			_ = monitor(process, ConnPid),
+			{ConnPid, down}
+		end || _ <- lists:seq(1, Size)]),
+		State = #state{
+			host=Host,
+			port=Port,
+			opts=Opts,
+			table=Tid,
+			conns=Conns
+		},
+		%% If Size is 0 then we can never be operational.
+		{ok, degraded, State}
+	end.
 
 gun_pools_key(Host, Port, Opts) ->
 	Transport = maps:get(transport, Opts, gun:default_transport(Port)),
