@@ -612,6 +612,9 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 			lists:keystore(<<"transfer-encoding">>, 1, Headers1,
 				{<<"transfer-encoding">>, <<"chunked">>});
 		{undefined, _} -> Headers1;
+		{<<>>, _} when Method =:= <<"DELETE">>; Method =:= <<"GET">>;
+				Method =:= <<"HEAD">>; Method =:= <<"OPTIONS">> ->
+			 Headers1;
 		_ ->
 			lists:keystore(<<"content-length">>, 1, Headers1,
 				{<<"content-length">>, integer_to_binary(iolist_size(Body))})
