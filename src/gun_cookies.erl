@@ -102,7 +102,7 @@ add_cookie_header(Scheme, Authority, PathWithQs, Headers0, Store0) ->
 		_ ->
 			Cookies = [{Name, Value} || #{name := Name, value := Value} <- Cookies0],
 			%% We put cookies at the end of the headers list as it's the least important header.
-			Headers0 ++ [{<<"cookie">>, cow_cookie:cookie(Cookies)}]
+			lists:keystore(<<"cookie">>, 1, Headers0, {<<"cookie">>, cow_cookie:cookie(Cookies)})
 	end,
 	{Headers, Store}.
 
