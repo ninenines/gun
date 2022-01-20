@@ -593,34 +593,32 @@ initial_flow(InitialFlow, _) -> InitialFlow.
 send_request(State=#http_state{socket=Socket, transport=Transport, version=Version},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers0, Body,
 		CookieStore0, EvHandler, EvHandlerState0, Function) ->
-	Headers1 = lists:keydelete(<<"transfer-encoding">>, 1, Headers0),
-	Headers2 = case Body of
-		undefined -> Headers1;
-		_ -> lists:keydelete(<<"content-length">>, 1, Headers1)
-	end,
-	%% We use Headers2 because this is the smallest list.
-	Conn = conn_from_headers(Version, Headers2),
+	Conn = conn_from_headers(Version, Headers0),
 	Out = case Body of
 		undefined when Function =:= ws_upgrade -> head;
-		undefined -> request_io_from_headers(Headers2);
+		undefined -> request_io_from_headers(Headers0);
 		_ -> head
 	end,
-	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
+	{Authority, Headers1} = case lists:keyfind(<<"host">>, 1, Headers0) of
 		false ->
 			Authority0 = host_header(Transport:name(), Host, Port),
-			{Authority0, [{<<"host">>, Authority0}|Headers2]};
+			{Authority0, [{<<"host">>, Authority0}|Headers0]};
 		{_, Authority1} ->
-			{Authority1, Headers2}
+			{Authority1, Headers0}
 	end,
-	Headers4 = transform_header_names(State, Headers3),
-	Headers5 = case {Body, Out} of
-		{undefined, body_chunked} when Version =:= 'HTTP/1.0' -> Headers4;
-		{undefined, body_chunked} -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers4];
-		{undefined, _} -> Headers4;
-		_ -> [{<<"content-length">>, integer_to_binary(iolist_size(Body))}|Headers4]
+	Headers2 = case {Body, Out} of
+		{undefined, body_chunked} when Version =:= 'HTTP/1.0' -> Headers1;
+		{undefined, body_chunked} ->
+			lists:keystore(<<"transfer-encoding">>, 1, Headers1,
+				{<<"transfer-encoding">>, <<"chunked">>});
+		{undefined, _} -> Headers1;
+		_ ->
+			lists:keystore(<<"content-length">>, 1, Headers1,
+				{<<"content-length">>, integer_to_binary(iolist_size(Body))})
 	end,
-	{Headers, CookieStore} = gun_cookies:add_cookie_header(
-		scheme(State), Authority, Path, Headers5, CookieStore0),
+	{Headers3, CookieStore} = gun_cookies:add_cookie_header(
+		scheme(State), Authority, Path, Headers2, CookieStore0),
+	Headers = transform_header_names(State, Headers3),
 	RealStreamRef = stream_ref(State, StreamRef),
 	RequestEvent = #{
 		stream_ref => RealStreamRef,
