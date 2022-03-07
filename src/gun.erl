@@ -1249,32 +1249,31 @@ connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{ProtoState2, CookieStore, EvHandlerState} = Protocol:headers(ProtoState,
+	{Commands, CookieStore, EvHandlerState} = Protocol:headers(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Method, Host, Port, Path, Headers,
 		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, cookie_store=CookieStore,
-		event_handler_state=EvHandlerState}};
+	commands(Commands, State#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState});
 connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{ProtoState2, CookieStore, EvHandlerState} = Protocol:request(ProtoState,
+	{Commands, CookieStore, EvHandlerState} = Protocol:request(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
 		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, cookie_store=CookieStore,
-		event_handler_state=EvHandlerState}};
+	commands(Commands, State#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState});
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{ProtoState2, EvHandlerState} = Protocol:connect(ProtoState,
+	{Commands, EvHandlerState} = Protocol:connect(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Destination, #{host => Host, port => Port},
 		Headers, InitialFlow, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2,
-		event_handler_state=EvHandlerState}};
+	commands(Commands, State#state{event_handler_state=EvHandlerState});
 %% Public Websocket interface.
 connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers}, State=#state{opts=Opts}) ->
 	WsOpts = maps:get(ws_opts, Opts, #{}),
@@ -1289,11 +1288,11 @@ connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts},
 		opts => WsOpts
 	}, EvHandlerState0),
 	%% @todo Can fail if HTTP/1.0.
-	{ProtoState2, CookieStore, EvHandlerState} = Protocol:ws_upgrade(ProtoState,
+	{Commands, CookieStore, EvHandlerState} = Protocol:ws_upgrade(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Host, Port, Path, Headers, WsOpts, CookieStore0, EvHandler, EvHandlerState1),
-	{keep_state, State#state{protocol_state=ProtoState2, cookie_store=CookieStore,
-		event_handler_state=EvHandlerState}};
+	commands(Commands, State#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState});
 %% @todo Maybe better standardize the protocol callbacks argument orders.
 connected(cast, {ws_send, ReplyTo, StreamRef, Frames}, State=#state{
 		protocol=Protocol, protocol_state=ProtoState,
@@ -1370,10 +1369,10 @@ closing(Type, Event, State) ->
 handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{ProtoState2, EvHandlerState} = Protocol:data(ProtoState,
+	{Commands, EvHandlerState} = Protocol:data(ProtoState,
 		dereference_stream_ref(StreamRef, State),
 		ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+	commands(Commands, State#state{event_handler_state=EvHandlerState});
 handle_common_connected(info, {timeout, TRef, Name}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	Commands = Protocol:timeout(ProtoState, Name, TRef),
@@ -1419,9 +1418,9 @@ handle_common_connected_no_input(info, {handle_continue, StreamRef, Msg}, _,
 handle_common_connected_no_input(info, keepalive, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState0,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{ProtoState, EvHandlerState} = Protocol:keepalive(ProtoState0, EvHandler, EvHandlerState0),
-	{keep_state, keepalive_timeout(State#state{
-		protocol_state=ProtoState, event_handler_state=EvHandlerState})};
+	{Commands, EvHandlerState} = Protocol:keepalive(ProtoState0, EvHandler, EvHandlerState0),
+	commands(Commands, keepalive_timeout(State#state{
+		event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(cast, {update_flow, ReplyTo, StreamRef, Flow}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	Commands = Protocol:update_flow(ProtoState, ReplyTo, StreamRef, Flow),
@@ -1429,9 +1428,9 @@ handle_common_connected_no_input(cast, {update_flow, ReplyTo, StreamRef, Flow}, 
 handle_common_connected_no_input(cast, {cancel, ReplyTo, StreamRef}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{ProtoState2, EvHandlerState} = Protocol:cancel(ProtoState,
+	{Commands, EvHandlerState} = Protocol:cancel(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo, EvHandler, EvHandlerState0),
-	{keep_state, State#state{protocol_state=ProtoState2, event_handler_state=EvHandlerState}};
+	commands(Commands, State#state{event_handler_state=EvHandlerState});
 handle_common_connected_no_input({call, From}, {stream_info, StreamRef}, _,
 		State=#state{intermediaries=Intermediaries0, protocol=Protocol, protocol_state=ProtoState}) ->
 	Intermediaries = [I || I=#{protocol := http} <- Intermediaries0],
