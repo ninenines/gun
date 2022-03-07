@@ -44,10 +44,10 @@ init(ReplyTo, Socket, Transport, Opts) ->
 	StreamRef = maps:get(stream_ref, Opts, undefined),
 	{connected_data_only, #raw_state{ref=StreamRef, reply_to=ReplyTo, socket=Socket, transport=Transport}}.
 
-handle(Data, State=#raw_state{ref=StreamRef, reply_to=ReplyTo}, CookieStore, _, EvHandlerState) ->
+handle(Data, #raw_state{ref=StreamRef, reply_to=ReplyTo}, CookieStore, _, EvHandlerState) ->
 	%% When we take over the entire connection there is no stream reference.
 	ReplyTo ! {gun_data, self(), StreamRef, nofin, Data},
-	{{state, State}, CookieStore, EvHandlerState}.
+	{[], CookieStore, EvHandlerState}.
 
 %% We can always close immediately.
 closing(_, _, _, EvHandlerState) ->
@@ -57,7 +57,7 @@ close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
 
 %% @todo Initiate closing on IsFin=fin.
-data(State=#raw_state{ref=StreamRef, socket=Socket, transport=Transport}, StreamRef,
+data(#raw_state{ref=StreamRef, socket=Socket, transport=Transport}, StreamRef,
 		_ReplyTo, _IsFin, Data, _EvHandler, EvHandlerState) ->
 	Transport:send(Socket, Data),
-	{State, EvHandlerState}.
+	{[], EvHandlerState}.

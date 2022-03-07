@@ -299,8 +299,7 @@ close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
 
 keepalive(State=#ws_state{reply_to=ReplyTo}, EvHandler, EvHandlerState0) ->
-	{[], EvHandlerState} = send(ping, State, ReplyTo, EvHandler, EvHandlerState0),
-	{State, EvHandlerState}.
+	send(ping, State, ReplyTo, EvHandler, EvHandlerState0).
 
 %% Send one frame.
 send(Frame, State=#ws_state{stream_ref=StreamRef,
