@@ -146,7 +146,7 @@
 -record(state, {
 	host :: inet:hostname() | inet:ip_address(),
 	port :: inet:port_number(),
-	opts :: gun:opts(),
+	opts :: opts(),
 	table :: ets:tid(),
 	conns :: #{pid() => down | {setup, any()} | {up, http | http2 | ws | raw, map()}},
 	conns_meta = #{} :: meta(),
@@ -221,7 +221,7 @@ await_up(Authority, Scope) ->
 			gen_statem:call(ManagerPid, await_up, 5000)
 	end.
 
--spec checkout(pid(), req_opts()) -> undefined | {pid(), map()}.
+-spec checkout(pid(), req_opts() | ws_send_opts()) -> undefined | {pid(), map()}.
 checkout(ManagerPid, ReqOpts=#{checkout_retry := Retry}) when is_list(Retry) ->
 	CallTimeout = maps:get(checkout_call_timeout, ReqOpts, 5000),
 	case gen_server:call(ManagerPid, {checkout, ReqOpts}, CallTimeout) of
@@ -381,6 +381,7 @@ authority(Headers) ->
 	{_, Authority} = lists:keyfind(<<"host">>, 1, Headers),
 	Authority.
 
+-spec get_pool(iolist(), req_opts() | ws_send_opts() | stop_opts()) -> pid() | undefined.
 get_pool(Authority0, ReqOpts) ->
 	Authority = iolist_to_binary(Authority0),
 	%% @todo Perhaps rename this to temporary.
