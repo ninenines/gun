@@ -732,7 +732,8 @@ handle_continue(ContinueStreamRef, Msg, State0, CookieStore0, EvHandler, EvHandl
 			{{state, State}, CookieStore, EvHandlerState}
 		%% The stream may have ended while TLS was being decoded. @todo What should we do?
 %		error ->
-%			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
+%                       error_stream_not_found(State, StreamRef, ReplyTo),
+%			{[], EvHandlerState0}
 	end.
 
 update_flow(State, _ReplyTo, StreamRef, Inc) ->
@@ -901,8 +902,8 @@ headers(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 				"The stream is not a tunnel."}},
 			{[], CookieStore0, EvHandlerState0};
 		error ->
-			{error_stream_not_found(State, StreamRef, ReplyTo),
-				CookieStore0, EvHandlerState0}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], CookieStore0, EvHandlerState0}
 	end.
 
 request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
@@ -969,8 +970,8 @@ request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 				"The stream is not a tunnel."}},
 			{[], CookieStore0, EvHandlerState0};
 		error ->
-			{error_stream_not_found(State, StreamRef, ReplyTo),
-				CookieStore0, EvHandlerState0}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], CookieStore0, EvHandlerState0}
 	end.
 
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;
@@ -1018,9 +1019,11 @@ data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, 
 		Stream=#stream{id=StreamID, tunnel=Tunnel} ->
 			case cow_http2_machine:get_stream_local_state(StreamID, HTTP2Machine) of
 				{ok, fin, _} ->
-					{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
+					error_stream_closed(State, StreamRef, ReplyTo),
+					{[], EvHandlerState};
 				{ok, _, fin} ->
-					{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
+					error_stream_closed(State, StreamRef, ReplyTo),
+					{[], EvHandlerState};
 				{ok, _, _} when Tunnel =:= undefined ->
 					{State1, EvHandlerStateRet} = maybe_send_data(State,
 						StreamID, IsFin, Data, EvHandler, EvHandlerState),
@@ -1034,7 +1037,8 @@ data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, 
 					{{state, State1}, EvHandlerStateRet}
 			end;
 		error ->
-			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], EvHandlerState}
 	end;
 %% Tunneled data.
 data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHandlerState0) ->
@@ -1050,7 +1054,8 @@ data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHand
 				"The stream is not a tunnel."}},
 			{[], EvHandlerState0};
 		error ->
-			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], EvHandlerState0}
 	end.
 
 maybe_send_data(State=#http2_state{http2_machine=HTTP2Machine0}, StreamID, IsFin, Data0,
@@ -1190,8 +1195,8 @@ connect(State, RealStreamRef=[StreamRef|_], ReplyTo, Destination, TunnelInfo, He
 				"The stream is not a tunnel."}},
 			{[], EvHandlerState0};
 		error ->
-			{error_stream_not_found(State, StreamRef, ReplyTo),
-				EvHandlerState0}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], EvHandlerState0}
 	end.
 
 cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP2Machine0},
@@ -1210,8 +1215,8 @@ cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP
 			{{state, delete_stream(State#http2_state{http2_machine=HTTP2Machine}, StreamID)},
 				EvHandlerState};
 		error ->
-			{error_stream_not_found(State, StreamRef, ReplyTo),
-				EvHandlerState0}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], EvHandlerState0}
 	end;
 %% Tunneled request.
 cancel(State, RealStreamRef=[StreamRef|_], ReplyTo, EvHandler, EvHandlerState0) ->
@@ -1227,8 +1232,8 @@ cancel(State, RealStreamRef=[StreamRef|_], ReplyTo, EvHandler, EvHandlerState0) 
 				"The stream is not a tunnel."}},
 			{[], EvHandlerState0};
 		error ->
-			{error_stream_not_found(State, StreamRef, ReplyTo),
-				EvHandlerState0}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], EvHandlerState0}
 	end.
 
 timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, undefined, Name}, TRef) ->
@@ -1407,12 +1412,12 @@ connection_error(#http2_state{socket=Socket, transport=Transport,
 error_stream_closed(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"The stream has already been closed."}},
-	{state, State}.
+	ok.
 
 error_stream_not_found(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"The stream cannot be found."}},
-	{state, State}.
+	ok.
 
 %% Streams.
 
