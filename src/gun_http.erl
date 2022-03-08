@@ -677,10 +677,12 @@ scheme(#http_state{transport=Transport}) ->
 
 %% We are expecting a new stream.
 data(State=#http_state{out=head}, StreamRef, ReplyTo, _, _, _, EvHandlerState) ->
-	{error_stream_closed(State, StreamRef, ReplyTo), EvHandlerState};
+	error_stream_closed(State, StreamRef, ReplyTo),
+	{[], EvHandlerState};
 %% There are no active streams.
 data(State=#http_state{streams=[]}, StreamRef, ReplyTo, _, _, _, EvHandlerState) ->
-	{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState};
+	error_stream_not_found(State, StreamRef, ReplyTo),
+	{[], EvHandlerState};
 %% We can only send data on the last created stream.
 data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 		out=Out, streams=Streams}, StreamRef, ReplyTo, IsFin, Data,
@@ -727,7 +729,8 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 					{[], EvHandlerState0}
 			end;
 		_ ->
-			{error_stream_not_found(State, StreamRef, ReplyTo), EvHandlerState0}
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], EvHandlerState0}
 	end.
 
 connect(State, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
@@ -803,7 +806,8 @@ cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 			}, EvHandlerState0),
 			{{state, State}, EvHandlerState};
 		false ->
-			{error_stream_not_found(State0, StreamRef, ReplyTo), EvHandlerState0}
+			error_stream_not_found(State0, StreamRef, ReplyTo),
+			{[], EvHandlerState0}
 	end.
 
 stream_info(#http_state{streams=Streams}, StreamRef) ->
@@ -831,12 +835,12 @@ down(#http_state{streams=Streams}) ->
 error_stream_closed(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"The stream has already been closed."}},
-	{state, State}.
+	ok.
 
 error_stream_not_found(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"The stream cannot be found."}},
-	{state, State}.
+	ok.
 
 %% Headers information retrieval.
 
