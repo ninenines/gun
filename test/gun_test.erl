@@ -58,10 +58,12 @@ init_origin(Parent, Transport, Protocol, Fun)
 	Fun(Parent, ClientSocket, gen_tcp);
 init_origin(Parent, tls, Protocol, Fun) ->
 	Opts0 = ct_helper:get_certs_from_ets(),
-	Opts = case Protocol of
+	Opts1 = case Protocol of
 		http2 -> [{alpn_preferred_protocols, [<<"h2">>]}|Opts0];
 		_ -> Opts0
 	end,
+	%% sni_hosts is necessary for SNI tests to succeed.
+	Opts = [{sni_hosts, [{net_adm:localhost(), []}]}|Opts1],
 	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false}|Opts]),
 	{ok, {_, Port}} = ssl:sockname(ListenSocket),
 	Parent ! {self(), Port},

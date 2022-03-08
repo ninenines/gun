@@ -419,6 +419,34 @@ retry_timeout(_) ->
 	{_, terminate, _} = receive_event(ConnPid),
 	ok.
 
+server_name_indication_custom(_) ->
+	doc("Ensure a custom server_name_indication is accepted."),
+	do_server_name_indication("localhost", net_adm:localhost(), #{
+		tls_opts => [{server_name_indication, net_adm:localhost()}]
+	}).
+
+server_name_indication_default(_) ->
+	doc("Ensure a default server_name_indication is accepted."),
+	do_server_name_indication(net_adm:localhost(), net_adm:localhost(), #{}).
+
+do_server_name_indication(Host, Expected, GunOpts) ->
+	Self = self(),
+	{ok, OriginPid, OriginPort} = init_origin(tls, http,
+		fun(_, ClientSocket, _) ->
+			{ok, Info} = ssl:connection_information(ClientSocket),
+			Msg = {sni_hostname, _} = lists:keyfind(sni_hostname, 1, Info),
+			Self ! Msg
+		end),
+	{ok, ConnPid} = gun:open(Host, OriginPort, GunOpts#{
+		transport => tls,
+		retry => 0
+	}),
+	handshake_completed = receive_from(OriginPid),
+	%% The connection will succeed, look up the SNI hostname
+	%% and send it to us as a message, where we can check it.
+	{sni_hostname, Expected} = receive Msg = {sni_hostname, _} -> Msg end,
+	gun:close(ConnPid).
+
 set_owner(_) ->
 	doc("The owner of the connection can be changed."),
 	Self = self(),
