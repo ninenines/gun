@@ -841,6 +841,7 @@ flush(ServerPid) when is_pid(ServerPid) ->
 flush(StreamRef) ->
 	flush_ref(StreamRef).
 
+-spec flush_pid(pid()) -> ok.
 flush_pid(ServerPid) ->
 	receive
 		{gun_up, ServerPid, _} ->
@@ -871,10 +872,11 @@ flush_pid(ServerPid) ->
 		ok
 	end.
 
+-spec flush_ref(stream_ref()) -> ok.
 flush_ref(StreamRef) ->
 	receive
 		{gun_inform, _, StreamRef, _, _} ->
-			flush_pid(StreamRef);
+			flush_ref(StreamRef);
 		{gun_response, _, StreamRef, _, _, _} ->
 			flush_ref(StreamRef);
 		{gun_data, _, StreamRef, _, _} ->
