@@ -345,6 +345,5 @@ ws_send([Frame|Tail], State, ReplyTo, EvHandler, EvHandlerState0) ->
 ws_send(Frames, State, _StreamRef, ReplyTo, EvHandler, EvHandlerState) ->
 	ws_send(Frames, State, ReplyTo, EvHandler, EvHandlerState).
 
-%% Websocket has no concept of streams.
-down(_) ->
-	[].
+down(#ws_state{stream_ref = StreamRef}) ->
+	[StreamRef].
