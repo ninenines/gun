@@ -593,6 +593,7 @@ ws_gun_send_close_frame(Config) ->
 	Frame = {close, 3333, <<>>},
 	gun:ws_send(ConnPid, StreamRef, Frame),
 	{ws, Frame} = gun:await(ConnPid, StreamRef),
+	ws_is_down(ConnPid, StreamRef, normal),
 	gun_is_down(ConnPid, ConnRef, normal).
 
 ws_gun_receive_close_frame(Config) ->
@@ -607,6 +608,7 @@ ws_gun_receive_close_frame(Config) ->
 	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
 	%% We expect a close frame before the connection is closed.
 	{ws, {close, 3333, <<>>}} = gun:await(ConnPid, StreamRef),
+	ws_is_down(ConnPid, StreamRef, normal),
 	gun_is_down(ConnPid, ConnRef, normal).
 
 closing_gun_shutdown(Config) ->
@@ -657,5 +659,13 @@ gun_is_down(ConnPid, ConnRef, Expected) ->
 	receive
 		{'DOWN', ConnRef, process, ConnPid, Reason} ->
 			Expected = Reason,
+			ok
+	end.
+
+ws_is_down(ConnPid, StreamRef, Expected) ->
+	receive
+		{gun_down, ConnPid, ws, Reason, StreamsDown} ->
+			Expected = Reason,
+			[StreamRef] = StreamsDown,
 			ok
 	end.
