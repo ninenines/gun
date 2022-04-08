@@ -777,19 +777,18 @@ await_body(ServerPid, StreamRef, Timeout) ->
 
 -spec await_body(pid(), stream_ref(), timeout(), reference()) -> await_body_result().
 await_body(ServerPid, StreamRef, Timeout, MRef) ->
-	await_body(ServerPid, StreamRef, Timeout, MRef, <<>>).
+	await_body(ServerPid, StreamRef, Timeout, MRef, []).
 
 await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 	receive
 		{gun_data, ServerPid, StreamRef, nofin, Data} ->
-			await_body(ServerPid, StreamRef, Timeout, MRef,
-				<< Acc/binary, Data/binary >>);
+			await_body(ServerPid, StreamRef, Timeout, MRef, [Data | Acc]);
 		{gun_data, ServerPid, StreamRef, fin, Data} ->
-			{ok, << Acc/binary, Data/binary >>};
+			{ok, iolist_to_binary(lists:reverse([Data | Acc]))};
 		%% It's OK to return trailers here because the client
 		%% specifically requested them.
 		{gun_trailers, ServerPid, StreamRef, Trailers} ->
-			{ok, Acc, Trailers};
+			{ok, iolist_to_binary(lists:reverse(Acc)), Trailers};
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->
