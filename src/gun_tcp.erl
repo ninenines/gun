@@ -76,7 +76,7 @@ connect(#{ip_addresses := IPs, port := Port, tcp_module := Mod, tcp_opts := Opts
 	end,
 	case Res of
 		{ok, S} -> {ok, S};
-		Error -> maybe_exit(Error)
+		Error -> Error
 	end.
 
 try_connect([IP|IPs], Port, Opts, Timer, Mod, _) ->
