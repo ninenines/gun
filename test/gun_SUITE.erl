@@ -172,7 +172,7 @@ info(_) ->
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	{ok, Pid} = gun:open("localhost", Port),
 	{ok, _} = gen_tcp:accept(ListenSocket, 5000),
-	#{sock_ip := _, sock_port := _} = gun:info(Pid),
+	#{sock_ip := _, sock_port := _, state_name := connected} = gun:info(Pid),
 	gun:close(Pid).
 
 keepalive_infinity(_) ->

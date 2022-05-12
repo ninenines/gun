@@ -22,7 +22,8 @@ Info :: #{
     origin_host    => inet:hostname() | inet:ip_address(),
     origin_port    => inet:port_number(),
     intermediaries => [Intermediary],
-    cookie_store   => gun_cookies:cookie_store()
+    cookie_store   => gun_cookies:cookie_store(),
+    state_name     => atom()
 }
 Intermediary :: #{
     type      => connect | socks5,
