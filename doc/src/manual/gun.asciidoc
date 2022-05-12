@@ -209,6 +209,7 @@ http2_opts() :: #{
     cookie_ignore_informational => boolean(),
     flow                        => pos_integer(),
     keepalive                   => timeout(),
+    keepalive_tolerance         => non_neg_integer(),
 
     %% HTTP/2 state machine configuration.
     connection_window_margin_size  => 0..16#7fffffff,
@@ -256,6 +257,13 @@ By default flow control is disabled.
 keepalive (infinity)::
 
 Time between pings in milliseconds.
+
+keepalive_tolerance - see below::
+
+The number of unacknowledged pings in flight that are
+tolerated before the connection is closed. By default
+this mechanism is disabled even if `keepalive` is
+enabled.
 
 === opts()
 

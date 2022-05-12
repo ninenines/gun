@@ -113,7 +113,12 @@
 	%% the idea, that's why the main map has the ID as key. Then we also
 	%% have a Ref->ID index for faster lookup when we only have the Ref.
 	streams = #{} :: #{cow_http2:streamid() => #stream{}},
-	stream_refs = #{} :: #{reference() => cow_http2:streamid()}
+	stream_refs = #{} :: #{reference() => cow_http2:streamid()},
+
+	%% Number of pings that have been sent but not yet acknowledged.
+	%% Used to determine whether the connection should be closed when
+	%% the keepalive_tolerance option is set.
+	pings_unack = 0 :: non_neg_integer()
 }).
 
 check_options(Opts) ->
@@ -138,6 +143,8 @@ do_check_options([{flow, InitialFlow}|Opts]) when is_integer(InitialFlow), Initi
 do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
+	do_check_options(Opts);
+do_check_options([{keepalive_tolerance, K}|Opts]) when is_integer(K), K >= 0 ->
 	do_check_options(Opts);
 do_check_options([{notify_settings_changed, B}|Opts]) when is_boolean(B) ->
 	do_check_options(Opts);
@@ -341,7 +348,8 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 	end.
 
 maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
-		transport=Transport, opts=Opts, http2_machine=HTTP2Machine}, Frame) ->
+		transport=Transport, opts=Opts, http2_machine=HTTP2Machine,
+		pings_unack=PingsUnack}, Frame) ->
 	case Frame of
 		{settings, _} ->
 			%% We notify remote settings changes only if the user requested it.
@@ -361,6 +369,8 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 				ok -> {state, State};
 				Error={error, _} -> Error
 			end;
+		{ping_ack, _Opaque} ->
+			{state, State#http2_state{pings_unack=PingsUnack - 1}};
 		_ ->
 			{state, State}
 	end.
@@ -908,10 +918,18 @@ close_stream(State, #stream{ref=StreamRef, reply_to=ReplyTo}, Reason) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), Reason},
 	ok.
 
-keepalive(#http2_state{socket=Socket, transport=Transport}, _, EvHandlerState) ->
+keepalive(State=#http2_state{pings_unack=PingsUnack, opts=Opts}, _, EvHandlerState)
+		when PingsUnack >= map_get(keepalive_tolerance, Opts) ->
+	{connection_error(State, {connection_error, no_error,
+		'The number of unacknowledged pings exceed the configured tolerance value.'}),
+		EvHandlerState};
+keepalive(State=#http2_state{socket=Socket, transport=Transport, pings_unack=PingsUnack},
+		_, EvHandlerState) ->
 	case Transport:send(Socket, cow_http2:ping(0)) of
-		ok -> {[], EvHandlerState};
-		Error={error, _} -> {Error, EvHandlerState}
+		ok ->
+			{{state, State#http2_state{pings_unack=PingsUnack + 1}}, EvHandlerState};
+		Error={error, _} ->
+			{Error, EvHandlerState}
 	end.
 
 headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,

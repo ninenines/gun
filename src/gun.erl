@@ -223,6 +223,7 @@
 	cookie_ignore_informational => boolean(),
 	flow => pos_integer(),
 	keepalive => timeout(),
+	keepalive_tolerance => non_neg_integer(),
 	notify_settings_changed => boolean(),
 
 	%% Options copied from cow_http2_machine.
