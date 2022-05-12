@@ -435,6 +435,62 @@ settings_ack_timeout(_) ->
 	timer:sleep(6000),
 	gun:close(ConnPid).
 
+keepalive_tolerance_ping_ack_timeout(_) ->
+	doc("Ping ack not received after N pings sent causes connection error."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, do_ping_ack_loop_fun()),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{
+		protocols => [http2],
+		http2_opts => #{keepalive => 10, keepalive_tolerance => 2}
+	}),
+	{ok, http2} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	%% When gun sends the first ping, the server acks immediately.
+	receive ping_received -> OriginPid ! send_ping_ack end,
+	timer:sleep(25), %% gun sends 2 pings while we sleep. 2 pings not acked.
+	%% Server acks one ping. One ping still not acked.
+	receive ping_received -> OriginPid ! send_ping_ack end,
+	timer:sleep(10), %% gun sends 1 ping while we sleep. 2 pings not acked.
+	%% Server acks one ping. One ping still not acked.
+	receive ping_received -> OriginPid ! send_ping_ack end,
+	timer:sleep(10), %% gun sends 1 ping while we sleep. 2 pings not acked.
+	%% Check that we haven't received a gun_down yet.
+	receive
+		GunDown when element(1, GunDown) =:= gun_down ->
+			error(unexpected)
+	after 0 ->
+		ok
+	end,
+	%% Within the next 10ms, gun wants to send another ping, which would
+	%% result in 3 outstanding pings. Instead, gun goes down.
+	receive
+		{gun_down, Pid, http2, {error, {connection_error, protocol_error,
+				'Ping ack was not received in a reasonable amount of time.'
+				}}, []} ->
+			gun:close(Pid)
+	after 10 ->
+		error(timeout)
+	end.
+
+do_ping_ack_loop_fun() ->
+	%% Receive ping, sync with parant, send ping ack, loop.
+	fun Loop(Parent, Socket, Transport) ->
+		{ok, Data} = Transport:recv(Socket, 9, infinity),
+		<<Len:24, 6:8, %% PING
+			0:8, %% Flags
+			0:1, 0:31>> = Data,
+		{ok, Payload} = Transport:recv(Socket, Len, 1000),
+		8 = Len = byte_size(Payload),
+		Parent ! ping_received,
+		receive
+			send_ping_ack ->
+				Ack = <<8:24, 6:8, %% PING
+					1:8, %% Ack flag
+					0:1, 0:31, Payload/binary>>,
+				ok = Transport:send(Socket, Ack)
+		end,
+		Loop(Parent, Socket, Transport)
+	end.
+
 connect_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),

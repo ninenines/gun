@@ -209,6 +209,7 @@ http2_opts() :: #{
     cookie_ignore_informational => boolean(),
     flow                        => pos_integer(),
     keepalive                   => timeout(),
+    keepalive_tolerance         => non_neg_integer(),
 
     %% HTTP/2 state machine configuration.
     connection_window_margin_size  => 0..16#7fffffff,
@@ -256,6 +257,19 @@ By default flow control is disabled.
 keepalive (infinity)::
 
 Time between pings in milliseconds.
+This option by itself does not cause the connection to be closed.
+To force a connection close if no ping ack is received before sending more
+pings, use `keepalive_tolerance` together with `keepalive`.
+
+keepalive_tolerance::
+
+The number of unacknowledged pings that can be tolerated before the connection
+is forcefully closed.
+When a keepalive ping is sent to the peer, a counter is incremented and if this
+counter exceeds the tolerance limit, the connection is forcefully closed. The
+counter is decremented when a ping ack is received from the peer.
+By default, the mechanism for closing the connection based on ping and ping ack
+is disabled.
 
 === opts()
 
