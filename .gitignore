@@ -9,3 +9,5 @@ ebin/test
 ebin/*.beam
 logs
 test/*.beam
+/.rebar/
+/_build/
