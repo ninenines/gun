@@ -31,7 +31,7 @@
 	-> {ok, #state{}} | disable.
 init(ReplyTo, StreamRef, _, Headers, _) ->
 	case lists:keyfind(<<"content-type">>, 1, Headers) of
-		{_, <<"text/event-stream">>} ->
+		{_, <<"text/event-stream", _MaybeCharset/binary>>} ->
 			{ok, #state{reply_to=ReplyTo, stream_ref=StreamRef,
 				sse_state=cow_sse:init()}};
 		_ ->
