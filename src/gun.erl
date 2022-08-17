@@ -18,6 +18,14 @@
 -compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
 -endif.
 
+-ifdef(OTP_RELEASE). %% this implies 21 or higher
+-define(EXCEPTION(Class, Reason, Stacktrace), Class:Reason:Stacktrace).
+-define(GET_STACK(Stacktrace), Stacktrace).
+-else.
+-define(EXCEPTION(Class, Reason, _), Class:Reason).
+-define(GET_STACK(_), erlang:get_stacktrace()).
+-endif.
+
 %% Connection.
 -export([open/2]).
 -export([open/3]).
@@ -651,7 +659,7 @@ proc_lib_hack(Parent, Owner, Host, Port, Opts) ->
 		_:normal -> exit(normal);
 		_:shutdown -> exit(shutdown);
 		_:Reason = {shutdown, _} -> exit(Reason);
-		_:Reason -> exit({Reason, erlang:get_stacktrace()})
+		?EXCEPTION(_, Reason, Stacktrace) -> exit({Reason, ?GET_STACK(Stacktrace)})
 	end.
 
 init(Parent, Owner, Host, Port, Opts) ->
