@@ -93,7 +93,8 @@ init(ReplyTo, Socket, Transport, Opts) ->
 		none -> <<0>>
 	end || A <- Auth>>,
 	Transport:send(Socket, [<<5, (length(Auth))>>, Methods]),
-	{connected_no_input, #socks_state{ref=StreamRef, reply_to=ReplyTo, socket=Socket, transport=Transport,
+	{ok, connected_no_input, #socks_state{ref=StreamRef, reply_to=ReplyTo,
+		socket=Socket, transport=Transport,
 		opts=Opts, version=Version, status=auth_method_select}}.
 
 switch_transport(Transport, Socket, State) ->

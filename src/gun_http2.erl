@@ -186,7 +186,7 @@ init(ReplyTo, Socket, Transport, Opts0) ->
 		opts=Opts, base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
 		content_handlers=Handlers, http2_machine=HTTP2Machine},
 	Transport:send(Socket, Preface),
-	{connected, State}.
+	{ok, connected, State}.
 
 switch_transport(Transport, Socket, State) ->
 	State#http2_state{socket=Socket, transport=Transport}.
@@ -609,7 +609,8 @@ headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=Re
 		handler => Handler,
 		opts => WsOpts
 	},
-	{connected_ws_only, ProtoState} = Proto:init(
+	%% @todo Handle error result from Proto:init/4
+	{ok, connected_ws_only, ProtoState} = Proto:init(
 		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts),
 	{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
 		protocol=Proto, protocol_state=ProtoState}}),

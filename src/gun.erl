@@ -1237,7 +1237,8 @@ connected_ws_only(Type, Event, State) ->
 connected(internal, {connected, Socket, NewProtocol},
 		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
 	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
-	{StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),
+	%% @todo Handle error result from Protocol:init/4
+	{ok, StateName, ProtoState} = Protocol:init(Owner, Socket, Transport, ProtoOpts),
 	Owner ! {gun_up, self(), Protocol:name()},
 	case active(State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState}) of
 		{ok, State} ->
@@ -1679,7 +1680,8 @@ commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
 		#{tunnel_transport := _} -> ProtoOpts0;
 		_ -> ProtoOpts0#{tunnel_transport => tcp}
 	end,
-	{StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),
+	%% @todo Handle error result from Protocol:init/4
+	{ok, StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),
 	ProtocolChangedEvent = case ProtoOpts of
 		#{stream_ref := StreamRef} ->
 			#{stream_ref => StreamRef, protocol => Protocol:name()};

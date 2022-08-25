@@ -42,7 +42,7 @@ has_keepalive() -> false.
 
 init(ReplyTo, Socket, Transport, Opts) ->
 	StreamRef = maps:get(stream_ref, Opts, undefined),
-	{connected_data_only, #raw_state{ref=StreamRef, reply_to=ReplyTo, socket=Socket, transport=Transport}}.
+	{ok, connected_data_only, #raw_state{ref=StreamRef, reply_to=ReplyTo, socket=Socket, transport=Transport}}.
 
 handle(Data, #raw_state{ref=StreamRef, reply_to=ReplyTo}, CookieStore, _, EvHandlerState) ->
 	%% When we take over the entire connection there is no stream reference.

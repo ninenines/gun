@@ -140,7 +140,7 @@ default_keepalive() -> infinity.
 init(ReplyTo, Socket, Transport, #{stream_ref := StreamRef, headers := Headers,
 		extensions := Extensions, flow := InitialFlow, handler := Handler, opts := Opts}) ->
 	{ok, HandlerState} = Handler:init(ReplyTo, StreamRef, Headers, Opts),
-	{connected_ws_only, #ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
+	{ok, connected_ws_only, #ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
 		socket=Socket, transport=Transport, opts=Opts, extensions=Extensions,
 		flow=InitialFlow, handler=Handler, handler_state=HandlerState}}.
 
