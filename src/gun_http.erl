@@ -120,7 +120,7 @@ default_keepalive() -> infinity.
 init(_ReplyTo, Socket, Transport, Opts) ->
 	BaseStreamRef = maps:get(stream_ref, Opts, undefined),
 	Version = maps:get(version, Opts, 'HTTP/1.1'),
-	{connected, #http_state{socket=Socket, transport=Transport,
+	{ok, connected, #http_state{socket=Socket, transport=Transport,
 		opts=Opts, version=Version, base_stream_ref=BaseStreamRef}}.
 
 switch_transport(Transport, Socket, State) ->

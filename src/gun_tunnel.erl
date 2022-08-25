@@ -113,7 +113,8 @@ init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tun
 		%% Initialize the protocol.
 		#{new_protocol := NewProtocol} ->
 			{Proto, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
-			{_, ProtoState} = Proto:init(ReplyTo, OriginSocket, OriginTransport,
+			%% @todo Handle error result from Proto:init/4
+			{ok, _, ProtoState} = Proto:init(ReplyTo, OriginSocket, OriginTransport,
 				ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tcp}),
 			EvHandlerState = EvHandler:protocol_changed(#{
 				stream_ref => StreamRef,
@@ -195,7 +196,8 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {ok, Negotiated},
 		reply_to => ReplyTo,
 		stream_ref => StreamRef
 	},
-	{_, ProtoState} = Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
+	%% @todo Handle error result from Proto:init/4
+	{ok, _, ProtoState} = Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
 		ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}),
 	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
 	{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}},
@@ -476,7 +478,8 @@ commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
 		EvHandler, EvHandlerState0) ->
 	{Proto, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 	%% This should only apply to Websocket for the time being.
-	{connected_ws_only, ProtoState} = Proto:init(ReplyTo, Socket, Transport, ProtoOpts),
+	%% @todo Handle error result from Proto:init/4
+	{ok, connected_ws_only, ProtoState} = Proto:init(ReplyTo, Socket, Transport, ProtoOpts),
 	#{stream_ref := StreamRef} = ProtoOpts,
 	EvHandlerState = EvHandler:protocol_changed(#{
 		stream_ref => StreamRef,
