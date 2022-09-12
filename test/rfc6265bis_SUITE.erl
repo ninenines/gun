@@ -94,6 +94,7 @@ do_informational_set_cookie(Config, Boolean) ->
 	Protocol = config(protocol, Config),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [{Protocol, #{cookie_ignore_informational => Boolean}}],
 		cookie_store => gun_cookies_list:init()
 	}),
@@ -127,6 +128,7 @@ set_cookie_connect_tcp(Config) ->
 		host => "localhost",
 		port => config(port, Config),
 		transport => Transport,
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol]
 	}),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
@@ -150,6 +152,7 @@ set_cookie_connect_tls(Config) ->
 	{ok, ProxyPid, ProxyPort} = event_SUITE:do_proxy_start(Protocol, tls),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		transport => tls,
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),
@@ -159,6 +162,7 @@ set_cookie_connect_tls(Config) ->
 		host => "localhost",
 		port => config(port, Config),
 		transport => Transport,
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol]
 	}),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
@@ -445,6 +449,7 @@ do_wpt_domain_test(Config, TestCase) ->
 	Protocol = config(protocol, Config),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),
@@ -515,6 +520,7 @@ wpt_path_default(Config) ->
 	Protocol = config(protocol, Config),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),
@@ -561,6 +567,7 @@ wpt_path_match(Config) ->
 		ct:log("Positive test: ~s", [P]),
 		{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 			transport => config(transport, Config),
+			tls_opts => [{verify, verify_none}],
 			protocols => [Protocol],
 			cookie_store => gun_cookies_list:init()
 		}),
@@ -580,6 +587,7 @@ wpt_path_match(Config) ->
 		ct:log("Negative test: ~s", [P]),
 		{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 			transport => config(transport, Config),
+			tls_opts => [{verify, verify_none}],
 			protocols => [Protocol],
 			cookie_store => gun_cookies_list:init()
 		}),
@@ -672,6 +680,7 @@ do_wpt_prefix_common(Config, TestCase, Expected, Name) ->
 	ct:log("Test case: ~s~nCookie must be set? ~s", [TestCase, Expected]),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),
@@ -724,6 +733,7 @@ do_wpt_secure_common(Config, TestCase) ->
 	Protocol = config(protocol, Config),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),
@@ -760,6 +770,7 @@ do_wpt_secure_ws_common(Config) ->
 	Protocol = config(protocol, Config),
 	{ok, ConnPid1} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),
@@ -772,6 +783,7 @@ do_wpt_secure_ws_common(Config) ->
 	gun:close(ConnPid1),
 	{ok, ConnPid2} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => CookieStore
 	}),
@@ -900,6 +912,7 @@ do_wpt_set_test(TestPath, Name, Cookie, Expected, DefaultPath, Config) ->
 	Protocol = config(protocol, Config),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
 		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}],
 		protocols => [Protocol],
 		cookie_store => gun_cookies_list:init()
 	}),

@@ -41,6 +41,7 @@ init_routes() -> [
 http_clock(Config) ->
 	{ok, Pid} = gun:open("localhost", config(port, Config), #{
 		transport => tls,
+		tls_opts => [{verify, verify_none}],
 		protocols => [http],
 		http_opts => #{content_handlers => [gun_sse_h, gun_data_h]}
 	}),
@@ -50,6 +51,7 @@ http_clock(Config) ->
 http2_clock(Config) ->
 	{ok, Pid} = gun:open("localhost", config(port, Config), #{
 		transport => tls,
+		tls_opts => [{verify, verify_none}],
 		protocols => [http2],
 		http2_opts => #{content_handlers => [gun_sse_h, gun_data_h]}
 	}),
@@ -59,6 +61,7 @@ http2_clock(Config) ->
 http_clock_close(Config) ->
 	{ok, Pid} = gun:open("localhost", config(port, Config), #{
 		transport => tls,
+		tls_opts => [{verify, verify_none}],
 		protocols => [http],
 		http_opts => #{
 			content_handlers => [gun_sse_h, gun_data_h],
@@ -104,6 +107,7 @@ event_loop(Pid, Ref, N) ->
 lone_id(Config) ->
 	{ok, Pid} = gun:open("localhost", config(port, Config), #{
 		transport => tls,
+		tls_opts => [{verify, verify_none}],
 		protocols => [http],
 		http_opts => #{content_handlers => [gun_sse_h, gun_data_h]}
 	}),
@@ -131,6 +135,7 @@ lone_id(Config) ->
 with_mime_param(Config) ->
 	{ok, Pid} = gun:open("localhost", config(port, Config), #{
 		transport => tls,
+		tls_opts => [{verify, verify_none}],
 		protocols => [http],
 		http_opts => #{content_handlers => [gun_sse_h, gun_data_h]}
 	}),
