@@ -290,8 +290,13 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 			{maybe_ack_or_notify(State#http2_state{http2_machine=HTTP2Machine}, Frame),
 				CookieStore, EvHandlerState};
 		{ok, {data, StreamID, IsFin, Data}, HTTP2Machine} ->
-			data_frame(State#http2_state{http2_machine=HTTP2Machine}, StreamID, IsFin, Data,
-				CookieStore, EvHandler, EvHandlerState);
+			{StateRet, CookieStoreRet, EvHandlerStateRet} = data_frame(
+				State#http2_state{http2_machine=HTTP2Machine}, StreamID, IsFin, Data,
+				CookieStore, EvHandler, EvHandlerState),
+			case StateRet of
+				{state, State1} -> {State1, CookieStoreRet, EvHandlerStateRet};
+				Error -> {Error, CookieStoreRet, EvHandlerStateRet}
+			end;
 		{ok, {headers, StreamID, IsFin, Headers, PseudoHeaders, BodyLen}, HTTP2Machine} ->
 			headers_frame(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, IsFin, Headers, PseudoHeaders, BodyLen,
@@ -359,15 +364,17 @@ data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerStat
 %			%% @todo What about IsFin?
 			{Commands, CookieStore, EvHandlerState1} = Proto:handle(Data,
 				ProtoState0, CookieStore0, EvHandler, EvHandlerState0),
-			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
-			{State, CookieStore, EvHandlerState}
+			%% The frame/parse functions only handle state or error commands.
+			{ResCommands, EvHandlerState} = tunnel_commands(Commands,
+				Stream, State0, EvHandler, EvHandlerState1),
+			{ResCommands, CookieStore, EvHandlerState}
 	end.
 
 tunnel_commands(Command, Stream, State, EvHandler, EvHandlerState)
 		when not is_list(Command) ->
 	tunnel_commands([Command], Stream, State, EvHandler, EvHandlerState);
 tunnel_commands([], Stream, State, _EvHandler, EvHandlerState) ->
-	{store_stream(State, Stream), EvHandlerState};
+	{{state, store_stream(State, Stream)}, EvHandlerState};
 tunnel_commands([{send, IsFin, Data}|Tail], Stream=#stream{id=StreamID},
 		State0, EvHandler, EvHandlerState0) ->
 	{State, EvHandlerState} = maybe_send_data(State0, StreamID,
@@ -377,9 +384,11 @@ tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
 		State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}},
 		State, EvHandler, EvHandlerState);
-tunnel_commands([{error, _Reason}|_], #stream{id=StreamID},
+tunnel_commands([{error, Reason}|_], #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},
 		State, _EvHandler, EvHandlerState) ->
-	{delete_stream(State, StreamID), EvHandlerState};
+	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
+		{stream_error, Reason, 'Tunnel closed unexpectedly.'}},
+	{{state, delete_stream(State, StreamID)}, EvHandlerState};
 %% @todo Set a timeout for closing the Websocket stream.
 tunnel_commands([{closing, _}|Tail], Stream, State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState);
@@ -729,12 +738,14 @@ handle_continue(ContinueStreamRef, Msg, State0, CookieStore0, EvHandler, EvHandl
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, CookieStore, EvHandlerState1} = Proto:handle_continue(ContinueStreamRef,
 				Msg, ProtoState0, CookieStore0, EvHandler, EvHandlerState0),
-			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
-			{{state, State}, CookieStore, EvHandlerState}
-		%% The stream may have ended while TLS was being decoded. @todo What should we do?
-%		error ->
-%                       error_stream_not_found(State, StreamRef, ReplyTo),
-%			{[], EvHandlerState0}
+			{ResCommands, EvHandlerState} = tunnel_commands(Commands,
+				Stream, State0, EvHandler, EvHandlerState1),
+			{ResCommands, CookieStore, EvHandlerState};
+		%% The stream may have ended while TLS was being decoded.
+		%% We do not trigger an error because this is an internal event.
+		%% The stream_error, if any, was already sent from tunnel_commands.
+		error ->
+			{[], CookieStore0, EvHandlerState0}
 	end.
 
 update_flow(State, _ReplyTo, StreamRef, Inc) ->
@@ -895,9 +906,9 @@ headers(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 			{Commands, CookieStore, EvHandlerState1} = Proto:headers(ProtoState0, RealStreamRef,
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers,
 				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands, Stream,
+			{ResCommands, EvHandlerState} = tunnel_commands(Commands, Stream,
 				State, EvHandler, EvHandlerState1),
-			{{state, State1}, CookieStore, EvHandlerState};
+			{ResCommands, CookieStore, EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -963,9 +974,9 @@ request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 			{Commands, CookieStore, EvHandlerState1} = Proto:request(ProtoState0, RealStreamRef,
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
 				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
+			{ResCommands, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, CookieStore, EvHandlerState};
+			{ResCommands, CookieStore, EvHandlerState};
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1033,9 +1044,7 @@ data(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, IsFin, 
 					#tunnel{protocol=Proto, protocol_state=ProtoState0} = Tunnel,
 					{Commands, EvHandlerState1} = Proto:data(ProtoState0, StreamRef,
 						ReplyTo, IsFin, Data, EvHandler, EvHandlerState),
-					{State1, EvHandlerStateRet} = tunnel_commands(Commands,
-						Stream, State, EvHandler, EvHandlerState1),
-					{{state, State1}, EvHandlerStateRet}
+					tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState1)
 			end;
 		error ->
 			error_stream_not_found(State, StreamRef, ReplyTo),
@@ -1047,9 +1056,7 @@ data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHand
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, EvHandlerState1} = Proto:data(ProtoState0, RealStreamRef,
 				ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
-				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, EvHandlerState};
+			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState1);
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1188,9 +1195,7 @@ connect(State, RealStreamRef=[StreamRef|_], ReplyTo, Destination, TunnelInfo, He
 			{Commands, EvHandlerState1} = Proto:connect(ProtoState0, RealStreamRef,
 				ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow,
 				EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
-				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, EvHandlerState};
+			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState1);
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1225,9 +1230,7 @@ cancel(State, RealStreamRef=[StreamRef|_], ReplyTo, EvHandler, EvHandlerState0) 
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, EvHandlerState1} = Proto:cancel(ProtoState0,
 				RealStreamRef, ReplyTo, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
-				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, EvHandlerState};
+			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState1);
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 				"The stream is not a tunnel."}},
@@ -1376,23 +1379,22 @@ ws_upgrade(State, RealStreamRef=[StreamRef|_], ReplyTo,
 				ProtoState0, RealStreamRef, ReplyTo,
 				Host, Port, Path, Headers, WsOpts,
 				CookieStore0, EvHandler, EvHandlerState0),
-			{State1, EvHandlerState} = tunnel_commands(Commands,
+			{ResCommands, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
-			{{state, State1}, CookieStore, EvHandlerState}
+			{ResCommands, CookieStore, EvHandlerState}
 		%% @todo Error conditions?
 	end.
 
-ws_send(Frames, State0, RealStreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
+ws_send(Frames, State, RealStreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 	StreamRef = case RealStreamRef of
 		[SR|_] -> SR;
 		_ -> RealStreamRef
 	end,
-	case get_stream_by_ref(State0, StreamRef) of
+	case get_stream_by_ref(State, StreamRef) of
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState}} ->
 			{Commands, EvHandlerState1} = Proto:ws_send(Frames, ProtoState,
 				RealStreamRef, ReplyTo, EvHandler, EvHandlerState0),
-			{State, EvHandlerState} = tunnel_commands(Commands, Stream, State0, EvHandler, EvHandlerState1),
-			{{state, State}, EvHandlerState}
+			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState1)
 		%% @todo Error conditions?
 	end.
 
