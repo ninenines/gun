@@ -387,8 +387,8 @@ respect_max_concurrent_streams(_) ->
 		StreamRef1 = gun:get(ConnPid, "/"),
 		timer:sleep(100),
 		StreamRef2 = gun:get(ConnPid, "/"),
-		{error, {stream_error, {badstate, Message}}} = gun:await(ConnPid, StreamRef2),
-		"The maximum number of concurrent streams is reached." = Message,
+		{error, {stream_error, Reason}} = gun:await(ConnPid, StreamRef2),
+		too_many_streams = Reason,
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
 		{ok, _} = gun:await_body(ConnPid, StreamRef1),
 		gun:close(ConnPid)
