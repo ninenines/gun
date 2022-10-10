@@ -235,7 +235,7 @@ parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, strea
 			case ignored_frame(State0) of
 				Error = {error, _} ->
 					{Error, CookieStore0, EvHandlerState0};
-				State ->
+				{state, State} ->
 					parse(Rest, State, CookieStore0, EvHandler, EvHandlerState0)
 			end;
 		{stream_error, StreamID, Reason, Human, Rest} ->
@@ -297,21 +297,19 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 			data_frame(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, IsFin, Data, CookieStore, EvHandler, EvHandlerState);
 		{ok, {headers, StreamID, IsFin, Headers, PseudoHeaders, BodyLen}, HTTP2Machine} ->
-			{StateRet, CookieStoreRet, EvHandlerStateRet} = headers_frame(
-				State#http2_state{http2_machine=HTTP2Machine},
+			headers_frame(State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, IsFin, Headers, PseudoHeaders, BodyLen,
-				CookieStore, EvHandler, EvHandlerState),
-			{{state, StateRet}, CookieStoreRet, EvHandlerStateRet};
+				CookieStore, EvHandler, EvHandlerState);
 		{ok, {trailers, StreamID, Trailers}, HTTP2Machine} ->
-			{StateRet, EvHandlerStateRet} = trailers_frame(
+			{StateOrError, EvHandlerStateRet} = trailers_frame(
 				State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, Trailers, EvHandler, EvHandlerState),
-			{{state, StateRet}, CookieStore, EvHandlerStateRet};
+			{StateOrError, CookieStore, EvHandlerStateRet};
 		{ok, {rst_stream, StreamID, Reason}, HTTP2Machine} ->
-			{StateRet, EvHandlerStateRet} = rst_stream_frame(
+			{StateOrError, EvHandlerStateRet} = rst_stream_frame(
 				State#http2_state{http2_machine=HTTP2Machine},
 				StreamID, Reason, EvHandler, EvHandlerState),
-			{{state, StateRet}, CookieStore, EvHandlerStateRet};
+			{StateOrError, CookieStore, EvHandlerStateRet};
 		{ok, {push_promise, StreamID, PromisedStreamID, Headers, PseudoHeaders}, HTTP2Machine} ->
 			{StateOrError, EvHandlerStateRet} = push_promise_frame(
 				State#http2_state{http2_machine=HTTP2Machine},
@@ -362,9 +360,9 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
 	case get_stream_by_id(State0, StreamID) of
 		Stream=#stream{tunnel=undefined} ->
-			{State, EvHandlerState} = data_frame1(State0,
+			{StateOrError, EvHandlerState} = data_frame1(State0,
 				StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream),
-			{{state, State}, CookieStore0, EvHandlerState};
+			{StateOrError, CookieStore0, EvHandlerState};
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 %			%% @todo What about IsFin?
 			{Commands, CookieStore, EvHandlerState1} = Proto:handle(Data,
@@ -449,7 +447,8 @@ data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 	end,
 	case StateOrError of
 		{state, State} ->
-			{maybe_delete_stream(State, StreamID, remote, IsFin), EvHandlerState};
+			{{state, maybe_delete_stream(State, StreamID, remote, IsFin)},
+				EvHandlerState};
 		Error={error, _} ->
 			{Error, EvHandlerState}
 	end.
@@ -465,7 +464,7 @@ headers_frame(State0=#http2_state{opts=Opts},
 	} = Stream,
 	CookieStore = gun_cookies:set_cookie_header(scheme(State0),
 		Authority, Path, Status, Headers, CookieStore0, Opts),
-	{State, EvHandlerState} = if
+	{StateOrError, EvHandlerState} = if
 		Status >= 100, Status =< 199 ->
 			headers_frame_inform(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
 		Status >= 200, Status =< 299, element(#tunnel.state, Tunnel) =:= requested, IsFin =:= nofin ->
@@ -473,7 +472,7 @@ headers_frame(State0=#http2_state{opts=Opts},
 		true ->
 			headers_frame_response(State0, Stream, IsFin, Status, Headers, EvHandler, EvHandlerState0)
 	end,
-	{State, CookieStore, EvHandlerState}.
+	{StateOrError, CookieStore, EvHandlerState}.
 
 headers_frame_inform(State, #stream{ref=StreamRef, reply_to=ReplyTo},
 		Status, Headers, EvHandler, EvHandlerState0) ->
@@ -485,7 +484,7 @@ headers_frame_inform(State, #stream{ref=StreamRef, reply_to=ReplyTo},
 		status => Status,
 		headers => Headers
 	}, EvHandlerState0),
-	{State, EvHandlerState}.
+	{{state, State}, EvHandlerState}.
 
 headers_frame_connect(State0=#http2_state{http2_machine=HTTP2Machine0},
 		Stream=#stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, tunnel=#tunnel{
@@ -603,8 +602,8 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 	end,
 	{tunnel, ProtoState, EvHandlerState} = Proto:init(
 		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState3),
-	{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
-		info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}}),
+	{{state, store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
+		info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}})},
 		EvHandlerState}.
 
 headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
@@ -635,8 +634,8 @@ headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=Re
 	%% @todo Handle error result from Proto:init/4
 	{ok, connected_ws_only, ProtoState} = Proto:init(
 		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts),
-	{store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
-		protocol=Proto, protocol_state=ProtoState}}),
+	{{state, store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
+		protocol=Proto, protocol_state=ProtoState}})},
 		EvHandlerState}.
 
 headers_frame_response(State=#http2_state{content_handlers=Handlers0},
@@ -662,9 +661,9 @@ headers_frame_response(State=#http2_state{content_handlers=Handlers0},
 				Status, Headers, Handlers0), EvHandlerState1}
 	end,
 	%% We disable the tunnel, if any, when receiving any non 2xx response.
-	{maybe_delete_stream(store_stream(State,
+	{{state, maybe_delete_stream(store_stream(State,
 		Stream#stream{handler_state=Handlers, tunnel=undefined}),
-		StreamID, remote, IsFin), EvHandlerState}.
+		StreamID, remote, IsFin)}, EvHandlerState}.
 
 trailers_frame(State, StreamID, Trailers, EvHandler, EvHandlerState0) ->
 	#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, StreamID),
@@ -677,7 +676,7 @@ trailers_frame(State, StreamID, Trailers, EvHandler, EvHandlerState0) ->
 	},
 	EvHandlerState1 = EvHandler:response_trailers(ResponseEvent#{headers => Trailers}, EvHandlerState0),
 	EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
-	{maybe_delete_stream(State, StreamID, remote, fin), EvHandlerState}.
+	{{state, maybe_delete_stream(State, StreamID, remote, fin)}, EvHandlerState}.
 
 rst_stream_frame(State0, StreamID, Reason, EvHandler, EvHandlerState0) ->
 	case take_stream(State0, StreamID) of
@@ -690,9 +689,9 @@ rst_stream_frame(State0, StreamID, Reason, EvHandler, EvHandlerState0) ->
 				endpoint => remote,
 				reason => Reason
 			}, EvHandlerState0),
-			{State, EvHandlerState};
+			{{state, State}, EvHandlerState};
 		error ->
-			{State0, EvHandlerState0}
+			{{state, State0}, EvHandlerState0}
 	end.
 
 %% Pushed streams receive the same initial flow value as the parent stream.
@@ -737,7 +736,7 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	case cow_http2_machine:ignored_frame(HTTP2Machine0) of
 		{ok, HTTP2Machine} ->
-			State#http2_state{http2_machine=HTTP2Machine};
+			{state, State#http2_state{http2_machine=HTTP2Machine}};
 		{error, Error={connection_error, _, _}, HTTP2Machine} ->
 			connection_error(State#http2_state{http2_machine=HTTP2Machine}, Error)
 	end.
