@@ -450,6 +450,7 @@ data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 			{{state, maybe_delete_stream(State, StreamID, remote, IsFin)},
 				EvHandlerState};
 		Error={error, _} ->
+			%% @todo Delete stream and return new state and error commands.
 			{Error, EvHandlerState}
 	end.
 
