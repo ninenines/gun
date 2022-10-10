@@ -360,9 +360,9 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
 	case get_stream_by_id(State0, StreamID) of
 		Stream=#stream{tunnel=undefined} ->
-			{StateOrError, EvHandlerState} = data_frame1(State0,
+			{Commands, EvHandlerState} = data_frame1(State0,
 				StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream),
-			{StateOrError, CookieStore0, EvHandlerState};
+			{Commands, CookieStore0, EvHandlerState};
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 %			%% @todo What about IsFin?
 			{Commands, CookieStore, EvHandlerState1} = Proto:handle(Data,
@@ -445,13 +445,13 @@ data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 					{update_window(State1), EvHandlerState1}
 			end
 	end,
-	case StateOrError of
-		{state, State} ->
-			{{state, maybe_delete_stream(State, StreamID, remote, IsFin)},
-				EvHandlerState};
+	{State, Errors} = case StateOrError of
+		{state, State2} ->
+			{State2, []};
 		Error={error, _} ->
-			{Error, EvHandlerState}
-	end.
+			{State1, [Error]}
+	end,
+	{[{state, maybe_delete_stream(State, StreamID, remote, IsFin)} | Errors], EvHandlerState}.
 
 headers_frame(State0=#http2_state{opts=Opts},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
