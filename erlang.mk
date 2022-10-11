@@ -17,7 +17,7 @@
 ERLANG_MK_FILENAME := $(realpath $(lastword $(MAKEFILE_LIST)))
 export ERLANG_MK_FILENAME
 
-ERLANG_MK_VERSION = 2020.03.05-27-gc8f8ff0-dirty
+ERLANG_MK_VERSION = 94718f7
 ERLANG_MK_WITHOUT = 
 
 # Make 3.81 and 3.82 are deprecated.
@@ -955,10 +955,10 @@ pkg_cr_commit = master
 
 PACKAGES += cuttlefish
 pkg_cuttlefish_name = cuttlefish
-pkg_cuttlefish_description = never lose your childlike sense of wonder baby cuttlefish, promise me?
-pkg_cuttlefish_homepage = https://github.com/basho/cuttlefish
+pkg_cuttlefish_description = cuttlefish configuration abstraction
+pkg_cuttlefish_homepage = https://github.com/Kyorai/cuttlefish
 pkg_cuttlefish_fetch = git
-pkg_cuttlefish_repo = https://github.com/basho/cuttlefish
+pkg_cuttlefish_repo = https://github.com/Kyorai/cuttlefish
 pkg_cuttlefish_commit = master
 
 PACKAGES += damocles
@@ -2735,7 +2735,7 @@ pkg_mochiweb_description = MochiWeb is an Erlang library for building lightweigh
 pkg_mochiweb_homepage = https://github.com/mochi/mochiweb
 pkg_mochiweb_fetch = git
 pkg_mochiweb_repo = https://github.com/mochi/mochiweb
-pkg_mochiweb_commit = master
+pkg_mochiweb_commit = main
 
 PACKAGES += mochiweb_xpath
 pkg_mochiweb_xpath_name = mochiweb_xpath
@@ -2823,7 +2823,7 @@ pkg_mysql_description = MySQL client library for Erlang/OTP
 pkg_mysql_homepage = https://github.com/mysql-otp/mysql-otp
 pkg_mysql_fetch = git
 pkg_mysql_repo = https://github.com/mysql-otp/mysql-otp
-pkg_mysql_commit = 1.5.1
+pkg_mysql_commit = 1.7.0
 
 PACKAGES += n2o
 pkg_n2o_name = n2o
@@ -3391,7 +3391,7 @@ pkg_relx_description = Sane, simple release creation for Erlang
 pkg_relx_homepage = https://github.com/erlware/relx
 pkg_relx_fetch = git
 pkg_relx_repo = https://github.com/erlware/relx
-pkg_relx_commit = master
+pkg_relx_commit = main
 
 PACKAGES += resource_discovery
 pkg_resource_discovery_name = resource_discovery
@@ -4334,17 +4334,6 @@ export REBAR_DEPS_DIR
 REBAR_GIT ?= https://github.com/rebar/rebar
 REBAR_COMMIT ?= 576e12171ab8d69b048b827b92aa65d067deea01
 
-HEX_CORE_GIT ?= https://github.com/hexpm/hex_core
-HEX_CORE_COMMIT ?= v0.7.0
-
-PACKAGES += hex_core
-pkg_hex_core_name = hex_core
-pkg_hex_core_description = Reference implementation of Hex specifications
-pkg_hex_core_homepage = $(HEX_CORE_GIT)
-pkg_hex_core_fetch = git
-pkg_hex_core_repo = $(HEX_CORE_GIT)
-pkg_hex_core_commit = $(HEX_CORE_COMMIT)
-
 # External "early" plugins (see core/plugins.mk for regular plugins).
 # They both use the core_dep_plugin macro.
 
@@ -4703,8 +4692,19 @@ define dep_autopatch_rebar.erl
 		case file:consult("$(call core_native_path,$(DEPS_DIR)/$1/rebar.lock)") of
 			{ok, Lock} ->
 				io:format("~p~n", [Lock]),
-				case lists:keyfind("1.1.0", 1, Lock) of
-					{_, LockPkgs} ->
+				LockPkgs = case lists:keyfind("1.2.0", 1, Lock) of
+					{_, LP} ->
+						LP;
+					_ ->
+						case lists:keyfind("1.1.0", 1, Lock) of
+							{_, LP} ->
+								LP;
+							_ ->
+								false
+						end
+				end,
+				if
+					is_list(LockPkgs) ->
 						io:format("~p~n", [LockPkgs]),
 						case lists:keyfind(atom_to_binary(N, latin1), 1, LockPkgs) of
 							{_, {pkg, _, Vsn}, _} ->
@@ -4713,7 +4713,7 @@ define dep_autopatch_rebar.erl
 							_ ->
 								false
 						end;
-					_ ->
+					true ->
 						false
 				end;
 			_ ->
@@ -4959,9 +4959,12 @@ endef
 define dep_autopatch_appsrc_script.erl
 	AppSrc = "$(call core_native_path,$(DEPS_DIR)/$1/src/$1.app.src)",
 	AppSrcScript = AppSrc ++ ".script",
-	{ok, Conf0} = file:consult(AppSrc),
+	Conf1 = case file:consult(AppSrc) of
+		{ok, Conf0} -> Conf0;
+		{error, enoent} -> []
+	end,
 	Bindings0 = erl_eval:new_bindings(),
-	Bindings1 = erl_eval:add_binding('CONFIG', Conf0, Bindings0),
+	Bindings1 = erl_eval:add_binding('CONFIG', Conf1, Bindings0),
 	Bindings = erl_eval:add_binding('SCRIPT', AppSrcScript, Bindings1),
 	Conf = case file:script(AppSrcScript, Bindings) of
 		{ok, [C]} -> C;
@@ -5027,28 +5030,12 @@ define dep_fetch_ln
 	ln -s $(call dep_repo,$(1)) $(DEPS_DIR)/$(call dep_name,$(1));
 endef
 
-# @todo Handle errors.
-define dep_fetch_hex.erl
-	{ok, _} = application:ensure_all_started(ssl),
-	{ok, _} = application:ensure_all_started(inets),
-	Config = hex_core:default_config(),
-	{ok, {200, #{}, Tarball}} = hex_repo:get_tarball(Config, <<"$(strip $3)">>, <<"$(strip $2)">>),
-	{ok, #{}} = hex_tarball:unpack(Tarball, "$(DEPS_DIR)/$1"),
-	halt(0)
-endef
-
 # Hex only has a package version. No need to look in the Erlang.mk packages.
 define dep_fetch_hex
-	if [ ! -e $(DEPS_DIR)/hex_core ]; then \
-		echo "Error: Dependency hex_core missing. BUILD_DEPS += hex_core to fix." >&2; \
-		exit 81; \
-	fi; \
-	if [ ! -e $(DEPS_DIR)/hex_core/ebin/dep_built ]; then \
-		$(MAKE) -C $(DEPS_DIR)/hex_core IS_DEP=1; \
-		touch $(DEPS_DIR)/hex_core/ebin/dep_built; \
-	fi; \
-	$(call erlang,$(call dep_fetch_hex.erl,$1,$(word 2,$(dep_$1)),\
-		$(if $(word 3,$(dep_$1)),$(word 3,$(dep_$1)),$1)));
+	mkdir -p $(ERLANG_MK_TMP)/hex $(DEPS_DIR)/$1; \
+	$(call core_http_get,$(ERLANG_MK_TMP)/hex/$1.tar,\
+		https://repo.hex.pm/tarballs/$(if $(word 3,$(dep_$1)),$(word 3,$(dep_$1)),$1)-$(strip $(word 2,$(dep_$1))).tar); \
+	tar -xOf $(ERLANG_MK_TMP)/hex/$1.tar contents.tar.gz | tar -C $(DEPS_DIR)/$1 -xzf -;
 endef
 
 define dep_fetch_fail
@@ -5845,6 +5832,8 @@ endef
 
 define bs_relx_config
 {release, {$p_release, "1"}, [$p, sasl, runtime_tools]}.
+{dev_mode, false}.
+{include_erts, true}.
 {extended_start_script, true}.
 {sys_config, "config/sys.config"}.
 {vm_args, "config/vm.args"}.
@@ -6201,6 +6190,8 @@ endif
 	$(verbose) mkdir config/
 	$(verbose) $(call core_render,bs_sys_config,config/sys.config)
 	$(verbose) $(call core_render,bs_vm_args,config/vm.args)
+	$(verbose) awk '/^include erlang.mk/ && !ins {print "BUILD_DEPS += relx";ins=1};{print}' Makefile > Makefile.bak
+	$(verbose) mv Makefile.bak Makefile
 
 new-app:
 ifndef in
@@ -6294,9 +6285,9 @@ ifeq ($(PLATFORM),msys2)
 	CXXFLAGS ?= -O3 -finline-functions -Wall
 else ifeq ($(PLATFORM),darwin)
 	CC ?= cc
-	CFLAGS ?= -O3 -std=c99 -arch x86_64 -Wall -Wmissing-prototypes
-	CXXFLAGS ?= -O3 -arch x86_64 -Wall
-	LDFLAGS ?= -arch x86_64 -flat_namespace -undefined suppress
+	CFLAGS ?= -O3 -std=c99 -Wall -Wmissing-prototypes
+	CXXFLAGS ?= -O3 -Wall
+	LDFLAGS ?= -flat_namespace -undefined suppress
 else ifeq ($(PLATFORM),freebsd)
 	CC ?= cc
 	CFLAGS ?= -O3 -std=c99 -finline-functions -Wall -Wmissing-prototypes
@@ -6738,7 +6729,7 @@ export DIALYZER_PLT
 
 PLT_APPS ?=
 DIALYZER_DIRS ?= --src -r $(wildcard src) $(ALL_APPS_DIRS)
-DIALYZER_OPTS ?= -Werror_handling -Wrace_conditions -Wunmatched_returns # -Wunderspecs
+DIALYZER_OPTS ?= -Werror_handling -Wunmatched_returns # -Wunderspecs
 DIALYZER_PLT_OPTS ?=
 
 # Core targets.
@@ -7017,6 +7008,17 @@ endif
 # Copyright (c) 2020, Loïc Hoguin <essen@ninenines.eu>
 # This file is part of erlang.mk and subject to the terms of the ISC License.
 
+HEX_CORE_GIT ?= https://github.com/hexpm/hex_core
+HEX_CORE_COMMIT ?= v0.7.0
+
+PACKAGES += hex_core
+pkg_hex_core_name = hex_core
+pkg_hex_core_description = Reference implementation of Hex specifications
+pkg_hex_core_homepage = $(HEX_CORE_GIT)
+pkg_hex_core_fetch = git
+pkg_hex_core_repo = $(HEX_CORE_GIT)
+pkg_hex_core_commit = $(HEX_CORE_COMMIT)
+
 # We automatically depend on hex_core when the project isn't already.
 $(if $(filter hex_core,$(DEPS) $(BUILD_DEPS) $(DOC_DEPS) $(REL_DEPS) $(TEST_DEPS)),,\
 	$(eval $(call dep_target,hex_core)))
@@ -7053,8 +7055,6 @@ define hex_user_create.erl
 			halt(80)
 	end
 endef
-
-# @todo OK when asking for password and there's a $ character it doesn't work.
 
 # The $(info ) call inserts a new line after the password prompt.
 hex-user-create: hex-core
@@ -7097,20 +7097,19 @@ hex-key-add: hex-core
 HEX_TARBALL_EXTRA_METADATA ?=
 
 # @todo Check that we can += files
-# @todo Probably better if we sort the core_find results.
 HEX_TARBALL_FILES ?= \
 	$(wildcard early-plugins.mk) \
 	$(wildcard ebin/$(PROJECT).app) \
 	$(wildcard ebin/$(PROJECT).appup) \
 	$(wildcard $(notdir $(ERLANG_MK_FILENAME))) \
-	$(call core_find,include/,*.hrl) \
+	$(sort $(call core_find,include/,*.hrl)) \
 	$(wildcard LICENSE*) \
 	$(wildcard Makefile) \
 	$(wildcard plugins.mk) \
-	$(call core_find,priv/,*) \
+	$(sort $(call core_find,priv/,*)) \
 	$(wildcard README*) \
 	$(wildcard rebar.config) \
-	$(call core_find,src/,*)
+	$(sort $(call core_find,src/,*))
 
 HEX_TARBALL_OUTPUT_FILE ?= $(ERLANG_MK_TMP)/$(PROJECT).tar
 
@@ -7290,6 +7289,59 @@ hex-release-unretire: hex-core
 	$(gen_verbose) $(call erlang,$(call hex_release_unretire.erl,$(HEX_SECRET),\
 		$(if $(HEX_VERSION),$(HEX_VERSION),$(PROJECT_VERSION))))
 
+HEX_DOCS_DOC_DIR ?= doc/
+HEX_DOCS_TARBALL_FILES ?= $(sort $(call core_find,$(HEX_DOCS_DOC_DIR),*))
+HEX_DOCS_TARBALL_OUTPUT_FILE ?= $(ERLANG_MK_TMP)/$(PROJECT)-docs.tar.gz
+
+$(HEX_DOCS_TARBALL_OUTPUT_FILE): hex-core app docs
+	$(hex_tar_verbose) tar czf $(HEX_DOCS_TARBALL_OUTPUT_FILE) -C $(HEX_DOCS_DOC_DIR) \
+		$(HEX_DOCS_TARBALL_FILES:$(HEX_DOCS_DOC_DIR)%=%)
+
+hex-docs-tarball-create: $(HEX_DOCS_TARBALL_OUTPUT_FILE)
+
+define hex_docs_publish.erl
+	{ok, _} = application:ensure_all_started(ssl),
+	{ok, _} = application:ensure_all_started(inets),
+	Config = $(hex_config.erl),
+	ConfigF = Config#{api_key => <<"$(strip $1)">>},
+	{ok, Tarball} = file:read_file("$(strip $(HEX_DOCS_TARBALL_OUTPUT_FILE))"),
+	case hex_api:post(ConfigF,
+			["packages", "$(strip $(PROJECT))", "releases", "$(strip $(PROJECT_VERSION))", "docs"],
+			{"application/octet-stream", Tarball}) of
+		{ok, {Status, _, _}} when Status >= 200, Status < 300 ->
+			io:format("Docs published~n"),
+			halt(0);
+		{ok, {Status, _, Errors}} ->
+			io:format("Error ~b: ~0p~n", [Status, Errors]),
+			halt(88)
+	end
+endef
+
+hex-docs-publish: hex-core hex-docs-tarball-create
+	$(if $(HEX_SECRET),,$(eval HEX_SECRET := $(shell stty -echo; read -p "Secret: " secret; stty echo; echo $$secret) $(info )))
+	$(gen_verbose) $(call erlang,$(call hex_docs_publish.erl,$(HEX_SECRET)))
+
+define hex_docs_delete.erl
+	{ok, _} = application:ensure_all_started(ssl),
+	{ok, _} = application:ensure_all_started(inets),
+	Config = $(hex_config.erl),
+	ConfigF = Config#{api_key => <<"$(strip $1)">>},
+	case hex_api:delete(ConfigF,
+			["packages", "$(strip $(PROJECT))", "releases", "$(strip $2)", "docs"]) of
+		{ok, {Status, _, _}} when Status >= 200, Status < 300 ->
+			io:format("Docs removed~n"),
+			halt(0);
+		{ok, {Status, _, Errors}} ->
+			io:format("Error ~b: ~0p~n", [Status, Errors]),
+			halt(89)
+	end
+endef
+
+hex-docs-delete: hex-core
+	$(if $(HEX_SECRET),,$(eval HEX_SECRET := $(shell stty -echo; read -p "Secret: " secret; stty echo; echo $$secret) $(info )))
+	$(gen_verbose) $(call erlang,$(call hex_docs_delete.erl,$(HEX_SECRET),\
+		$(if $(HEX_VERSION),$(HEX_VERSION),$(PROJECT_VERSION))))
+
 # Copyright (c) 2015-2017, Loïc Hoguin <essen@ninenines.eu>
 # This file is part of erlang.mk and subject to the terms of the ISC License.
 
@@ -7415,27 +7467,19 @@ endif
 # Copyright (c) 2013-2016, Loïc Hoguin <essen@ninenines.eu>
 # This file is part of erlang.mk and subject to the terms of the ISC License.
 
+ifeq ($(filter relx,$(BUILD_DEPS) $(DEPS) $(REL_DEPS)),relx)
 .PHONY: relx-rel relx-relup distclean-relx-rel run
 
 # Configuration.
 
-RELX ?= $(ERLANG_MK_TMP)/relx
 RELX_CONFIG ?= $(CURDIR)/relx.config
 
-RELX_URL ?= https://erlang.mk/res/relx-v3.27.0
-RELX_OPTS ?=
 RELX_OUTPUT_DIR ?= _rel
 RELX_REL_EXT ?=
 RELX_TAR ?= 1
 
 ifdef SFX
 	RELX_TAR = 1
-endif
-
-ifeq ($(firstword $(RELX_OPTS)),-o)
-	RELX_OUTPUT_DIR = $(word 2,$(RELX_OPTS))
-else
-	RELX_OPTS += -o $(RELX_OUTPUT_DIR)
 endif
 
 # Core targets.
@@ -7452,21 +7496,59 @@ distclean:: distclean-relx-rel
 
 # Plugin-specific targets.
 
-$(RELX): | $(ERLANG_MK_TMP)
-	$(gen_verbose) $(call core_http_get,$(RELX),$(RELX_URL))
-	$(verbose) chmod +x $(RELX)
+define relx_release.erl
+	{ok, Config} = file:consult("$(call core_native_path,$(RELX_CONFIG))"),
+	{release, {Name, Vsn0}, _} = lists:keyfind(release, 1, Config),
+	Vsn = case Vsn0 of
+		{cmd, Cmd} -> os:cmd(Cmd);
+		semver -> "";
+		{semver, _} -> "";
+		VsnStr -> Vsn0
+	end,
+	{ok, _} = relx:build_release(#{name => Name, vsn => Vsn}, Config),
+	halt(0).
+endef
 
-relx-rel: $(RELX) rel-deps app
-	$(verbose) $(RELX) $(if $(filter 1,$V),-V 3) -c $(RELX_CONFIG) $(RELX_OPTS) release
+define relx_tar.erl
+	{ok, Config} = file:consult("$(call core_native_path,$(RELX_CONFIG))"),
+	{release, {Name, Vsn0}, _} = lists:keyfind(release, 1, Config),
+	Vsn = case Vsn0 of
+		{cmd, Cmd} -> os:cmd(Cmd);
+		semver -> "";
+		{semver, _} -> "";
+		VsnStr -> Vsn0
+	end,
+	{ok, _} = relx:build_tar(#{name => Name, vsn => Vsn}, Config),
+	halt(0).
+endef
+
+define relx_relup.erl
+	{ok, Config} = file:consult("$(call core_native_path,$(RELX_CONFIG))"),
+	{release, {Name, Vsn0}, _} = lists:keyfind(release, 1, Config),
+	Vsn = case Vsn0 of
+		{cmd, Cmd} -> os:cmd(Cmd);
+		semver -> "";
+		{semver, _} -> "";
+		VsnStr -> Vsn0
+	end,
+	{ok, _} = relx:build_relup(Name, Vsn, undefined, Config ++ [{output_dir, "$(RELX_OUTPUT_DIR)"}]),
+	halt(0).
+endef
+
+relx-rel: rel-deps app
+	$(call erlang,$(call relx_release.erl),-pa ebin/)
 	$(verbose) $(MAKE) relx-post-rel
 ifeq ($(RELX_TAR),1)
-	$(verbose) $(RELX) $(if $(filter 1,$V),-V 3) -c $(RELX_CONFIG) $(RELX_OPTS) tar
+	$(call erlang,$(call relx_tar.erl),-pa ebin/)
 endif
 
-relx-relup: $(RELX) rel-deps app
-	$(verbose) $(RELX) $(if $(filter 1,$V),-V 3) -c $(RELX_CONFIG) $(RELX_OPTS) release
+relx-relup: rel-deps app
+	$(call erlang,$(call relx_release.erl),-pa ebin/)
 	$(MAKE) relx-post-rel
-	$(verbose) $(RELX) $(if $(filter 1,$V),-V 3) -c $(RELX_CONFIG) $(RELX_OPTS) relup $(if $(filter 1,$(RELX_TAR)),tar)
+	$(call erlang,$(call relx_relup.erl),-pa ebin/)
+ifeq ($(RELX_TAR),1)
+	$(call erlang,$(call relx_tar.erl),-pa ebin/)
+endif
 
 distclean-relx-rel:
 	$(gen_verbose) rm -rf $(RELX_OUTPUT_DIR)
@@ -7522,6 +7604,7 @@ help::
 		"Relx targets:" \
 		"  run         Compile the project, build the release and run it"
 
+endif
 endif
 
 # Copyright (c) 2015-2016, Loïc Hoguin <essen@ninenines.eu>
@@ -7694,45 +7777,224 @@ triq: test-build cover-data-dir
 endif
 endif
 
-# Copyright (c) 2016, Loïc Hoguin <essen@ninenines.eu>
-# Copyright (c) 2015, Erlang Solutions Ltd.
+# Copyright (c) 2022, Loïc Hoguin <essen@ninenines.eu>
 # This file is part of erlang.mk and subject to the terms of the ISC License.
 
-.PHONY: xref distclean-xref
+.PHONY: xref
 
 # Configuration.
 
-ifeq ($(XREF_CONFIG),)
-	XREFR_ARGS :=
-else
-	XREFR_ARGS := -c $(XREF_CONFIG)
-endif
+# We do not use locals_not_used or deprecated_function_calls
+# because the compiler will error out by default in those
+# cases with Erlang.mk. Deprecated functions may make sense
+# in some cases but few libraries define them. We do not
+# use exports_not_used by default because it hinders more
+# than it helps library projects such as Cowboy. Finally,
+# undefined_functions provides little that undefined_function_calls
+# doesn't already provide, so it's not enabled by default.
+XREF_CHECKS ?= [undefined_function_calls]
 
-XREFR ?= $(CURDIR)/xrefr
-export XREFR
+# Instead of predefined checks a query can be evaluated
+# using the Xref DSL. The $q variable is used in that case.
 
-XREFR_URL ?= https://github.com/inaka/xref_runner/releases/download/1.1.0/xrefr
+# The scope is a list of keywords that correspond to
+# application directories, being essentially an easy way
+# to configure which applications to analyze. With:
+#
+# - app:  .
+# - apps: $(ALL_APPS_DIRS)
+# - deps: $(ALL_DEPS_DIRS)
+# - otp:  Built-in Erlang/OTP applications.
+#
+# The default is conservative (app) and will not be
+# appropriate for all types of queries (for example
+# application_call requires adding all applications
+# that might be called or they will not be found).
+XREF_SCOPE ?= app # apps deps otp
+
+# If the above is not enough, additional application
+# directories can be configured.
+XREF_EXTRA_APP_DIRS ?=
+
+# As well as additional non-application directories.
+XREF_EXTRA_DIRS ?=
+
+# Erlang.mk supports -ignore_xref([...]) with forms
+# {M, F, A} | {F, A} | M, the latter ignoring whole
+# modules. Ignores can also be provided project-wide.
+XREF_IGNORE ?= []
+
+# All callbacks may be ignored. Erlang.mk will ignore
+# them automatically for exports_not_used (unless it
+# is explicitly disabled by the user).
+XREF_IGNORE_CALLBACKS ?=
 
 # Core targets.
 
 help::
 	$(verbose) printf '%s\n' '' \
 		'Xref targets:' \
-		'  xref        Run Xrefr using $$XREF_CONFIG as config file if defined'
-
-distclean:: distclean-xref
+		'  xref         Analyze the project using Xref' \
+		'  xref q=QUERY Evaluate an Xref query'
 
 # Plugin-specific targets.
 
-$(XREFR):
-	$(gen_verbose) $(call core_http_get,$(XREFR),$(XREFR_URL))
-	$(verbose) chmod +x $(XREFR)
+define xref.erl
+	{ok, Xref} = xref:start([]),
+	Scope = [$(call comma_list,$(XREF_SCOPE))],
+	AppDirs0 = [$(call comma_list,$(foreach d,$(XREF_EXTRA_APP_DIRS),"$d"))],
+	AppDirs1 = case lists:member(otp, Scope) of
+		false -> AppDirs0;
+		true ->
+			RootDir = code:root_dir(),
+			AppDirs0 ++ [filename:dirname(P) || P <- code:get_path(), lists:prefix(RootDir, P)]
+	end,
+	AppDirs2 = case lists:member(deps, Scope) of
+		false -> AppDirs1;
+		true -> [$(call comma_list,$(foreach d,$(ALL_DEPS_DIRS),"$d"))] ++ AppDirs1
+	end,
+	AppDirs3 = case lists:member(apps, Scope) of
+		false -> AppDirs2;
+		true -> [$(call comma_list,$(foreach d,$(ALL_APPS_DIRS),"$d"))] ++ AppDirs2
+	end,
+	AppDirs = case lists:member(app, Scope) of
+		false -> AppDirs3;
+		true -> ["../$(notdir $(CURDIR))"|AppDirs3]
+	end,
+	[{ok, _} = xref:add_application(Xref, AppDir, [{builtins, true}]) || AppDir <- AppDirs],
+	ExtraDirs = [$(call comma_list,$(foreach d,$(XREF_EXTRA_DIRS),"$d"))],
+	[{ok, _} = xref:add_directory(Xref, ExtraDir, [{builtins, true}]) || ExtraDir <- ExtraDirs],
+	ok = xref:set_library_path(Xref, code:get_path() -- (["ebin", "."] ++ AppDirs ++ ExtraDirs)),
+	Checks = case {$1, is_list($2)} of
+		{check, true} -> $2;
+		{check, false} -> [$2];
+		{query, _} -> [$2]
+	end,
+	FinalRes = [begin
+		IsInformational = case $1 of
+			query -> true;
+			check ->
+				is_tuple(Check) andalso
+					lists:member(element(1, Check),
+						[call, use, module_call, module_use, application_call, application_use])
+		end,
+		{ok, Res0} = case $1 of
+			check -> xref:analyze(Xref, Check);
+			query -> xref:q(Xref, Check)
+		end,
+		Res = case IsInformational of
+			true -> Res0;
+			false ->
+				lists:filter(fun(R) ->
+					{Mod, InMFA, MFA} = case R of
+						{InMFA0 = {M, _, _}, MFA0} -> {M, InMFA0, MFA0};
+						{M, _, _} -> {M, R, R}
+					end,
+					Attrs = try
+						Mod:module_info(attributes)
+					catch error:undef ->
+						[]
+					end,
+					InlineIgnores = lists:flatten([
+						[case V of
+							M when is_atom(M) -> {M, '_', '_'};
+							{F, A} -> {Mod, F, A};
+							_ -> V
+						end || V <- Values]
+					|| {ignore_xref, Values} <- Attrs]),
+					BuiltinIgnores = [
+						{eunit_test, wrapper_test_exported_, 0}
+					],
+					DoCallbackIgnores = case {Check, "$(strip $(XREF_IGNORE_CALLBACKS))"} of
+						{exports_not_used, ""} -> true;
+						{_, "0"} -> false;
+						_ -> true
+					end,
+					CallbackIgnores = case DoCallbackIgnores of
+						false -> [];
+						true ->
+							Behaviors = lists:flatten([
+								[BL || {behavior, BL} <- Attrs],
+								[BL || {behaviour, BL} <- Attrs]
+							]),
+							[{Mod, CF, CA} || B <- Behaviors, {CF, CA} <- B:behaviour_info(callbacks)]
+					end,
+					WideIgnores = if
+						is_list($(XREF_IGNORE)) ->
+							[if is_atom(I) -> {I, '_', '_'}; true -> I end
+								|| I <- $(XREF_IGNORE)];
+						true -> [$(XREF_IGNORE)]
+					end,
+					Ignores = InlineIgnores ++ BuiltinIgnores ++ CallbackIgnores ++ WideIgnores,
+					not (lists:member(InMFA, Ignores)
+					orelse lists:member(MFA, Ignores)
+					orelse lists:member({Mod, '_', '_'}, Ignores))
+				end, Res0)
+		end,
+		case Res of
+			[] -> ok;
+			_ when IsInformational ->
+				case Check of
+					{call, {CM, CF, CA}} ->
+						io:format("Functions that ~s:~s/~b calls:~n", [CM, CF, CA]);
+					{use, {CM, CF, CA}} ->
+						io:format("Function ~s:~s/~b is called by:~n", [CM, CF, CA]);
+					{module_call, CMod} ->
+						io:format("Modules that ~s calls:~n", [CMod]);
+					{module_use, CMod} ->
+						io:format("Module ~s is used by:~n", [CMod]);
+					{application_call, CApp} ->
+						io:format("Applications that ~s calls:~n", [CApp]);
+					{application_use, CApp} ->
+						io:format("Application ~s is used by:~n", [CApp]);
+					_ when $1 =:= query ->
+						io:format("Query ~s returned:~n", [Check])
+				end,
+				[case R of
+					{{InM, InF, InA}, {M, F, A}} ->
+						io:format("- ~s:~s/~b called by ~s:~s/~b~n",
+							[M, F, A, InM, InF, InA]);
+					{M, F, A} ->
+						io:format("- ~s:~s/~b~n", [M, F, A]);
+					ModOrApp ->
+						io:format("- ~s~n", [ModOrApp])
+				end || R <- Res],
+				ok;
+			_ ->
+				[case {Check, R} of
+					{undefined_function_calls, {{InM, InF, InA}, {M, F, A}}} ->
+						io:format("Undefined function ~s:~s/~b called by ~s:~s/~b~n",
+							[M, F, A, InM, InF, InA]);
+					{undefined_functions, {M, F, A}} ->
+						io:format("Undefined function ~s:~s/~b~n", [M, F, A]);
+					{locals_not_used, {M, F, A}} ->
+						io:format("Unused local function ~s:~s/~b~n", [M, F, A]);
+					{exports_not_used, {M, F, A}} ->
+						io:format("Unused exported function ~s:~s/~b~n", [M, F, A]);
+					{deprecated_function_calls, {{InM, InF, InA}, {M, F, A}}} ->
+						io:format("Deprecated function ~s:~s/~b called by ~s:~s/~b~n",
+							[M, F, A, InM, InF, InA]);
+					{deprecated_functions, {M, F, A}} ->
+						io:format("Deprecated function ~s:~s/~b~n", [M, F, A]);
+					_ ->
+						io:format("~p: ~p~n", [Check, R])
+				end || R <- Res],
+				error
+		end
+	end || Check <- Checks],
+	stopped = xref:stop(Xref),
+	case lists:usort(FinalRes) of
+		[ok] -> halt(0);
+		_ -> halt(1)
+	end
+endef
 
-xref: deps app $(XREFR)
-	$(gen_verbose) $(XREFR) $(XREFR_ARGS)
-
-distclean-xref:
-	$(gen_verbose) rm -rf $(XREFR)
+xref: deps app
+ifdef q
+	$(verbose) $(call erlang,$(call xref.erl,query,"$q"),-pa ebin/)
+else
+	$(verbose) $(call erlang,$(call xref.erl,check,$(XREF_CHECKS)),-pa ebin/)
+endif
 
 # Copyright (c) 2016, Loïc Hoguin <essen@ninenines.eu>
 # Copyright (c) 2015, Viktor Söderqvist <viktor@zuiderkwast.se>

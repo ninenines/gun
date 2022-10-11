@@ -59,7 +59,7 @@ do_host_port(Transport, DefaultPort, HostHeaderPort) ->
 	{ok, OriginPid, OriginPort} = init_origin(Transport, http),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
 		transport => Transport,
-		tls_opts => [{verify, verify_none}]
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	{ok, http} = gun:await_up(ConnPid),
 	%% Change the origin's port in the state to trigger the default port behavior.

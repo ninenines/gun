@@ -214,13 +214,13 @@ do_socks5(OriginScheme, OriginTransport, OriginProtocol, ProxyTransport, SocksAu
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		transport => ProxyTransport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [{socks, #{
 			auth => [SocksAuth],
 			host => "localhost",
 			port => OriginPort,
 			transport => OriginTransport,
-			tls_opts => [{verify, verify_none}],
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [OriginProtocol]
 		}}]
 	}),
@@ -291,17 +291,17 @@ do_socks5_through_multiple_proxies(OriginScheme, OriginTransport, ProxyTransport
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
 		transport => ProxyTransport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [{socks, #{
 			host => "localhost",
 			port => Proxy2Port,
 			transport => ProxyTransport,
-			tls_opts => [{verify, verify_none}],
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [{socks, #{
 				host => "localhost",
 				port => OriginPort,
 				transport => OriginTransport,
-				tls_opts => [{verify, verify_none}]
+				tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 			}}]
 		}}]
 	}),
@@ -371,7 +371,7 @@ do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) -
 	{ok, Proxy2Pid, Proxy2Port} = do_proxy_start(ProxyTransport, none),
 	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
 		transport => ProxyTransport,
-		tls_opts => [{verify, verify_none}]
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	%% We receive a gun_up first. This is the HTTP proxy.
 	{ok, http} = gun:await_up(ConnPid),
@@ -380,12 +380,12 @@ do_socks5_through_connect_proxy(OriginScheme, OriginTransport, ProxyTransport) -
 		host => "localhost",
 		port => Proxy2Port,
 		transport => ProxyTransport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [{socks, #{
 			host => "localhost",
 			port => OriginPort,
 			transport => OriginTransport,
-			tls_opts => [{verify, verify_none}]
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 		}}]
 	}),
 	{request, <<"CONNECT">>, Authority1, 'HTTP/1.1', _} = receive_from(Proxy1Pid),

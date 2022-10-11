@@ -831,7 +831,7 @@ do_proxy1(State=#st{proxy1=Type, proxy1_pid=Proxy1Pid, proxy1_port=Port}) ->
 	{Transport, Protocol} = do_type(Type),
 	{ok, ConnPid} = gun:open("localhost", Port, #{
 		transport => Transport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [case Protocol of
 			socks ->
 				{Protocol, do_proxy2_socks_opts(State)};
@@ -849,7 +849,7 @@ do_proxy2_socks_opts(State=#st{proxy2=Type, proxy2_port=Port}) ->
 		host => "localhost",
 		port => Port,
 		transport => Transport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [case Protocol of
 			socks ->
 				{Protocol, do_origin_socks_opts(State)};
@@ -864,7 +864,7 @@ do_origin_socks_opts(#st{origin=Type, origin_port=Port}) ->
 		host => "localhost",
 		port => Port,
 		transport => Transport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [Protocol]
 	}.
 
@@ -882,7 +882,7 @@ do_proxy2(State=#st{proxy2=Type, proxy2_pid=Proxy2Pid, proxy2_port=Port}, ConnPi
 		host => "localhost",
 		port => Port,
 		transport => Transport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [case Protocol of
 			socks ->
 				{Protocol, do_origin_socks_opts(State)};
@@ -909,7 +909,7 @@ do_origin(#st{origin=Type, origin_port=Port}, ConnPid, StreamRef1) ->
 		host => "localhost",
 		port => Port,
 		transport => Transport,
-		tls_opts => [{verify, verify_none}],
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [Protocol]
 	}, [], #{tunnel => StreamRef1}),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
