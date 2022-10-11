@@ -40,6 +40,7 @@ do_direct_raw(OriginTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
 		transport => OriginTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [raw]
 	}),
 	{ok, raw} = gun:await_up(ConnPid),
@@ -78,10 +79,12 @@ do_socks5_raw(OriginTransport, ProxyTransport) ->
 	{ok, ProxyPid, ProxyPort} = socks_SUITE:do_proxy_start(ProxyTransport, none),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		transport => ProxyTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [{socks, #{
 			host => "localhost",
 			port => OriginPort,
 			transport => OriginTransport,
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [raw]
 		}}]
 	}),
@@ -130,12 +133,16 @@ do_connect_raw(OriginTransport, ProxyTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
 	{ok, ProxyPid, ProxyPort} = rfc7231_SUITE:do_proxy_start(ProxyTransport),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
-	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{transport => ProxyTransport}),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		transport => ProxyTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
+	}),
 	{ok, http} = gun:await_up(ConnPid),
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
 		transport => OriginTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [raw]
 	}),
 	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
@@ -208,7 +215,8 @@ do_http11_upgrade_raw(OriginTransport) ->
 			do_echo(Parent, ClientSocket, ClientTransport)
 		end),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
-		transport => OriginTransport
+		transport => OriginTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	{ok, http} = gun:await_up(ConnPid),
 	handshake_completed = receive_from(OriginPid),
@@ -280,6 +288,7 @@ do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		transport => ProxyTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [http2]
 	}),
 	{ok, http2} = gun:await_up(ConnPid),

@@ -213,7 +213,8 @@ tls_handshake_end_error(Config) ->
 	Opts = #{
 		event_handler => {?MODULE, self()},
 		protocols => [config(name, config(tc_group_properties, Config))],
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	},
 	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
 	#{
@@ -254,7 +255,8 @@ tls_handshake_start_tcp_connect_tls(Config) ->
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	ReplyTo = self(),
 	#{
@@ -287,7 +289,8 @@ tls_handshake_end_error_tcp_connect_tls(Config) ->
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	ReplyTo = self(),
 	#{
@@ -320,7 +323,8 @@ tls_handshake_end_ok_tcp_connect_tls(Config) ->
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	ReplyTo = self(),
 	#{
@@ -346,7 +350,8 @@ tls_handshake_start_tls_connect_tls(Config) ->
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		event_handler => {?MODULE, self()},
 		protocols => [Protocol],
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	{ok, Protocol} = gun:await_up(ConnPid),
 	tunnel_SUITE:do_handshake_completed(Protocol, ProxyPid),
@@ -355,7 +360,8 @@ tls_handshake_start_tls_connect_tls(Config) ->
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	ReplyTo = self(),
 	#{
@@ -381,7 +387,8 @@ tls_handshake_end_error_tls_connect_tls(Config) ->
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		event_handler => {?MODULE, self()},
 		protocols => [Protocol],
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	{ok, Protocol} = gun:await_up(ConnPid),
 	tunnel_SUITE:do_handshake_completed(Protocol, ProxyPid),
@@ -390,7 +397,8 @@ tls_handshake_end_error_tls_connect_tls(Config) ->
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	ReplyTo = self(),
 	#{
@@ -416,7 +424,8 @@ tls_handshake_end_ok_tls_connect_tls(Config) ->
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		event_handler => {?MODULE, self()},
 		protocols => [Protocol],
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	{ok, Protocol} = gun:await_up(ConnPid),
 	tunnel_SUITE:do_handshake_completed(Protocol, ProxyPid),
@@ -425,7 +434,8 @@ tls_handshake_end_ok_tls_connect_tls(Config) ->
 	StreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
 		port => OriginPort,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	ReplyTo = self(),
 	#{
@@ -1782,7 +1792,8 @@ do_protocol_changed_tls_connect(Config, OriginProtocol) ->
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		event_handler => {?MODULE, self()},
 		protocols => [ProxyProtocol],
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	}),
 	{ok, ProxyProtocol} = gun:await_up(ConnPid),
 	tunnel_SUITE:do_handshake_completed(ProxyProtocol, ProxyPid),
@@ -1790,6 +1801,7 @@ do_protocol_changed_tls_connect(Config, OriginProtocol) ->
 		host => "localhost",
 		port => OriginPort,
 		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [OriginProtocol]
 	}),
 	#{
@@ -2018,7 +2030,8 @@ do_gun_open_tls(Config) ->
 		event_handler => {?MODULE, self()},
 		http2_opts => #{notify_settings_changed => true},
 		protocols => [config(name, config(tc_group_properties, Config))],
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
 	},
 	{ok, Pid} = gun:open("localhost", OriginPort, Opts),
 	{ok, Pid, OriginPort}.

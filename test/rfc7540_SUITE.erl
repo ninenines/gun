@@ -214,6 +214,7 @@ do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
 	end),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
 		transport => Transport0,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [http2]
 	}),
 	{ok, http2} = gun:await_up(ConnPid),
@@ -507,6 +508,7 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		transport => ProxyTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [http2]
 	}),
 	{ok, http2} = gun:await_up(ConnPid),
@@ -515,6 +517,7 @@ do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, Prox
 		host => "localhost",
 		port => OriginPort,
 		transport => OriginTransport,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 		protocols => [OriginProtocol]
 	}),
 	{request, #{
@@ -610,6 +613,7 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 		Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 		{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 			transport => ProxyTransport,
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [http2]
 		}),
 		{ok, http2} = gun:await_up(ConnPid),
@@ -618,6 +622,7 @@ do_connect_cowboy(_OriginScheme, OriginTransport, OriginProtocol, _ProxyScheme, 
 			host => "localhost",
 			port => OriginPort,
 			transport => OriginTransport,
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [OriginProtocol]
 		}),
 		{request, #{
@@ -705,6 +710,7 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 		%% First proxy.
 		{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{
 			transport => Proxy1Transport,
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [http2]
 		}),
 		{ok, http2} = gun:await_up(ConnPid),
@@ -714,6 +720,7 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 			host => "localhost",
 			port => Proxy2Port,
 			transport => Proxy2Transport,
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [Proxy2Protocol]
 		}, []),
 		Authority1 = iolist_to_binary(["localhost:", integer_to_binary(Proxy2Port)]),
@@ -728,6 +735,7 @@ do_connect_via_multiple_proxies(OriginTransport, OriginProtocol,
 			host => "localhost",
 			port => OriginPort,
 			transport => OriginTransport,
+			tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
 			protocols => [OriginProtocol]
 		}, [], #{tunnel => StreamRef1}),
 		Authority2 = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),

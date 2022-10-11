@@ -185,6 +185,8 @@ session_gc({Mod, State0}) ->
 %% @todo The given URI must be normalized.
 -spec set_cookie(Store, uri_string:uri_map(), binary(), binary(), cow_cookie:cookie_attrs())
 	-> {ok, Store} | {error, any()} when Store::store().
+set_cookie(_, _, Name, Value, _) when byte_size(Name) + byte_size(Value) > 4096 ->
+	{error, larger_than_4096_bytes};
 set_cookie(Store, URI=#{host := Host}, Name, Value, Attrs) ->
 	%% This is where we would add a feature to block cookies (like a blacklist).
 	CurrentTime = erlang:universaltime(),

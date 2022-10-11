@@ -460,12 +460,16 @@ retry_timeout(_) ->
 server_name_indication_custom(_) ->
 	doc("Ensure a custom server_name_indication is accepted."),
 	do_server_name_indication("localhost", net_adm:localhost(), #{
-		tls_opts => [{server_name_indication, net_adm:localhost()}]
+		tls_opts => [
+			{verify, verify_none}, {versions, ['tlsv1.2']},
+			{server_name_indication, net_adm:localhost()}]
 	}).
 
 server_name_indication_default(_) ->
 	doc("Ensure a default server_name_indication is accepted."),
-	do_server_name_indication(net_adm:localhost(), net_adm:localhost(), #{}).
+	do_server_name_indication(net_adm:localhost(), net_adm:localhost(), #{
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
+	}).
 
 do_server_name_indication(Host, Expected, GunOpts) ->
 	Self = self(),

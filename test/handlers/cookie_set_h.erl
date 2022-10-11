@@ -33,4 +33,10 @@ set_cookie_list(Req=#{qs := <<"prefix">>}) ->
 set_cookie_list(#{qs := <<"secure_http">>}) ->
 	[<<"secure_from_nonsecure_http=1; Secure; Path=/">>];
 set_cookie_list(#{qs := <<"secure_https">>}) ->
-	[<<"secure_from_secure_http=1; Secure; Path=/">>].
+	[<<"secure_from_secure_http=1; Secure; Path=/">>];
+set_cookie_list(Req=#{qs := <<"ttb=",_/bits>>}) ->
+	#{ttb := SetCookies} = cowboy_req:match_qs([ttb], Req),
+	case binary_to_term(SetCookies) of
+		List when is_list(List) -> List;
+		Bin -> [Bin]
+	end.
