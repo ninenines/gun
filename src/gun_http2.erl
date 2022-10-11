@@ -341,20 +341,32 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 	end.
 
 maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
-		transport=Transport, opts=Opts, http2_machine=HTTP2Machine},
-		{settings, _}) ->
-	%% We notify remote settings changes only if the user requested it.
-	_ = case Opts of
-		#{notify_settings_changed := true} ->
-			ReplyTo ! {gun_notify, self(), settings_changed,
-				   cow_http2_machine:get_remote_settings(HTTP2Machine)};
+		transport=Transport, opts=Opts, http2_machine=HTTP2Machine}, Frame) ->
+	case Frame of
+		{settings, _} ->
+			%% We notify remote settings changes only if the user requested it.
+			_ = case Opts of
+				#{notify_settings_changed := true} ->
+					ReplyTo ! {gun_notify, self(), settings_changed,
+						cow_http2_machine:get_remote_settings(HTTP2Machine)};
+				_ ->
+					ok
+			end,
+			case Transport:send(Socket, cow_http2:settings_ack()) of
+				ok -> {state, State};
+				Error={error, _} -> Error
+			end;
+		{ping, Opaque} ->
+			case Transport:send(Socket, cow_http2:ping_ack(Opaque)) of
+				ok -> {state, State};
+				Error={error, _} -> Error
+			end;
 		_ ->
-			ok
-	end,
-	{state, State}.
+			{state, State}
+	end.
 
-data_frame(State, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
-	case get_stream_by_id(State, StreamID) of
+data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
+	case get_stream_by_id(State0, StreamID) of
 		Stream=#stream{tunnel=undefined} ->
 			{StateOrError, EvHandlerState} = data_frame1(State0,
 				StreamID, IsFin, Data, EvHandler, EvHandlerState0, Stream),
@@ -727,8 +739,12 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 		%% We cancel the push_promise immediately when we are shutting down.
 		_ ->
 			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(PromisedStreamID, HTTP2Machine0),
-			Transport:send(Socket, cow_http2:rst_stream(PromisedStreamID, cancel)),
-			{{state, State#http2_state{http2_machine=HTTP2Machine}}, EvHandlerState}
+			case Transport:send(Socket, cow_http2:rst_stream(PromisedStreamID, cancel)) of
+				ok ->
+					{{state, State#http2_state{http2_machine=HTTP2Machine}}, EvHandlerState};
+				Error={error, _} ->
+					{Error, EvHandlerState}
+			end
 	end.
 
 ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
@@ -740,12 +756,12 @@ ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
 	end.
 
 %% We always pass handle_continue messages to the tunnel.
-handle_continue(ContinueStreamRef, Msg, State, CookieStore0, EvHandler, EvHandlerState0) ->
+handle_continue(ContinueStreamRef, Msg, State0, CookieStore0, EvHandler, EvHandlerState0) ->
 	StreamRef = case ContinueStreamRef of
 		[SR|_] -> SR;
 		_ -> ContinueStreamRef
 	end,
-	case get_stream_by_ref(State, StreamRef) of
+	case get_stream_by_ref(State0, StreamRef) of
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, CookieStore, EvHandlerState1} = Proto:handle_continue(ContinueStreamRef,
 				Msg, ProtoState0, CookieStore0, EvHandler, EvHandlerState0),
@@ -759,8 +775,8 @@ handle_continue(ContinueStreamRef, Msg, State, CookieStore0, EvHandler, EvHandle
 			{[], CookieStore0, EvHandlerState0}
 	end.
 
-update_flow(State0, _ReplyTo, StreamRef, Inc) ->
-	case get_stream_by_ref(State0, StreamRef) of
+update_flow(State, _ReplyTo, StreamRef, Inc) ->
+	case get_stream_by_ref(State, StreamRef) of
 		Stream=#stream{id=StreamID, flow=Flow0} ->
 			Flow = case Flow0 of
 				infinity -> infinity;
@@ -772,26 +788,26 @@ update_flow(State0, _ReplyTo, StreamRef, Inc) ->
 					update_window(store_stream(State,
 						Stream#stream{flow=Flow}), StreamID);
 				true ->
-					{state, store_stream(State0, Stream#stream{flow=Flow})}
+					{state, store_stream(State, Stream#stream{flow=Flow})}
 			end;
 		error ->
 			[]
 	end.
 
 %% Only update the connection's window.
--spec update_window(#http2_state{}) -> #http2_state{} | {error, any()}.
 update_window(State=#http2_state{socket=Socket, transport=Transport,
 		opts=#{initial_connection_window_size := ConnWindow}, http2_machine=HTTP2Machine0}) ->
 	case cow_http2_machine:ensure_window(ConnWindow, HTTP2Machine0) of
 		ok ->
 			{state, State};
 		{ok, Increment, HTTP2Machine} ->
-			Transport:send(Socket, cow_http2:window_update(Increment)),
-			{state, State#http2_state{http2_machine=HTTP2Machine}}
+			case Transport:send(Socket, cow_http2:window_update(Increment)) of
+				ok -> {state, State#http2_state{http2_machine=HTTP2Machine}};
+				Error={error, _} -> Error
+			end
 	end.
 
 %% Update both the connection and the stream's window.
--spec update_window(#http2_state{}, cow_http2:streamid()) -> #http2_state{} | {error, any()}.
 update_window(State0=#http2_state{socket=Socket, transport=Transport,
 		opts=#{initial_connection_window_size := ConnWindow, initial_stream_window_size := StreamWindow},
 		http2_machine=HTTP2Machine0}, StreamID) ->
@@ -805,10 +821,14 @@ update_window(State0=#http2_state{socket=Socket, transport=Transport,
 	end,
 	State = State0#http2_state{http2_machine=HTTP2Machine},
 	case {Data1, Data2} of
-		{<<>>, <<>>} -> ok;
-		_ -> Transport:send(Socket, [Data1, Data2])
-	end,
-	{state, State#http2_state{http2_machine=HTTP2Machine}}.
+		{<<>>, <<>>} ->
+			{state, State};
+		_ ->
+			case Transport:send(Socket, [Data1, Data2]) of
+				ok -> {state, State};
+				Error={error, _} -> Error
+			end
+	end.
 
 %% We may have to cancel streams even if we receive multiple
 %% GOAWAY frames as the LastStreamID value may be lower than
@@ -823,10 +843,12 @@ goaway(State0=#http2_state{socket=Socket, transport=Transport, http2_machine=HTT
 	},
 	case Status of
 		connected ->
-			Transport:send(Socket, cow_http2:goaway(
-				cow_http2_machine:get_last_streamid(HTTP2Machine),
-				no_error, <<>>)),
-			{state, State#http2_state{status=goaway}};
+			case Transport:send(Socket, cow_http2:goaway(
+					cow_http2_machine:get_last_streamid(HTTP2Machine),
+					no_error, <<>>)) of
+				ok -> {state, State#http2_state{status=goaway}};
+				Error={error, _} -> Error
+			end;
 		_ ->
 			{state, State}
 	end.
@@ -972,23 +994,27 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	end,
 	{ok, IsFin, HeaderBlock, HTTP2Machine} = cow_http2_machine:prepare_headers(
 		StreamID, HTTP2Machine1, IsFin0, PseudoHeaders, Headers),
-	Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)),
-	EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
-		authority=Authority, path=Path},
-	State = create_stream(State0#http2_state{http2_machine=HTTP2Machine}, Stream),
-	case IsFin of
-		fin ->
-			RequestEndEvent = #{
-				stream_ref => RealStreamRef,
-				reply_to => ReplyTo
-			},
-			{{state, State}, CookieStore, EvHandler:request_end(RequestEndEvent, EvHandlerState)};
-		nofin ->
-			{StateOrError, EvHandlerStateRet} = maybe_send_data(
-				State, StreamID, fin, Body, EvHandler, EvHandlerState),
-			{StateOrError, CookieStore, EvHandlerStateRet}
+	case Transport:send(Socket, cow_http2:headers(StreamID, IsFin, HeaderBlock)) of
+		ok ->
+			EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
+				authority=Authority, path=Path},
+			State = create_stream(State0#http2_state{http2_machine=HTTP2Machine}, Stream),
+			case IsFin of
+				fin ->
+					RequestEndEvent = #{
+						stream_ref => RealStreamRef,
+						reply_to => ReplyTo
+					},
+					{{state, State}, CookieStore, EvHandler:request_end(RequestEndEvent, EvHandlerState)};
+				nofin ->
+					{StateOrError, EvHandlerStateRet} = maybe_send_data(
+						State, StreamID, fin, Body, EvHandler, EvHandlerState),
+					{StateOrError, CookieStore, EvHandlerStateRet}
+			end;
+		Error={error, _} ->
+			{Error, CookieStore, EvHandlerState1}
 	end;
 %% Tunneled request.
 request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
@@ -1091,8 +1117,6 @@ data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHand
 			{[], EvHandlerState0}
 	end.
 
--spec maybe_send_data(#http2_state{}, cow_http2:streamid(), fin|nofin, iodata(), module(), _) ->
-	{#http2_state{} | {error, _}, _}.
 maybe_send_data(State=#http2_state{http2_machine=HTTP2Machine0}, StreamID, IsFin, Data0,
 		EvHandler, EvHandlerState) ->
 	Data = case is_tuple(Data0) of
@@ -1107,8 +1131,6 @@ maybe_send_data(State=#http2_state{http2_machine=HTTP2Machine0}, StreamID, IsFin
 				EvHandler, EvHandlerState)
 	end.
 
-send_data(Error={error, _}, _, _, EvHandlerState) ->
-	{Error, EvHandlerState};
 send_data(State, [], _, EvHandlerState) ->
 	{{state, State}, EvHandlerState};
 send_data(State0, [{StreamID, IsFin, SendData}|Tail], EvHandler, EvHandlerState0) ->
@@ -1119,8 +1141,6 @@ send_data(State0, [{StreamID, IsFin, SendData}|Tail], EvHandler, EvHandlerState0
 			ErrorResult
 	end.
 
-send_data(Error={error, _}, _, _, _, _, EvHandlerState) ->
-	{Error, EvHandlerState};
 send_data(State0, StreamID, IsFin, [Data], EvHandler, EvHandlerState0) ->
 	case send_data_frame(State0, StreamID, IsFin, Data) of
 		{state, State} ->
@@ -1150,8 +1170,12 @@ send_data(State0, StreamID, IsFin, [Data|Tail], EvHandler, EvHandlerState) ->
 
 send_data_frame(State=#http2_state{socket=Socket, transport=Transport},
 		StreamID, IsFin, {data, Data}) ->
-	Transport:send(Socket, cow_http2:data(StreamID, IsFin, Data)),
-	{state, State};
+	case Transport:send(Socket, cow_http2:data(StreamID, IsFin, Data)) of
+		ok ->
+			{state, State};
+		Error={error, _} ->
+			Error
+	end;
 %% @todo Uncomment this once sendfile is supported.
 %send_data_frame(State=#http2_state{socket=Socket, transport=Transport},
 %		StreamID, IsFin, {sendfile, Offset, Bytes, Path}) ->
@@ -1163,18 +1187,26 @@ send_data_frame(State=#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine0}, StreamID, nofin, {trailers, Trailers}) ->
 	{ok, HeaderBlock, HTTP2Machine}
 		= cow_http2_machine:prepare_trailers(StreamID, HTTP2Machine0, Trailers),
-	Transport:send(Socket, cow_http2:headers(StreamID, fin, HeaderBlock)),
-	{state, State#http2_state{http2_machine=HTTP2Machine}}.
+	case Transport:send(Socket, cow_http2:headers(StreamID, fin, HeaderBlock)) of
+		ok ->
+			{state, State#http2_state{http2_machine=HTTP2Machine}};
+		Error={error, _} ->
+			Error
+	end.
 
 reset_stream(State0=#http2_state{socket=Socket, transport=Transport},
 		StreamID, StreamError={stream_error, Reason, _}) ->
-	Transport:send(Socket, cow_http2:rst_stream(StreamID, Reason)),
-	case take_stream(State0, StreamID) of
-		{#stream{ref=StreamRef, reply_to=ReplyTo}, State} ->
-			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), StreamError},
-			{state, State};
-		error ->
-			{state, State0}
+	case Transport:send(Socket, cow_http2:rst_stream(StreamID, Reason)) of
+		ok ->
+			case take_stream(State0, StreamID) of
+				{#stream{ref=StreamRef, reply_to=ReplyTo}, State} ->
+					ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), StreamError},
+					{state, State};
+				error ->
+					{state, State0}
+			end;
+		Error={error, _} ->
+			Error
 	end.
 
 connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
@@ -1469,9 +1501,6 @@ connection_error(#http2_state{socket=Socket, transport=Transport,
 		cow_http2_machine:get_last_streamid(HTTP2Machine),
 		Reason, <<>>)),
 	{error, Error}.
-
-state_or_error_command(Error={error, _}) -> Error;
-state_or_error_command(State=#http2_state{}) -> {state, State}.
 
 %% Stream functions.
 

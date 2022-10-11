@@ -599,9 +599,6 @@ commands([{tls_handshake, HandshakeEvent0, Protocols, ReplyTo}|Tail],
 commands([{active, true}|Tail], State, EvHandler, EvHandlerState) ->
 	commands(Tail, State, EvHandler, EvHandlerState).
 
-state_or_error_command(Error={error, _}) -> Error;
-state_or_error_command(State=#tunnel_state{}) -> {state, State}.
-
 continue_stream_ref(#tunnel_state{socket=#{handle_continue_stream_ref := ContinueStreamRef}}) ->
 	if
 		is_list(ContinueStreamRef) -> ContinueStreamRef;
