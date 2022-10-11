@@ -243,7 +243,7 @@ parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, strea
 				{state, State} ->
 					parse(Rest, State, CookieStore0, EvHandler, EvHandlerState0);
 				Error={error, _} ->
-					Error
+					{Error, CookieStore0, EvHandlerState0}
 			end;
 		Error = {connection_error, _, _} ->
 			{connection_error(State0, Error), CookieStore0, EvHandlerState0};
