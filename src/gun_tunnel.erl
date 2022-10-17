@@ -196,12 +196,15 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {ok, Negotiated},
 		reply_to => ReplyTo,
 		stream_ref => StreamRef
 	},
-	%% @todo Handle error result from Proto:init/4
-	{ok, _, ProtoState} = Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
-		ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}),
-	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
-	{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}},
-		CookieStore, EvHandlerState};
+	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
+			ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}) of
+		{ok, _, ProtoState} ->
+			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
+			{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}},
+				CookieStore, EvHandlerState};
+		Error={error, _} ->
+			{Error, CookieStore, EvHandlerState}
+	end;
 handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {error, Reason},
 		{handle_continue, _, HandshakeEvent, _}},
 		#tunnel_state{socket=ProxyPid}, CookieStore, EvHandler, EvHandlerState0)
