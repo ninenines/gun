@@ -12,7 +12,7 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
--module(connection_SUITE).
+-module(send_errors_SUITE).
 -compile(export_all).
 -compile(nowarn_export_all).
 

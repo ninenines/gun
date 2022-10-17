@@ -452,7 +452,6 @@ ws_send(Frames, State=#tunnel_state{protocol=Proto, protocol_state=ProtoState},
 %% Internal.
 
 %% Returns an error on send errors, a state otherwise
-%% @todo Handle error command.
 commands(Command, State, EvHandler, EvHandlerState) when not is_list(Command) ->
 	commands([Command], State, EvHandler, EvHandlerState);
 commands([], State, _, EvHandlerState) ->
