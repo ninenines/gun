@@ -565,13 +565,18 @@ headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerSt
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
 		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
-	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, undefined,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	{{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
-		ReplyTo, Method, Authority, Path, InitialFlow)},
-		CookieStore, EvHandlerState}.
+	Command = case SendResult of
+		ok ->
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
+				ReplyTo, Method, Authority, Path, InitialFlow)};
+		Error={error, _} ->
+			Error
+	end,
+	{Command, CookieStore, EvHandlerState}.
 
 request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
@@ -581,13 +586,18 @@ request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandle
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
 		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
-	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
-	InitialFlow = initial_flow(InitialFlow0, Opts),
-	{{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
-		ReplyTo, Method, Authority, Path, InitialFlow)},
-		CookieStore, EvHandlerState}.
+	Command = case SendResult of
+		ok ->
+			InitialFlow = initial_flow(InitialFlow0, Opts),
+			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
+				ReplyTo, Method, Authority, Path, InitialFlow)};
+		Error={error, _} ->
+			Error
+	end,
+	{Command, CookieStore, EvHandlerState}.
 
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;
 initial_flow(InitialFlow, _) -> InitialFlow.
@@ -634,8 +644,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		headers => Headers
 	},
 	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
-	%% @todo Handle send errors.
-	Transport:send(Socket, [
+	SendResult = Transport:send(Socket, [
 		cow_http:request(Method, Path, Version, Headers),
 		[Body || Body =/= undefined]]),
 	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
@@ -649,7 +658,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		_ ->
 			EvHandlerState2
 	end,
-	{Authority, Conn, Out, CookieStore, EvHandlerState}.
+	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState}.
 
 host_header(TransportName, Host0, Port) ->
 	Host = case Host0 of
@@ -977,14 +986,20 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		{<<"sec-websocket-key">>, Key}
 		|Headers2
 	],
-	{Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, <<"GET">>, Host, Port, Path, Headers, undefined,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
-	InitialFlow = maps:get(flow, WsOpts, infinity),
-	{{state, new_stream(State#http_state{connection=Conn, out=Out},
-		#websocket{ref=StreamRef, reply_to=ReplyTo, key=Key, extensions=GunExtensions, opts=WsOpts},
-		ReplyTo, <<"GET">>, Authority, Path, InitialFlow)},
-		CookieStore, EvHandlerState}.
+	Command = case SendResult of
+		ok ->
+			InitialFlow = maps:get(flow, WsOpts, infinity),
+			{state, new_stream(State#http_state{connection=Conn, out=Out},
+				#websocket{ref=StreamRef, reply_to=ReplyTo, key=Key,
+					extensions=GunExtensions, opts=WsOpts},
+				ReplyTo, <<"GET">>, Authority, Path, InitialFlow)};
+		Error={error, _} ->
+			Error
+	end,
+	{Command, CookieStore, EvHandlerState}.
 
 ws_handshake(Buffer, State, Ws=#websocket{key=Key}, Headers) ->
 	%% @todo check upgrade, connection
