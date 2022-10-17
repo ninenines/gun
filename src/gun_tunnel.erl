@@ -113,23 +113,26 @@ init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tun
 		%% Initialize the protocol.
 		#{new_protocol := NewProtocol} ->
 			{Proto, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
-			%% @todo Handle error result from Proto:init/4
-			{ok, _, ProtoState} = Proto:init(ReplyTo, OriginSocket, OriginTransport,
-				ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tcp}),
-			EvHandlerState = EvHandler:protocol_changed(#{
-				stream_ref => StreamRef,
-				protocol => Proto:name()
-			}, EvHandlerState0),
-			%% When the tunnel protocol is HTTP/1.1 or SOCKS
-			%% the gun_tunnel_up message was already sent.
-			_ = case TunnelProtocol of
-				http -> ok;
-				socks -> ok;
-				_ -> ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()}
-			end,
-			{tunnel, State#tunnel_state{socket=OriginSocket, transport=OriginTransport,
-				protocol=Proto, protocol_state=ProtoState},
-				EvHandlerState};
+			case Proto:init(ReplyTo, OriginSocket, OriginTransport,
+					ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tcp}) of
+				{ok, _, ProtoState} ->
+					EvHandlerState = EvHandler:protocol_changed(#{
+						stream_ref => StreamRef,
+						protocol => Proto:name()
+					}, EvHandlerState0),
+					%% When the tunnel protocol is HTTP/1.1 or SOCKS
+					%% the gun_tunnel_up message was already sent.
+					_ = case TunnelProtocol of
+						http -> ok;
+						socks -> ok;
+						_ -> ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()}
+					end,
+					{tunnel, State#tunnel_state{socket=OriginSocket, transport=OriginTransport,
+						protocol=Proto, protocol_state=ProtoState},
+						EvHandlerState};
+				Error={error, _} ->
+					Error
+			end;
 		%% We can't initialize the protocol until the TLS handshake has completed.
 		#{handshake_event := HandshakeEvent0, protocols := Protocols} ->
 			#{handle_continue_stream_ref := ContinueStreamRef} = OriginSocket,
@@ -546,10 +549,13 @@ commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
 		}
 	},
 	Proto = gun_tunnel,
-	{tunnel, ProtoState, EvHandlerState} = Proto:init(ReplyTo,
-		OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState0),
-	commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState},
-		EvHandler, EvHandlerState);
+	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState0) of
+		{tunnel, ProtoState, EvHandlerState} ->
+			commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState},
+				EvHandler, EvHandlerState);
+		Error={error, _} ->
+			{Error, EvHandlerState0}
+	end;
 commands([{tls_handshake, HandshakeEvent0, Protocols, ReplyTo}|Tail],
 		State=#tunnel_state{transport=Transport,
 		info=#{origin_host := Host, origin_port := Port}, opts=Opts, protocol=CurrentProto,
@@ -594,10 +600,13 @@ commands([{tls_handshake, HandshakeEvent0, Protocols, ReplyTo}|Tail],
 		}
 	},
 	Proto = gun_tunnel,
-	{tunnel, ProtoState, EvHandlerState} = Proto:init(ReplyTo,
-		OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState0),
-	commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState},
-		EvHandler, EvHandlerState);
+	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState0) of
+		{tunnel, ProtoState, EvHandlerState} ->
+			commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState},
+				EvHandler, EvHandlerState);
+		Error={error, _} ->
+			{Error, EvHandlerState0}
+	end;
 commands([{active, true}|Tail], State, EvHandler, EvHandlerState) ->
 	commands(Tail, State, EvHandler, EvHandlerState).
 

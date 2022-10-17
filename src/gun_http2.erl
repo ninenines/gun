@@ -610,11 +610,14 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 				}
 			}
 	end,
-	{tunnel, ProtoState, EvHandlerState} = Proto:init(
-		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState3),
-	{{state, store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
-		info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}})},
-		EvHandlerState}.
+	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts, EvHandler, EvHandlerState3) of
+		{tunnel, ProtoState, EvHandlerState} ->
+			{{state, store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
+				info=TunnelInfo, protocol=Proto, protocol_state=ProtoState}})},
+				EvHandlerState};
+		Error={error, _} ->
+			{Error, EvHandlerState3}
+	end.
 
 headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
 		tunnel=Tunnel=#tunnel{info=#websocket_info{opts=WsOpts}}},
