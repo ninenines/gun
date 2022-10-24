@@ -92,10 +92,14 @@ init(ReplyTo, Socket, Transport, Opts) ->
 		{username_password, _, _} -> <<2>>;
 		none -> <<0>>
 	end || A <- Auth>>,
-	Transport:send(Socket, [<<5, (length(Auth))>>, Methods]),
-	{ok, connected_no_input, #socks_state{ref=StreamRef, reply_to=ReplyTo,
-		socket=Socket, transport=Transport,
-		opts=Opts, version=Version, status=auth_method_select}}.
+	case Transport:send(Socket, [<<5, (length(Auth))>>, Methods]) of
+		ok ->
+			{ok, connected_no_input, #socks_state{ref=StreamRef, reply_to=ReplyTo,
+				socket=Socket, transport=Transport,
+				opts=Opts, version=Version, status=auth_method_select}};
+		Error={error, _Reason} ->
+			Error
+	end.
 
 switch_transport(Transport, Socket, State) ->
 	State#socks_state{socket=Socket, transport=Transport}.
@@ -105,20 +109,26 @@ handle(Data, State, CookieStore, _, EvHandlerState) ->
 
 %% No authentication.
 handle(<<5, 0>>, State=#socks_state{version=5, status=auth_method_select}) ->
-	send_socks5_connect(State),
-	{state, State#socks_state{status=connect}};
+	case send_socks5_connect(State) of
+		ok -> {state, State#socks_state{status=connect}};
+		Error={error, _} -> Error
+	end;
 %% Username/password authentication.
 handle(<<5, 2>>, State=#socks_state{socket=Socket, transport=Transport, opts=#{auth := AuthMethods},
 		version=5, status=auth_method_select}) ->
 	[{username_password, Username, Password}] = [Method || Method <- AuthMethods],
 	ULen = byte_size(Username),
 	PLen = byte_size(Password),
-	Transport:send(Socket, <<1, ULen, Username/binary, PLen, Password/binary>>),
-	{state, State#socks_state{status=auth_username_password}};
+	case Transport:send(Socket, <<1, ULen, Username/binary, PLen, Password/binary>>) of
+		ok -> {state, State#socks_state{status=auth_username_password}};
+		Error={error, _} -> Error
+	end;
 %% Username/password authentication successful.
 handle(<<1, 0>>, State=#socks_state{version=5, status=auth_username_password}) ->
-	send_socks5_connect(State),
-	{state, State#socks_state{status=connect}};
+	case send_socks5_connect(State) of
+		ok -> {state, State#socks_state{status=connect}};
+		Error={error, _} -> Error
+	end;
 %% Username/password authentication error.
 handle(<<1, _>>, #socks_state{version=5, status=auth_username_password}) ->
 	{error, {socks5, username_password_auth_failure}};
