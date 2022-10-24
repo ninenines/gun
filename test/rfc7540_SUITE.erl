@@ -377,6 +377,36 @@ lingering_data_counts_toward_connection_window(_) ->
 	timer:sleep(300),
 	gun:close(ConnPid).
 
+respect_max_concurrent_streams(_) ->
+	doc("The SETTINGS_MAX_CONCURRENT_STREAMS setting can be used to "
+		"restrict the number of concurrent streams. (RFC7540 5.1.2, RFC7540 6.5.2)"),
+	{ok, Ref, Port} = do_cowboy_max_councurrent_streams(1),
+	try
+		{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+		{ok, http2} = gun:await_up(ConnPid),
+		StreamRef1 = gun:get(ConnPid, "/"),
+		timer:sleep(100),
+		StreamRef2 = gun:get(ConnPid, "/"),
+		{error, {stream_error, {badstate, Message}}} = gun:await(ConnPid, StreamRef2),
+		"The maximum number of concurrent streams is reached." = Message,
+		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
+		{ok, _} = gun:await_body(ConnPid, StreamRef1),
+		gun:close(ConnPid)
+	after
+		cowboy:stop_listener(Ref)
+	end.
+
+do_cowboy_max_councurrent_streams(MaxConcurrentStreams) ->
+	Ref = make_ref(),
+	Routes = [{'_', [{"/", delayed_hello_h, 500}]}],
+	ProtoOpts = #{
+		env => #{dispatch => cowboy_router:compile(Routes)},
+		tcp => #{protocols => [http2]},
+		max_concurrent_streams => MaxConcurrentStreams
+	},
+	[{ref, _}, {port, Port}] = gun_test:init_cowboy_tcp(Ref, ProtoOpts, []),
+	{ok, Ref, Port}.
+
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "
 		"that stream dependency information is attached. (RFC7540 6.2)"),

@@ -990,7 +990,43 @@ headers(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 			{[], CookieStore0, EvHandlerState0}
 	end.
 
-request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
+request(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, Method, Host, Port,
+		Path, Headers, Body, InitialFlow, CookieStore, EvHandler, EvHandlerState)
+		when is_reference(StreamRef) ->
+
+	case cow_http2_machine:is_remote_concurrency_limit_reached(HTTP2Machine) of
+		true ->
+			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
+				{badstate, "The maximum number of concurrent streams is reached."}},
+			{[], CookieStore, EvHandlerState};
+		false ->
+			request1(State, StreamRef, ReplyTo, Method, Host, Port,
+				Path, Headers, Body, InitialFlow, CookieStore,
+				EvHandler, EvHandlerState)
+	end;
+%% Tunneled request.
+request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
+		Path, Headers, Body, InitialFlow, CookieStore0, EvHandler, EvHandlerState0) ->
+	case get_stream_by_ref(State, StreamRef) of
+		%% @todo We should send an error to the user if the stream isn't ready.
+		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0, info=#{
+				origin_host := OriginHost, origin_port := OriginPort}}} ->
+			{Commands, CookieStore, EvHandlerState1} = Proto:request(ProtoState0, RealStreamRef,
+				ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
+				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+			{ResCommands, EvHandlerState} = tunnel_commands(Commands,
+				Stream, State, EvHandler, EvHandlerState1),
+			{ResCommands, CookieStore, EvHandlerState};
+		#stream{tunnel=undefined} ->
+			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+				"The stream is not a tunnel."}},
+			{[], CookieStore0, EvHandlerState0};
+		error ->
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], CookieStore0, EvHandlerState0}
+	end.
+
+request1(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo, Method, Host, Port,
 		Path, Headers0, Body, InitialFlow0, CookieStore0, EvHandler, EvHandlerState0)
 		when is_reference(StreamRef) ->
@@ -1005,7 +1041,7 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	RequestEvent = #{
 		stream_ref => RealStreamRef,
 		reply_to => ReplyTo,
-		function => ?FUNCTION_NAME,
+		function => request,
 		method => Method,
 		authority => Authority,
 		path => Path,
@@ -1039,27 +1075,6 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 			end;
 		Error={error, _} ->
 			{Error, CookieStore, EvHandlerState1}
-	end;
-%% Tunneled request.
-request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
-		Path, Headers, Body, InitialFlow, CookieStore0, EvHandler, EvHandlerState0) ->
-	case get_stream_by_ref(State, StreamRef) of
-		%% @todo We should send an error to the user if the stream isn't ready.
-		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0, info=#{
-				origin_host := OriginHost, origin_port := OriginPort}}} ->
-			{Commands, CookieStore, EvHandlerState1} = Proto:request(ProtoState0, RealStreamRef,
-				ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
-				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
-			{ResCommands, EvHandlerState} = tunnel_commands(Commands,
-				Stream, State, EvHandler, EvHandlerState1),
-			{ResCommands, CookieStore, EvHandlerState};
-		#stream{tunnel=undefined} ->
-			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
-				"The stream is not a tunnel."}},
-			{[], CookieStore0, EvHandlerState0};
-		error ->
-			error_stream_not_found(State, StreamRef, ReplyTo),
-			{[], CookieStore0, EvHandlerState0}
 	end.
 
 initial_flow(infinity, #{flow := InitialFlow}) -> InitialFlow;
