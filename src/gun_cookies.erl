@@ -44,7 +44,7 @@
 	host_only := boolean(),
 	secure_only := boolean(),
 	http_only := boolean(),
-	same_site := strict | lax | none
+	same_site := default | none | strict | lax
 }.
 -export_type([cookie/0]).
 
@@ -286,7 +286,7 @@ set_cookie_secure_match({Mod, State}, Match) ->
 	Mod:set_cookie_secure_match(State, Match).
 
 set_cookie2(Store, _URI, Attrs, Cookie0) ->
-	Cookie = Cookie0#{same_site => maps:get(same_site, Attrs, none)},
+	Cookie = Cookie0#{same_site => maps:get(same_site, Attrs, default)},
 	%% This is where we would perform the same-site checks.
 	%%
 	%% It seems that an option would need to be added to Gun
