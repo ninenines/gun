@@ -208,6 +208,7 @@
 	keepalive => timeout(),
 	transform_header_name => fun((binary()) -> binary()),
 	version => 'HTTP/1.1' | 'HTTP/1.0',
+	allow_http10_connect => boolean(),
 
 	%% Internal.
 	tunnel_transport => tcp | tls

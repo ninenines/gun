@@ -109,6 +109,8 @@ do_check_options([{transform_header_name, F}|Opts]) when is_function(F) ->
 	do_check_options(Opts);
 do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
 	do_check_options(Opts);
+do_check_options([{allow_http10_connect, B}|Opts]) when is_boolean(B) ->
+	do_check_options(Opts);
 do_check_options([Opt|_]) ->
 	{error, {options, {http, Opt}}}.
 
@@ -293,7 +295,7 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 	end.
 
 handle_head(Data, State=#http_state{opts=Opts,
-		streams=[#stream{ref=StreamRef, authority=Authority, path=Path}|_]},
+		streams=[#stream{ref=StreamRef, authority=Authority, path=Path, reply_to=ReplyTo}|_]},
 		CookieStore0, EvHandler, EvHandlerState) ->
 	{Version, Status, _, Rest0} = cow_http:parse_status_line(Data),
 	{Headers, Rest} = cow_http:parse_headers(Rest0),
@@ -301,7 +303,14 @@ handle_head(Data, State=#http_state{opts=Opts,
 		Authority, Path, Status, Headers, CookieStore0, Opts),
 	case StreamRef of
 		{connect, _, _} when Status >= 200, Status < 300 ->
-			handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
+			case check_connect_version(Version, State) of
+				ok ->
+					handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
+				{error, 'HTTP/1.0'} ->
+					ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+						"CONNECT cannot be used over an HTTP/1.0 connection by default. See http_opts `allow_http10_connect`."}},
+					{[], CookieStore, EvHandlerState}
+			end;
 		_ when Status >= 100, Status =< 199 ->
 			handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
 		_ ->
@@ -310,7 +319,7 @@ handle_head(Data, State=#http_state{opts=Opts,
 
 handle_connect(Rest, State=#http_state{
 		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
-		CookieStore, EvHandler, EvHandlerState0, 'HTTP/1.1', Status, Headers) ->
+		CookieStore, EvHandler, EvHandlerState0, Status, Headers) ->
 	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 	_ = case Stream of
@@ -462,6 +471,13 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 				streams=[Stream#stream{handler_state=Handlers}|Tail]},
 				CookieStore, EvHandler, EvHandlerState3)
 	end.
+
+check_connect_version('HTTP/1.0', #http_state{opts=#{allow_http10_connect := true}}) ->
+	ok;
+check_connect_version('HTTP/1.0', _) ->
+	{error, 'HTTP/1.0'};
+check_connect_version('HTTP/1.1', _) ->
+	ok.
 
 %% The state must be first in order to retrieve it when the stream ended.
 send_data(<<>>, State, nofin) ->

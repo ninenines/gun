@@ -153,7 +153,8 @@ http_opts() :: #{
     flow                        => pos_integer(),
     keepalive                   => timeout(),
     transform_header_name       => fun((binary()) -> binary()),
-    version                     => 'HTTP/1.1' | 'HTTP/1.0'
+    version                     => 'HTTP/1.1' | 'HTTP/1.0',
+    allow_http10_connect        => boolean()
 }
 ----
 
@@ -199,6 +200,11 @@ considers the case of header names to be significant.
 version (`'HTTP/1.1'`)::
 
 HTTP version to use.
+
+allow_http10_connect (false)::
+
+Whether an HTTP Proxy responding with HTTP/1.0 after CONNECT will
+be allowed to establish a tunnel.
 
 === http2_opts()
 
@@ -574,6 +580,7 @@ when receiving a ping.
 
 == Changelog
 
+* *2.0*: The option `allow_http10_connect` was added.
 * *2.0*: The `stream_ref()` type was added.
 * *2.0*: The option `cookie_store` was added. It can be used
          to configure a cookie store that Gun will use
