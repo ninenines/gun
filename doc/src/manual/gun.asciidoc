@@ -354,9 +354,11 @@ supervise (true)::
 Whether the Gun process should be started under the `gun_sup`
 supervisor. Set to `false` to use your own supervisor.
 
-tcp_opts ([])::
+tcp_opts (DefaultOpts)::
 
 TCP options used when establishing the connection.
+By default Gun enables send timeouts with the options
+`[{send_timeout, 15000}, {send_timeout_close, true}]`.
 
 tls_handshake_timeout (infinity)::
 

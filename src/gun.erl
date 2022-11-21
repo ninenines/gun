@@ -1022,7 +1022,10 @@ default_retry_fun(Retries, Opts) ->
 
 domain_lookup(_, {retries, Retries, _}, State=#state{host=Host, port=Port, opts=Opts,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	TransOpts = maps:get(tcp_opts, Opts, []),
+	TransOpts = maps:get(tcp_opts, Opts, [
+		{send_timeout, 15000},
+		{send_timeout_close, true}
+	]),
 	DomainLookupTimeout = maps:get(domain_lookup_timeout, Opts, infinity),
 	DomainLookupEvent = #{
 		host => Host,
