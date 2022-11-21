@@ -376,8 +376,25 @@ reconnect_h2(Config) ->
 %% @todo reconnect_ws
 
 stop_pool(Config) ->
-	doc("Confirm the pool can be used for HTTP/1.1 connections."),
+	doc("Confirm the pool can be stopped."),
 	Port = config(port, Config),
 	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{scope => ?FUNCTION_NAME}),
 	gun_pool:await_up(ManagerPid),
 	gun_pool:stop_pool("localhost", Port, #{scope => ?FUNCTION_NAME}).
+
+degraded_configuration_error(Config) ->
+	doc("Confirm the pool ends up in a degraded state "
+		"when connection is impossible because of bad configuration."),
+	Port = config(port, Config),
+	%% We attempt to connect to an unreachable IP.
+	{ok, ManagerPid} = gun_pool:start_pool({20, 20, 20, 1}, Port, #{
+		conn_opts => #{tcp_opts => [{ip, {127, 0, 0, 1}}]},
+		scope => ?FUNCTION_NAME,
+		size => 1
+	}),
+	%% Wait for the lookup/connect to fail.
+	timer:sleep(500),
+	{degraded, #{conns := Conns}} = gun_pool:info(ManagerPid),
+	true = Conns =:= #{},
+	%% We can stop the pool even if degraded.
+	gun_pool:stop_pool({20, 20, 20, 1}, Port, #{scope => ?FUNCTION_NAME}).

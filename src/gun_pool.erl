@@ -631,14 +631,21 @@ handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _, S
 	{up, Protocol, _} = maps:get(ConnPid, Conns),
 	{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}}};
 %% @todo We do not want to reconnect automatically when the pool is dynamic.
-handle_common(info, {'DOWN', _MRef, process, ConnPid0, _Reason}, _,
+handle_common(info, {'DOWN', _MRef, process, ConnPid0, Reason}, _,
 		StateData=#state{host=Host, port=Port, opts=Opts, table=Tid, conns=Conns0, conns_meta=ConnsMeta0}) ->
 	Conns = maps:remove(ConnPid0, Conns0),
 	ConnsMeta = maps:remove(ConnPid0, ConnsMeta0),
-	ConnOpts = conn_opts(Tid, Opts),
-	{ok, ConnPid} = gun:open(Host, Port, ConnOpts),
-	_ = monitor(process, ConnPid),
-	{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}, conns_meta=ConnsMeta}};
+	case Reason of
+		%% The process is down because of a configuration error.
+		%% Do NOT attempt to reconnect, leave the pool in a degraded state.
+		badarg ->
+			{next_state, degraded, StateData#state{conns=Conns, conns_meta=ConnsMeta}};
+		_ ->
+			ConnOpts = conn_opts(Tid, Opts),
+			{ok, ConnPid} = gun:open(Host, Port, ConnOpts),
+			_ = monitor(process, ConnPid),
+			{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}, conns_meta=ConnsMeta}}
+	end;
 handle_common({call, From}, info, StateName, #state{host=Host, port=Port,
 		opts=Opts, table=Tid, conns=Conns, conns_meta=ConnsMeta}) ->
 	{keep_state_and_data, {reply, From, {StateName, #{
