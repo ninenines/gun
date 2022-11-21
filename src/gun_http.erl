@@ -301,16 +301,20 @@ handle_head(Data, State=#http_state{opts=Opts,
 		Authority, Path, Status, Headers, CookieStore0, Opts),
 	case StreamRef of
 		{connect, _, _} when Status >= 200, Status < 300 ->
-			handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
+			handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
 		_ when Status >= 100, Status =< 199 ->
 			handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
 		_ ->
 			handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
 	end.
 
+%% We handle HTTP/1.0 responses to CONNECT requests the same as HTTP/1.1.
+%% This is because many proxies have historically used HTTP/1.0 for their
+%% response. The HTTP/1.1 specification does not disallow it: servers that
+%% respond positively to a CONNECT request are supposed to implement it.
 handle_connect(Rest, State=#http_state{
 		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
-		CookieStore, EvHandler, EvHandlerState0, 'HTTP/1.1', Status, Headers) ->
+		CookieStore, EvHandler, EvHandlerState0, Status, Headers) ->
 	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 	_ = case Stream of

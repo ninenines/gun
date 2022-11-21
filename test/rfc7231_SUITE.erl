@@ -36,17 +36,20 @@ do_proxy_start(Transport, Status) ->
 do_proxy_start(Transport, Status, ConnectRespHeaders) ->
 	do_proxy_start(Transport, Status, ConnectRespHeaders, 0).
 
-do_proxy_start(Transport0, Status, ConnectRespHeaders, Delay) ->
+do_proxy_start(Transport, Status, ConnectRespHeaders, Delay) ->
+	do_proxy_start(Transport, Status, ConnectRespHeaders, Delay, <<"HTTP/1.1">>).
+
+do_proxy_start(Transport0, Status, ConnectRespHeaders, Delay, ConnectRespVersion) ->
 	Transport = case Transport0 of
 		tcp -> gun_tcp;
 		tls -> gun_tls
 	end,
 	Self = self(),
-	Pid = spawn_link(fun() -> do_proxy_init(Self, Transport, Status, ConnectRespHeaders, Delay) end),
+	Pid = spawn_link(fun() -> do_proxy_init(Self, Transport, Status, ConnectRespHeaders, Delay, ConnectRespVersion) end),
 	Port = receive_from(Pid),
 	{ok, Pid, Port}.
 
-do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
+do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay, ConnectRespVersion) ->
 	{ok, ListenSocket} = case Transport of
 		gun_tcp ->
 			gen_tcp:listen(0, [binary, {active, false}]);
@@ -76,7 +79,7 @@ do_proxy_init(Parent, Transport, Status, ConnectRespHeaders, Delay) ->
 	Parent ! {self(), {request, Method, Authority, Version, Headers}},
 	{OriginHost, OriginPort} = cow_http_hd:parse_host(Authority),
 	ok = Transport:send(ClientSocket, [
-		<<"HTTP/1.1 ">>,
+		ConnectRespVersion, <<" ">>,
 		integer_to_binary(Status),
 		<<" Reason phrase\r\n">>,
 		cow_http:headers(ConnectRespHeaders),
@@ -414,6 +417,41 @@ do_connect_failure(Status) ->
 		origin_port := ProxyPort,
 		intermediaries := []
 	} = gun:info(ConnPid),
+	gun:close(ConnPid).
+
+connect_response_http10(_) ->
+	doc("CONNECT can be used to establish a TCP connection "
+		"to a server via an HTTP/1.0 proxy. (RFC7230 2.6, RFC7231 4.3.6)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, 201, [], 0, <<"HTTP/1.0">>),
+	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort
+	}),
+	{request, <<"CONNECT">>, Authority, 'HTTP/1.1', _} = receive_from(ProxyPid),
+	{response, fin, 201, _} = gun:await(ConnPid, StreamRef),
+	handshake_completed = receive_from(OriginPid),
+	{up, http} = gun:await(ConnPid, StreamRef),
+	_ = gun:get(ConnPid, "/proxied", [], #{tunnel => StreamRef}),
+	Data = receive_from(OriginPid),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	[<<"host: ", Authority/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
+	#{
+		transport := tcp,
+		protocol := http,
+		origin_scheme := <<"http">>,
+		origin_host := "localhost",
+		origin_port := OriginPort,
+		intermediaries := [#{
+			type := connect,
+			host := "localhost",
+			port := ProxyPort,
+			transport := tcp,
+			protocol := http
+	}]} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
 connect_authority_form(_) ->
