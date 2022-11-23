@@ -40,7 +40,8 @@ groups() ->
 init_per_suite(Config) ->
 	Routes = [
 		{"/", ws_echo_h, []},
-		{"/reject", ws_reject_h, []}
+		{"/reject", ws_reject_h, []},
+		{"/subprotocol", ws_subprotocol_h, []}
 	],
 	{ok, _} = cowboy:start_clear(ws, [], #{
 		enable_connect_protocol => true,
@@ -217,6 +218,41 @@ send_many_close(Config) ->
 	{ws, Frame1} = gun:await(ConnPid, StreamRef),
 	{ws, Frame2} = gun:await(ConnPid, StreamRef),
 	{ws, close} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+subprotocol_match(Config) ->
+	doc("Websocket subprotocol successfully negotiated."),
+	Protocols = [{P, gun_ws_h} || P <- [<<"dummy">>, <<"echo">>, <<"junk">>]],
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/subprotocol", [], #{
+		protocols => Protocols
+	}),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	Frame = {text, <<"Hello!">>},
+	gun:ws_send(ConnPid, StreamRef, Frame),
+	{ws, Frame} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+subprotocol_nomatch(Config) ->
+	doc("Websocket subprotocol negotiation failure."),
+	Protocols = [{P, gun_ws_h} || P <- [<<"dummy">>, <<"junk">>]],
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/subprotocol", [], #{
+		protocols => Protocols
+	}),
+	{response, nofin, 400, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"nomatch">>} = gun:await_body(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+subprotocol_required_but_missing(Config) ->
+	doc("Websocket subprotocol not negotiated but required by the server."),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/subprotocol", []),
+	{response, nofin, 400, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"undefined">>} = gun:await_body(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
 %% Internal.
