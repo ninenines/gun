@@ -40,6 +40,7 @@ groups() ->
 init_per_suite(Config) ->
 	Routes = [
 		{"/", ws_echo_h, []},
+		{"/subproto", ws_subproto_h, []},
 		{"/reject", ws_reject_h, []}
 	],
 	{ok, _} = cowboy:start_clear(ws, [], #{
@@ -152,6 +153,53 @@ reject_upgrade(Config) ->
 	receive
 		{gun_response, ConnPid, StreamRef, nofin, 400, _} ->
 			{ok, <<"Upgrade rejected">>} = gun:await_body(ConnPid, StreamRef, 1000),
+			gun:close(ConnPid);
+		Msg ->
+			error({fail, Msg})
+	after 1000 ->
+		error(timeout)
+	end.
+
+subproto_upgrade(Config) ->
+	doc("Websocket sub-protocol negotiation success case"),
+	Protocols = [{P, gun_ws_h} || P <- [<<"dummy">>, <<"echo">>, <<"junk">>]],
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/subproto", [], #{
+		protocols => Protocols
+	}),
+	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+	Frame = {text, <<"Hello!">>},
+	gun:ws_send(ConnPid, StreamRef, Frame),
+	{ws, Frame} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+subproto_no_match(Config) ->
+	doc("Websocket sub-protocol negotiation with no common sub-protocol"),
+	Protocols = [{P, gun_ws_h} || P <- [<<"dummy">>, <<"junk">>]],
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/subproto", [], #{
+		protocols => Protocols
+	}),
+	receive
+		{gun_response, ConnPid, StreamRef, nofin, 400, _} ->
+			{ok, <<"No ws proto match">>} = gun:await_body(ConnPid, StreamRef, 1000),
+			gun:close(ConnPid);
+		Msg ->
+			error({fail, Msg})
+	after 1000 ->
+		error(timeout)
+	end.
+
+subproto_mandatory_but_missing(Config) ->
+	doc("Websocket sub-protocol not used but required by server"),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
+	{ok, _} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/subproto", []),
+	receive
+		{gun_response, ConnPid, StreamRef, nofin, 400, _} ->
+			{ok, <<"No ws proto">>} = gun:await_body(ConnPid, StreamRef, 1000),
 			gun:close(ConnPid);
 		Msg ->
 			error({fail, Msg})

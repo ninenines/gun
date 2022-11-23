@@ -20,7 +20,7 @@ ws_upgrade(ConnPid, Path, Headers, WsOpts)
 ConnPid   :: pid()
 Path      :: iodata()
 Headers   :: gun:req_headers()
-WsOpts    :: gun:ws_opts
+WsOpts    :: gun:ws_opts()
 StreamRef :: gun:stream_ref()
 ----
 
@@ -38,6 +38,9 @@ Gun does not currently support Websocket over HTTP/2.
 
 By default Gun will take the Websocket options from
 the connection's `ws_opts`.
+
+Websocket sub-protocol negotiation is enabled if
+`protocols` is specified in the Websocket options.
 
 == Arguments
 
@@ -88,6 +91,7 @@ end.
 [source,erlang]
 ----
 StreamRef = gun:ws_upgrade(ConnPid, "/ws", [], #{
+    protocols => [{<<"mqtt">>, gun_ws_h}]}),
     compress => false
 }).
 ----
