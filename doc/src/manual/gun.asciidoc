@@ -525,12 +525,14 @@ detail.
 [source,erlang]
 ----
 ws_opts() :: #{
-    closing_timeout => timeout(),
-    compress        => boolean(),
-    flow            => pos_integer(),
-    keepalive       => timeout(),
-    protocols       => [{binary(), module()}],
-    silence_pings   => boolean()
+    closing_timeout  => timeout(),
+    compress         => boolean(),
+    default_protocol => module(),
+    flow             => pos_integer(),
+    keepalive        => timeout(),
+    protocols        => [{binary(), module()}],
+    silence_pings    => boolean(),
+    user_opts        => any()
 }
 ----
 
@@ -550,6 +552,11 @@ Whether to enable permessage-deflate compression. This does
 not guarantee that compression will be used as it is the
 server that ultimately decides. Defaults to false.
 
+default_protocol (gun_ws_h)::
+
+Default protocol module when no Websocket subprotocol is
+negotiated.
+
 flow - see below::
 
 The initial flow control value for the Websocket connection.
@@ -563,8 +570,10 @@ protocols ([])::
 
 A non-empty list enables Websocket protocol negotiation. The
 list of protocols will be sent in the sec-websocket-protocol
-request header. The handler module interface is currently
-undocumented and must be set to `gun_ws_h`.
+request header. The given module must follow the
+link:man:gun_ws_protocol(3)[gun_ws_protocol(3)] interface.
+Gun comes with a default interface in `gun_ws_h` that may
+be reused for negotiated protocols.
 
 silence_pings (true)::
 
@@ -572,10 +581,16 @@ Whether the ping and pong frames should be sent to the user.
 In all cases Gun will automatically send a pong frame back
 when receiving a ping.
 
-// @todo Document default_protocol and user_opts.
+user_opts - see below::
+
+Additional options that are not in use by Gun unless a custom
+Websocket subprotocol is configured and negotiated.
+By default no user option is defined.
 
 == Changelog
 
+* *2.0*: The `default_protocol` and `user_opts` Websocket
+         options were added.
 * *2.0*: The `stream_ref()` type was added.
 * *2.0*: The option `cookie_store` was added. It can be used
          to configure a cookie store that Gun will use

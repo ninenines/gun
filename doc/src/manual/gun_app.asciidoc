@@ -19,6 +19,7 @@ to the server and reconnects automatically when necessary.
 * link:man:gun_cookies(3)[gun_cookies(3)] - Cookie store engine
 * link:man:gun_cookies_list(3)[gun_cookies_list(3)] - Cookie store backend: in-memory, per connection
 * link:man:gun_event(3)[gun_event(3)] - Events
+* link:man:gun_ws_protocol(3)[gun_ws_protocol(3)] - Websocket subprotocols
 
 == Dependencies
 

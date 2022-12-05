@@ -13,6 +13,7 @@
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 -module(gun_ws_h).
+-behavior(gun_ws_protocol).
 
 -export([init/4]).
 -export([handle/2]).

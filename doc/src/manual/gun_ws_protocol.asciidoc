@@ -1,0 +1,108 @@
+= gun_ws_protocol(3)
+
+== Name
+
+gun_ws_protocol - Websocket subprotocols
+
+== Description
+
+The `gun_ws_protocol` module provides the callback interface
+and types for implementing Websocket subprotocols.
+
+== Callbacks
+
+Websocket subprotocols implement the following interface.
+
+=== init
+
+[source,erlang]
+----
+init(ReplyTo, StreamRef, Headers, Opts) -> {ok, State}
+
+ReplyTo   :: pid()
+StreamRef :: reference()
+Headers   :: cow_http:headers()
+Opts      :: gun:ws_opts()
+State     :: protocol_state()
+----
+
+Initialize the Websocket protocol.
+
+ReplyTo::
+
+The pid of the process that owns the stream and to
+which messages will be sent to.
+
+StreamRef::
+
+The reference for the stream. Must be sent in messages
+to distinguish between different streams.
+
+Headers::
+
+Headers that were sent in the response establishing
+the Websocket connection.
+
+Opts::
+
+Websocket options. Custom options can be provided in
+the `user_opts` key.
+
+State::
+
+State for the protocol.
+
+=== handle
+
+[source,erlang]
+----
+handle(Frame, State) -> {ok, FlowDec, State}
+
+Frame   :: cow_ws:frame()
+State   :: protocol_state()
+FlowDec :: non_neg_integer()
+----
+
+Handle a Websocket frame.
+
+This callback may receive fragmented frames depending
+on the protocol and may need to rebuild the full
+frame to process it.
+
+Frame::
+
+Websocket frame.
+
+State::
+
+State for the protocol.
+
+FlowDec::
+
+How many messages were sent. Used to update the flow
+control state when the feature is enabled.
+
+== Types
+
+=== protocol_state()
+
+[source,erlang]
+----
+protocol_state() :: any()
+----
+
+State for the protocol.
+
+As this part of the implementation of the protocol
+the type may differ between different Websocket
+protocol modules.
+
+== Changelog
+
+* *2.0*: Module introduced.
+
+== See also
+
+link:man:gun(7)[gun(7)],
+link:man:gun(3)[gun(3)],
+link:man:gun:ws_upgrade(3)[gun:ws_upgrade(3)]

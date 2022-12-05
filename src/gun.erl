@@ -267,12 +267,14 @@
 -type ws_opts() :: #{
 	closing_timeout => timeout(),
 	compress => boolean(),
+	default_protocol => module(),
 	flow => pos_integer(),
 	keepalive => timeout(),
 	protocols => [{binary(), module()}],
 	reply_to => pid(),
 	silence_pings => boolean(),
-	tunnel => stream_ref()
+	tunnel => stream_ref(),
+	user_opts => any()
 }.
 -export_type([ws_opts/0]).
 
