@@ -91,6 +91,7 @@ try_connect([], _, _, _, _, Error) ->
 	Error.
 
 maybe_exit({error, einval}) -> exit(badarg);
+maybe_exit({error, eaddrnotavail}) -> exit(badarg);
 maybe_exit(Error) -> Error.
 
 -spec send(inet:socket(), iodata()) -> ok | {error, atom()}.
