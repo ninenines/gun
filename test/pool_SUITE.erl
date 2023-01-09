@@ -383,6 +383,14 @@ stop_pool(Config) ->
 	gun_pool:stop_pool("localhost", Port, #{scope => ?FUNCTION_NAME}).
 
 degraded_configuration_error(Config) ->
+	case os:type() of
+		{win32, _} ->
+			{skip, "The initial connect timeout on Windows is too large."};
+		_ ->
+			do_degraded_configuration_error(Config)
+	end.
+
+do_degraded_configuration_error(Config) ->
 	doc("Confirm the pool ends up in a degraded state "
 		"when connection is impossible because of bad configuration."),
 	Port = config(port, Config),
