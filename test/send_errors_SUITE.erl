@@ -31,7 +31,7 @@ groups() ->
 init_per_suite(Config) ->
 	case os:type() of
 		{_, linux} -> Config;
-		_ -> {skip, "linux only due to socket juggling"}
+		_ -> {skip, "This test suite is Linux-only due to socket juggling."}
 	end.
 
 end_per_suite(_) -> ok.
@@ -39,7 +39,7 @@ end_per_suite(_) -> ok.
 %% Tests.
 
 http2_send_request_fail(_) ->
-	doc("Handle send failures of requests in http2."),
+	doc("Handle send failures of requests in HTTP/2."),
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	%% Socket buffers needs to be smaller than local_window/ConnWindow
@@ -67,7 +67,7 @@ http2_send_request_fail(_) ->
 	end.
 
 http2_send_ping_fail(_) ->
-	doc("Handle send failures of ping in http2."),
+	doc("Handle send failures of ping in HTTP/2."),
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	{ok, Pid} = gun:open("localhost", Port, #{
@@ -94,7 +94,7 @@ http2_send_ping_fail(_) ->
 	end.
 
 http2_send_ping_ack_fail(_) ->
-	doc("Handle send failures of ping ack in http2."),
+	doc("Handle send failures of ping ack in HTTP/2."),
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
 	{ok, {_, Port}} = inet:sockname(ListenSocket),
 	{ok, Pid} = gun:open("localhost", Port, #{

@@ -636,7 +636,7 @@ transform_header_name(_) ->
 unix_socket_connect(_) ->
 	case os:type() of
 		{win32, _} ->
-			doc("Unix Domain Sockets are not available on Windows.");
+			{skip, "Unix Domain Sockets are not available on Windows."};
 		_ ->
 			do_unix_socket_connect()
 	end.
