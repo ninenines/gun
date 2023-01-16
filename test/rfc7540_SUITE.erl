@@ -440,19 +440,19 @@ keepalive_tolerance_ping_ack_timeout(_) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, do_ping_ack_loop_fun()),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{
 		protocols => [http2],
-		http2_opts => #{keepalive => 100, keepalive_tolerance => 2}
+		http2_opts => #{keepalive => 1000, keepalive_tolerance => 2}
 	}),
 	{ok, http2} = gun:await_up(Pid),
 	handshake_completed = receive_from(OriginPid),
 	%% When Gun sends the first ping, the server acks immediately.
 	receive ping_received -> OriginPid ! send_ping_ack end,
-	timer:sleep(250), %% Gun sends 2 pings while we sleep. 2 pings not acked.
+	timer:sleep(2500), %% Gun sends 2 pings while we sleep. 2 pings not acked.
 	%% Server acks one ping. One ping still not acked.
 	receive ping_received -> OriginPid ! send_ping_ack end,
-	timer:sleep(100), %% Gun sends 1 ping while we sleep. 2 pings not acked.
+	timer:sleep(1000), %% Gun sends 1 ping while we sleep. 2 pings not acked.
 	%% Server acks one ping. One ping still not acked.
 	receive ping_received -> OriginPid ! send_ping_ack end,
-	timer:sleep(100), %% Gun sends 1 ping while we sleep. 2 pings not acked.
+	timer:sleep(1000), %% Gun sends 1 ping while we sleep. 2 pings not acked.
 	%% Check that we haven't received a gun_down yet.
 	receive
 		GunDown when element(1, GunDown) =:= gun_down ->
@@ -460,12 +460,12 @@ keepalive_tolerance_ping_ack_timeout(_) ->
 	after 0 ->
 		ok
 	end,
-	%% Within the next 10ms, Gun wants to send another ping, which would
+	%% Within the next 500ms, Gun wants to send another ping, which would
 	%% result in 3 outstanding pings. Instead, Gun goes down.
 	receive
 		{gun_down, Pid, http2, {error, {connection_error, no_error, _}}, []} ->
 			gun:close(Pid)
-	after 100 ->
+	after 1000 ->
 		error(timeout)
 	end.
 
