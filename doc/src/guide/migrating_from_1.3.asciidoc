@@ -52,6 +52,12 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   option controls how long we are willing to wait at most
   before closing the connection.
 
+* Gun will better detect connection failures by checking the
+  return value from sending data to the socket. This applies
+  to all supported protocols. In addition, Gun now enables
+  `send_timeout_close` with a `send_timeout` value defaulting
+  to 15s.
+
 * Flow control has been added. It allows limiting the number
   of data/Websocket messages Gun sends to the calling process.
   Gun will stop reading from the socket or stop updating the
@@ -107,6 +113,20 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   improve performance or lower the memory usage, for
   example.
 
+* A new `keepalive_tolerance` option for HTTP/2 enables
+  closing the connection automatically when ping acks
+  are not received in a timely manner. It nicely
+  complements the `keepalive` option that makes Gun
+  send pings.
+
+* Gun now supports Websocket subprotocol negotiation
+  and the feature is fully documented and tested.
+  This can be used to create handlers that will
+  implement a protocol from within the Gun process itself.
+  The negotiation is enabled by setting the `protocols`
+  setting. The `default_protocol` and `user_opts`
+  settings are also useful.
+
 * It is now possible to send many Websocket frames in
   a single `gun:ws_send/3` call.
 
@@ -139,7 +159,7 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
   (for example during state transitions when switching
   protocols or connecting to proxies).
 
-* Update Cowlib to 2.11.0.
+* Update Cowlib to 2.12.0.
 
 === Experimental features added
 
@@ -286,3 +306,24 @@ Gun 2.0 requires Erlang/OTP 22.0 or greater.
 
 * Fix a crash in gun:info/1 when the socket was closed before
   we call Transport:sockname/1.
+
+* Fix flushing by stream reference. When the `gun_inform`
+  message was flushed the function would switch to flushing
+  all messages from the pid instead of only messages from
+  the given stream.
+
+* Allow setting a custom SNI value.
+
+* Fix double sending of last chunk in HTTP/1.1 when Gun is
+  asked to send empty data before closing the stream.
+
+* Gun will now properly ignore parameters when the media
+  type is text/event-stream.
+
+* Avoid noisy crashes in the TLS over TLS code.
+
+* Gun will now include the StreamRef of Websocket streams
+  when sending `gun_down` messages.
+
+* Gun will no longer reject HTTP proxies that use HTTP/1.0
+  for the version in their response.
