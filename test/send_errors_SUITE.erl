@@ -1,4 +1,4 @@
-%% Copyright (c) 2020, Björn Svensson <bjorn.a.svensson@est.tech>
+%% Copyright (c) 2020-2023, Björn Svensson <bjorn.a.svensson@est.tech>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
