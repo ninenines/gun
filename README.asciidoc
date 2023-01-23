@@ -1,6 +1,7 @@
 = Gun
 
-Gun is an Erlang HTTP client with support for HTTP/1.1, HTTP/2 and Websocket.
+Gun is an Erlang HTTP client with support for HTTP/1.1,
+HTTP/2, Websocket and more.
 
 == Goals
 
@@ -17,13 +18,10 @@ developers to focus on writing their code without worrying.
 
 == Sponsors
 
-The project is currently sponsored by
-https://pleroma.social/[Pleroma].
-
-The now removed SPDY implementation was sponsored by
-http://leo-project.net/leofs/[LeoFS Cloud Storage].
-
-It was previously sponsored by https://sameroom.io/[Sameroom].
+Gun was previously sponsored by
+http://leo-project.net/leofs/[LeoFS Cloud Storage],
+https://sameroom.io/[Sameroom],
+and https://pleroma.social/[Pleroma].
 
 == Online documentation
 
