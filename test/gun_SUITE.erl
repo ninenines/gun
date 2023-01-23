@@ -551,13 +551,13 @@ stream_info_http(_) ->
 		state := running
 	}} = gun:stream_info(Pid, StreamRef),
 	gun:cancel(Pid, StreamRef),
-	OriginPid ! cancel,
 	{ok, #{
 		ref := StreamRef,
 		reply_to := Self,
 		state := stopping
 	}} = gun:stream_info(Pid, StreamRef),
-	%% Wait for the stream to be canceled.
+	%% Cancel and wait for the stream to be canceled.
+	OriginPid ! cancel,
 	receive_event(Pid, cancel),
 	fun F() ->
 		case gun:stream_info(Pid, StreamRef) of
