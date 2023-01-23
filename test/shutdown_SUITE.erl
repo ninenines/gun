@@ -311,6 +311,7 @@ http1_response_connection_close_delayed_body(_) ->
 			timer:sleep(500),
 			ok = gen_tcp:send(ClientSocket, " world!")
 		after
+			timer:sleep(1000),
 			gen_tcp:close(ClientSocket)
 		end
 	end,
