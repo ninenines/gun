@@ -165,7 +165,11 @@ reply_to(Config) ->
 	Self = self(),
 	Frame = {text, <<"Hello!">>},
 	ReplyTo = spawn(fun() ->
-		{ConnPid, StreamRef} = receive Msg -> Msg after 1000 -> error(timeout) end,
+		{ConnPid, StreamRef} = receive
+			{C, S} when is_pid(C), is_reference(S) -> {C, S}
+		after 1000 ->
+			error(timeout)
+		end,
 		{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
 		Self ! {self(), ready},
 		{ws, Frame} = gun:await(ConnPid, StreamRef),
