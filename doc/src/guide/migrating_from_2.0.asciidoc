@@ -1,0 +1,13 @@
+[appendix]
+== Changes since Gun 2.0
+
+The following patch versions were released since Gun 2.0:
+
+=== Gun 2.0.1
+
+This release updates Cowlib to 2.12.1 to fix a compilation
+error when using Erlang/OTP 26.
+
+It also fixes parsing of RST_STREAM frames to properly
+handle frames that have a valid length but were not fully
+received yet.
