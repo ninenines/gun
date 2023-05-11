@@ -437,6 +437,22 @@ settings_ack_timeout(_) ->
 	timer:sleep(6000),
 	gun:close(ConnPid).
 
+graceful_shutdown_goaway_no_error(_) ->
+	doc("The NO_ERROR code must be used when initiating a graceful "
+		"shutdown (RFC7540 6.8, RFC7540 7)"),
+	{ok, _, Port} = init_origin(tcp, http2, fun(Parent, _ListenSocket, Socket, _Transport) ->
+		%% Expect a GOAWAY with reason NO_ERROR.
+		{ok, <<_:24, 7:8, 0:8, 0:1, 0:31,
+			0:1, 0:31, %% LastStreamID.
+			0:32 %% NO_ERROR.
+		>>} = gen_tcp:recv(Socket, 17, 500),
+		Parent ! done
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	gun:shutdown(ConnPid),
+	receive done -> ok end.
+
 keepalive_tolerance_ping_ack_timeout(_) ->
 	doc("The PING frame may be used to easily test a connection. (RFC7540 8.1.4)"),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, do_ping_ack_loop_fun()),

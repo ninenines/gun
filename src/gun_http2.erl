@@ -900,6 +900,7 @@ closing(Reason0, State=#http2_state{socket=Socket, transport=Transport,
 	Reason = case Reason0 of
 		normal -> no_error;
 		owner_down -> no_error;
+		shutdown -> no_error;
 		_ -> internal_error
 	end,
 	case Transport:send(Socket, cow_http2:goaway(
