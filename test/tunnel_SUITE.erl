@@ -812,7 +812,7 @@ do_doc(Type, Endpoint) ->
 
 do_origin_start(Type) when Type =:= raw; Type =:= rawtls ->
 	{Transport, Protocol} = do_type(Type),
-	gun_test:init_origin(Transport, Protocol, fun raw_SUITE:do_echo/3);
+	gun_test:init_origin(Transport, Protocol, fun raw_SUITE:do_echo/4);
 do_origin_start(Type) ->
 	{Transport, Protocol} = do_type(Type),
 	rfc7540_SUITE:do_cowboy_origin(Transport, Protocol).

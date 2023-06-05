@@ -176,7 +176,7 @@ authority_default_port_https(_) ->
 authority_ipv6(_) ->
 	doc("When connecting to a server using an IPv6 address the :authority "
 		"pseudo-header must wrap the address with brackets. (RFC7540 8.1.2.3, RFC3986 3.2.2)"),
-	{ok, OriginPid, OriginPort} = init_origin(tcp6, http2, fun(Parent, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp6, http2, fun(Parent, _, Socket, Transport) ->
 		%% Receive the HEADERS frame and send the headers decoded.
 		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
@@ -205,7 +205,7 @@ authority_other_port_https(_) ->
 	do_authority_port(tls, 80, <<":80">>).
 
 do_authority_port(Transport0, DefaultPort, AuthorityHeaderPort) ->
-	{ok, OriginPid, OriginPort} = init_origin(Transport0, http2, fun(Parent, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(Transport0, http2, fun(Parent, _, Socket, Transport) ->
 		%% Receive the HEADERS frame and send the headers decoded.
 		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
@@ -235,7 +235,7 @@ prior_knowledge_preface_garbage(_) ->
 		"an invalid preface in the form of garbage when connecting "
 		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
 	%% We use 'http' here because we are going to do the handshake manually.
-	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
 		ok = Transport:send(Socket, <<0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15>>),
 		timer:sleep(100)
 	end),
@@ -257,7 +257,7 @@ prior_knowledge_preface_http1(_) ->
 		"an invalid preface in the form of an HTTP/1.1 response when connecting "
 		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
 	%% We use 'http' here because we are going to do the handshake manually.
-	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
 		ok = Transport:send(Socket, <<
 			"HTTP/1.1 400 Bad Request\r\n"
 			"Connection: close\r\n"
@@ -284,7 +284,7 @@ prior_knowledge_preface_http1_await(_) ->
 		"an invalid preface in the form of an HTTP/1.1 response when connecting "
 		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
 	%% We use 'http' here because we are going to do the handshake manually.
-	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
 		timer:sleep(100),
 		ok = Transport:send(Socket, <<
 			"HTTP/1.1 400 Bad Request\r\n"
@@ -307,7 +307,7 @@ prior_knowledge_preface_other_frame(_) ->
 		"an invalid preface in the form of a non-SETTINGS frame when connecting "
 		"using the prior knowledge method. (RFC7540 3.4, RFC7540 3.5)"),
 	%% We use 'http' here because we are going to do the handshake manually.
-	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
 		ok = Transport:send(Socket, cow_http2:window_update(1)),
 		timer:sleep(100)
 	end),
@@ -327,7 +327,7 @@ prior_knowledge_preface_other_frame(_) ->
 lingering_data_counts_toward_connection_window(_) ->
 	doc("DATA frames received after sending RST_STREAM must be counted "
 		"toward the connection flow-control window. (RFC7540 5.1)"),
-	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
 		%% Step 2.
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
@@ -378,7 +378,7 @@ lingering_data_counts_toward_connection_window(_) ->
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "
 		"that stream dependency information is attached. (RFC7540 6.2)"),
-	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
 		%% Receive a HEADERS frame.
 		{ok, <<_:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Send a HEADERS frame with PRIORITY back.
@@ -414,7 +414,7 @@ settings_ack_timeout(_) ->
 	doc("Failure to acknowledge the client's SETTINGS frame "
 		"results in a SETTINGS_TIMEOUT connection error. (RFC7540 6.5.3)"),
 	%% We use 'http' here because we are going to do the handshake manually.
-	{ok, _, Port} = init_origin(tcp, http, fun(_, Socket, Transport) ->
+	{ok, _, Port} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
 		%% Send a valid preface.
 		ok = Transport:send(Socket, cow_http2:settings(#{})),
 		%% Receive the fixed sequence from the preface.
@@ -471,7 +471,7 @@ keepalive_tolerance_ping_ack_timeout(_) ->
 
 do_ping_ack_loop_fun() ->
 	%% Receive ping, sync with parent, send ping ack, loop.
-	fun Loop(Parent, Socket, Transport) ->
+	fun Loop(Parent, ListenSocket, Socket, Transport) ->
 		{ok, Data} = Transport:recv(Socket, 9, infinity),
 		<<Len:24, 6:8, %% PING
 			0:8, %% Flags
@@ -486,7 +486,7 @@ do_ping_ack_loop_fun() ->
 					0:1, 0:31, Payload/binary>>,
 				ok = Transport:send(Socket, Ack)
 		end,
-		Loop(Parent, Socket, Transport)
+		Loop(Parent, ListenSocket, Socket, Transport)
 	end.
 
 connect_http_via_h2c(_) ->
@@ -530,7 +530,7 @@ connect_h2_via_h2(_) ->
 	do_connect_http(<<"https">>, tls, http2, <<"https">>, tls).
 
 do_origin_fun(http) ->
-	fun(Parent, Socket, Transport) ->
+	fun(Parent, ListenSocket, Socket, Transport) ->
 		%% Receive the request-line and headers, parse and send them.
 		{ok, Data} = Transport:recv(Socket, 0, 5000),
 		{Method, Target, 'HTTP/1.1', Rest} = cow_http:parse_request_line(Data),
@@ -542,16 +542,16 @@ do_origin_fun(http) ->
 			<<":method">> => Method,
 			<<":path">> => Target
 		}},
-		gun_test:loop_origin(Parent, Socket, Transport)
+		gun_test:loop_origin(Parent, ListenSocket, Socket, Transport)
 	end;
 do_origin_fun(http2) ->
-	fun(Parent, Socket, Transport) ->
+	fun(Parent, ListenSocket, Socket, Transport) ->
 		%% Receive the HEADERS frame and send the headers decoded.
 		{ok, <<Len:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		{ok, ReqHeadersBlock} = Transport:recv(Socket, Len, 1000),
 		{ReqHeaders, _} = cow_hpack:decode(ReqHeadersBlock),
 		Parent ! {self(), maps:from_list(ReqHeaders)},
-		gun_test:loop_origin(Parent, Socket, Transport)
+		gun_test:loop_origin(Parent, ListenSocket, Socket, Transport)
 	end.
 
 do_connect_http(OriginScheme, OriginTransport, OriginProtocol, ProxyScheme, ProxyTransport) ->
@@ -716,7 +716,7 @@ do_cowboy_origin(OriginTransport, OriginProtocol) ->
 connect_handshake_timeout(_) ->
 	doc("HTTP/2 timeouts are properly routed to the appropriate "
 		"tunnel layer. (RFC7540 3.5, RFC7540 8.3)"),
-	{ok, _, OriginPort} = init_origin(tcp, raw, fun(_, _, _) ->
+	{ok, _, OriginPort} = init_origin(tcp, raw, fun(_, _, _, _) ->
 		timer:sleep(5000)
 	end),
 	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, [

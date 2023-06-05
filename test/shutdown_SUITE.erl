@@ -301,7 +301,7 @@ http1_response_connection_close_delayed_body(_) ->
 	doc("HTTP/1.1: Confirm that requests initiated when Gun has received a "
 		"connection: close response header fail immediately if retry "
 		"is disabled, without waiting for the response body."),
-	ServerFun = fun(_Parent, ClientSocket, gen_tcp) ->
+	ServerFun = fun(_, _, ClientSocket, gen_tcp) ->
 		try
 			{ok, Req} = gen_tcp:recv(ClientSocket, 0, 5000),
 			<<"GET / HTTP/1.1\r\n", _/binary>> = Req,
@@ -406,7 +406,7 @@ http2_server_goaway_no_streams(_) ->
 	doc("HTTP/2: Confirm that the Gun process shuts down gracefully "
 		"when receiving a GOAWAY frame with no active streams and "
 		"retry is disabled."),
-	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
 		receive go_away -> ok end,
 		Transport:send(Socket, cow_http2:goaway(0, no_error, <<>>)),
 		timer:sleep(500)
@@ -425,7 +425,7 @@ http2_server_goaway_one_stream(_) ->
 	doc("HTTP/2: Confirm that the Gun process shuts down gracefully "
 		"when receiving a GOAWAY frame with one active stream and "
 		"retry is disabled."),
-	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
 		%% Skip the header.
@@ -459,7 +459,7 @@ http2_server_goaway_many_streams(_) ->
 	doc("HTTP/2: Confirm that the Gun process shuts down gracefully "
 		"when receiving a GOAWAY frame with many active streams and "
 		"retry is disabled."),
-	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
 		%% Stream 1.
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen1:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),

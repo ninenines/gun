@@ -57,7 +57,7 @@ direct_raw_tls_with_server_side_close(_) ->
 	do_direct_raw(tls, flow_control_disabled, server_side_close).
 
 do_direct_raw(OriginTransport, FlowControl, CloseSide) ->
-	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/4),
 	Opts0 = #{
 		transport => OriginTransport,
 		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
@@ -121,7 +121,7 @@ socks5_tls_raw_tls(_) ->
 	do_socks5_raw(tls, tls).
 
 do_socks5_raw(OriginTransport, ProxyTransport) ->
-	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/4),
 	{ok, ProxyPid, ProxyPort} = socks_SUITE:do_proxy_start(ProxyTransport, none),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
 		transport => ProxyTransport,
@@ -176,7 +176,7 @@ connect_tls_raw_tls(_) ->
 	do_connect_raw(tls, tls).
 
 do_connect_raw(OriginTransport, ProxyTransport) ->
-	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/4),
 	{ok, ProxyPid, ProxyPort} = rfc7231_SUITE:do_proxy_start(ProxyTransport),
 	Authority = iolist_to_binary(["localhost:", integer_to_binary(OriginPort)]),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
@@ -224,7 +224,7 @@ connect_raw_reply_to(_) ->
 		{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, StreamRef),
 		Self ! {self(), ok}
 	end),
-	{ok, OriginPid, OriginPort} = init_origin(tcp, raw, fun do_echo/3),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw, fun do_echo/4),
 	{ok, ProxyPid, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
 	{ok, ConnPid} = gun:open("localhost", ProxyPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -250,7 +250,7 @@ http11_upgrade_raw_tls(_) ->
 
 do_http11_upgrade_raw(OriginTransport) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw,
-		fun (Parent, ClientSocket, ClientTransport) ->
+		fun (Parent, ListenSocket, ClientSocket, ClientTransport) ->
 			%% We skip the request and send a 101 response unconditionally.
 			{ok, _} = ClientTransport:recv(ClientSocket, 0, 5000),
 			ClientTransport:send(ClientSocket,
@@ -258,7 +258,7 @@ do_http11_upgrade_raw(OriginTransport) ->
 				"Connection: upgrade\r\n"
 				"Upgrade: custom/1.0\r\n"
 				"\r\n"),
-			do_echo(Parent, ClientSocket, ClientTransport)
+			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport)
 		end),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
 		transport => OriginTransport,
@@ -296,7 +296,7 @@ http11_upgrade_raw_reply_to(_) ->
 		Self ! {self(), ok}
 	end),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, raw,
-		fun (Parent, ClientSocket, ClientTransport) ->
+		fun (Parent, ListenSocket, ClientSocket, ClientTransport) ->
 			%% We skip the request and send a 101 response unconditionally.
 			{ok, _} = ClientTransport:recv(ClientSocket, 0, 5000),
 			ClientTransport:send(ClientSocket,
@@ -304,7 +304,7 @@ http11_upgrade_raw_reply_to(_) ->
 				"Connection: upgrade\r\n"
 				"Upgrade: custom/1.0\r\n"
 				"\r\n"),
-			do_echo(Parent, ClientSocket, ClientTransport)
+			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport)
 		end),
 	{ok, ConnPid} = gun:open("localhost", OriginPort),
 	{ok, http} = gun:await_up(ConnPid),
@@ -327,7 +327,7 @@ http2_connect_tls_raw_tcp(_) ->
 	do_http2_connect_raw(tcp, <<"https">>, tls).
 
 do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
-	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/3),
+	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw, fun do_echo/4),
 	{ok, ProxyPid, ProxyPort} = rfc7540_SUITE:do_proxy_start(ProxyTransport, [
 		{proxy_stream, 1, 200, [], 0, undefined}
 	]),
@@ -379,13 +379,13 @@ do_http2_connect_raw(OriginTransport, ProxyScheme, ProxyTransport) ->
 
 %% The origin server will echo everything back.
 
-do_echo(Parent, ClientSocket, ClientTransport) ->
+do_echo(Parent, ListenSocket, ClientSocket, ClientTransport) ->
 	case ClientTransport:recv(ClientSocket, 0, 5000) of
 		{ok, <<"close">>} ->
 			ok = ClientTransport:close(ClientSocket);
 		{ok, Data} ->
 			ClientTransport:send(ClientSocket, Data),
-			do_echo(Parent, ClientSocket, ClientTransport);
+			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport);
 		{error, closed} ->
 			ok
 	end.

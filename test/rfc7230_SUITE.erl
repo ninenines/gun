@@ -79,7 +79,7 @@ transfer_encoding_overrides_content_length(_) ->
 	doc("When both transfer-encoding and content-length are provided, "
 		"content-length must be ignored. (RFC7230 3.3.3)"),
 	{ok, _, OriginPort} = init_origin(tcp, http,
-		fun(_, ClientSocket, ClientTransport) ->
+		fun(_, _, ClientSocket, ClientTransport) ->
 			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
 			ClientTransport:send(ClientSocket,
 				"HTTP/1.1 200 OK\r\n"

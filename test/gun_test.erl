@@ -33,7 +33,7 @@ init_origin(Transport) ->
 	init_origin(Transport, http).
 
 init_origin(Transport, Protocol) ->
-	init_origin(Transport, Protocol, fun loop_origin/3).
+	init_origin(Transport, Protocol, fun loop_origin/4).
 
 init_origin(Transport, Protocol, Fun) ->
 	Pid = spawn_link(?MODULE, init_origin, [self(), Transport, Protocol, Fun]),
@@ -55,7 +55,7 @@ init_origin(Parent, Transport, Protocol, Fun)
 		_ -> ok
 	end,
 	Parent ! {self(), handshake_completed},
-	Fun(Parent, ClientSocket, gen_tcp);
+	Fun(Parent, ListenSocket, ClientSocket, gen_tcp);
 init_origin(Parent, tls, Protocol, Fun) ->
 	Opts0 = ct_helper:get_certs_from_ets(),
 	Opts1 = case Protocol of
@@ -77,7 +77,7 @@ init_origin(Parent, tls, Protocol, Fun) ->
 			ok
 	end,
 	Parent ! {self(), handshake_completed},
-	Fun(Parent, ClientSocket, ssl).
+	Fun(Parent, ListenSocket, ClientSocket, ssl).
 
 http2_handshake(Socket, Transport) ->
 	%% Send a valid preface.
@@ -96,11 +96,11 @@ http2_handshake(Socket, Transport) ->
 	{ok, <<0:24, 4:8, 1:8, 0:32>>} = Transport:recv(Socket, 9, 5000),
 	ok.
 
-loop_origin(Parent, ClientSocket, ClientTransport) ->
+loop_origin(Parent, ListenSocket, ClientSocket, ClientTransport) ->
 	case ClientTransport:recv(ClientSocket, 0, 5000) of
 		{ok, Data} ->
 			Parent ! {self(), Data},
-			loop_origin(Parent, ClientSocket, ClientTransport);
+			loop_origin(Parent, ListenSocket, ClientSocket, ClientTransport);
 		{error, closed} ->
 			ok
 	end.

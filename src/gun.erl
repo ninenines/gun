@@ -105,6 +105,7 @@
 -export([initial_tls_handshake/3]).
 -export([ensure_alpn_sni/3]).
 -export([tls_handshake/3]).
+-export([connected_protocol_init/3]).
 -export([connected/3]).
 -export([connected_data_only/3]).
 -export([connected_no_input/3]).
@@ -1075,8 +1076,9 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 				socket => Socket,
 				protocol => ProtocolName
 			}, EvHandlerState1),
-			{next_state, connected, State#state{event_handler_state=EvHandlerState},
-				{next_event, internal, {connected, Socket, Protocol}}};
+			{next_state, connected_protocol_init,
+				State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {connected, Retries, Socket, Protocol}}};
 		{ok, Socket} when Transport =:= gun_tls ->
 			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
 				socket => Socket
@@ -1099,8 +1101,8 @@ initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts, or
 	},
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
 		{ok, TLSSocket, Protocol, State} ->
-			{next_state, connected, State,
-				{next_event, internal, {connected, TLSSocket, Protocol}}};
+			{next_state, connected_protocol_init, State,
+				{next_event, internal, {connected, Retries, TLSSocket, Protocol}}};
 		{error, Reason, State} ->
 			{next_state, not_connected, State,
 				{next_event, internal, {retries, Retries, Reason}}}
@@ -1207,18 +1209,54 @@ normal_tls_handshake(Socket, State=#state{
 	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 		{ok, TLSSocket} ->
-			NewProtocol = gun_protocols:negotiated(ssl:negotiated_protocol(TLSSocket), Protocols),
-			Protocol = gun_protocols:handler(NewProtocol),
-			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-				socket => TLSSocket,
-				protocol => Protocol:name()
-			}, EvHandlerState1),
-			{ok, TLSSocket, NewProtocol, State#state{event_handler_state=EvHandlerState}};
+			%% This call may return {error,closed} when the socket has
+			%% been closed by the peer. This should be very rare (due to
+			%% timing) but can happen for example when client certificates
+			%% were required but not sent or invalid with some servers.
+			case ssl:negotiated_protocol(TLSSocket) of
+				{error, Reason = closed} ->
+					EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+						error => Reason
+					}, EvHandlerState1),
+					{error, Reason, State#state{event_handler_state=EvHandlerState}};
+				NegotiatedProtocol ->
+					NewProtocol = gun_protocols:negotiated(NegotiatedProtocol, Protocols),
+					Protocol = gun_protocols:handler(NewProtocol),
+					EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+						socket => TLSSocket,
+						protocol => Protocol:name()
+					}, EvHandlerState1),
+					{ok, TLSSocket, NewProtocol,
+						State#state{event_handler_state=EvHandlerState}}
+			end;
 		{error, Reason} ->
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 				error => Reason
 			}, EvHandlerState1),
 			{error, Reason, State#state{event_handler_state=EvHandlerState}}
+	end.
+
+connected_protocol_init(internal, {connected, Retries, Socket, NewProtocol},
+		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
+	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
+	case Protocol:init(Owner, Socket, Transport, ProtoOpts) of
+		{error, Reason} ->
+			{next_state, not_connected, State0,
+				{next_event, internal, {retries, Retries, Reason}}};
+		{ok, StateName, ProtoState} ->
+			%% @todo Don't send gun_up and gun_down if active/1 fails here.
+			Owner ! {gun_up, self(), Protocol:name()},
+			State1 = State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState},
+			case active(State1) of
+				{ok, State2} ->
+					State = case Protocol:has_keepalive() of
+						true -> keepalive_timeout(State2);
+						false -> State2
+					end,
+					{next_state, StateName, State};
+				Disconnect ->
+					Disconnect
+			end
 	end.
 
 connected_no_input(Type, Event, State) ->
@@ -1253,29 +1291,6 @@ connected_ws_only(cast, Msg, _)
 connected_ws_only(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 
-connected(internal, {connected, Socket, NewProtocol},
-		State0=#state{owner=Owner, opts=Opts, transport=Transport}) ->
-	{Protocol, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
-	case Protocol:init(Owner, Socket, Transport, ProtoOpts) of
-		Error={error, _} ->
-			%% @todo Don't send gun_up and gun_down if Protocol:init/4 failes here.
-			Owner ! {gun_up, self(), Protocol:name()},
-			disconnect(State0, Error);
-		{ok, StateName, ProtoState} ->
-			%% @todo Don't send gun_up and gun_down if active/1 failes here.
-			Owner ! {gun_up, self(), Protocol:name()},
-			State1 = State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState},
-			case active(State1) of
-				{ok, State2} ->
-					State = case Protocol:has_keepalive() of
-						true -> keepalive_timeout(State2);
-						false -> State2
-					end,
-					{next_state, StateName, State};
-				Disconnect ->
-					Disconnect
-			end
-	end;
 %% Public HTTP interface.
 %%
 %% @todo It might be better, internally, to pass around a URIMap
