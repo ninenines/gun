@@ -409,7 +409,7 @@ get_pool(Authority0, ReqOpts) ->
 
 start_missing_pool({Host, Port}, Opts) ->
 	case start_pool(Host, Port, Opts) of
-		{error, {pool_exists, ManagerPid}} ->
+		{error, {error, {pool_exists, ManagerPid}}} ->
 			ManagerPid;
 		{ok, ManagerPid} ->
 			ManagerPid
