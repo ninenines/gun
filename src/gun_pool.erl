@@ -415,10 +415,10 @@ start_missing_pool({Host, Port}, Opts) ->
 			ManagerPid
 	end;
 start_missing_pool(Authority, Opts) ->
-	case binary:split(Authority, [<<$:>>]) of
-		[H, P] ->
-			start_missing_pool({binary_to_list(H), binary_to_integer(P)}, Opts);
-		[H] ->
+	case uri_string:parse(<<"http://", Authority/binary>>) of
+		#{ host := H, port := P} ->
+			start_missing_pool({binary_to_list(H), P}, Opts);
+		#{ host := H } ->
 			start_missing_pool({binary_to_list(H), 80}, Opts)
 	end.
 
