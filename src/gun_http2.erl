@@ -110,7 +110,7 @@
 	%% by the client or by the server through PUSH_PROMISE frames.
 	%%
 	%% Streams can be found by ID or by Ref. The most common should be
-	%% the idea, that's why the main map has the ID as key. Then we also
+	%% the ID, that's why the main map has the ID as key. Then we also
 	%% have a Ref->ID index for faster lookup when we only have the Ref.
 	streams = #{} :: #{cow_http2:streamid() => #stream{}},
 	stream_refs = #{} :: #{reference() => cow_http2:streamid()},
@@ -1074,6 +1074,8 @@ prepare_headers(State=#http2_state{transport=Transport},
 	end,
 	%% @todo We also must remove any header found in the connection header.
 	%% @todo Much of this is duplicated in cow_http2_machine; sort things out.
+	%%       I think we want to do this before triggering events, not when
+	%%       building HeaderBlock.
 	Headers1 =
 		lists:keydelete(<<"host">>, 1,
 		lists:keydelete(<<"connection">>, 1,

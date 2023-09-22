@@ -124,8 +124,9 @@
 	| {close, ws_close_code(), iodata()}.
 -export_type([ws_frame/0]).
 
--type protocol() :: http | http2 | raw | socks
-	| {http, http_opts()} | {http2, http2_opts()} | {raw, raw_opts()} | {socks, socks_opts()}.
+-type protocol() :: http | http2 | http3 | raw | socks
+	| {http, http_opts()} | {http2, http2_opts()} | {http3, http3_opts()}
+	| {raw, raw_opts()} | {socks, socks_opts()}.
 -export_type([protocol/0]).
 
 -type protocols() :: [protocol()].
@@ -141,6 +142,7 @@
 	event_handler => {module(), any()},
 	http_opts => http_opts(),
 	http2_opts => http2_opts(),
+	http3_opts => http3_opts(),
 	protocols => protocols(),
 	raw_opts => raw_opts(),
 	retry => non_neg_integer(),
@@ -153,7 +155,7 @@
 	tls_handshake_timeout => timeout(),
 	tls_opts => [ssl:tls_client_option()],
 	trace => boolean(),
-	transport => tcp | tls | ssl,
+	transport => tcp | tls | ssl | quic,
 	ws_opts => ws_opts()
 }.
 -export_type([opts/0]).
@@ -251,6 +253,11 @@
 	tunnel_transport => tcp | tls
 }.
 -export_type([http2_opts/0]).
+
+%% @todo
+-type http3_opts() :: #{
+}.
+-export_type([http3_opts/0]).
 
 -type socks_opts() :: #{
 	version => 5,
@@ -391,6 +398,11 @@ check_options([{http2_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 		Error ->
 			Error
 	end;
+check_options([{http3_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
+	case gun_http3:check_options(ProtoOpts) of
+		ok ->
+			check_options(Opts)
+	end;
 check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 	case check_protocols_opt(L) of
 		ok -> check_options(Opts);
@@ -428,7 +440,7 @@ check_options([{tls_opts, L}|Opts]) when is_list(L) ->
 	check_options(Opts);
 check_options([{trace, B}|Opts]) when is_boolean(B) ->
 	check_options(Opts);
-check_options([{transport, T}|Opts]) when T =:= tcp; T =:= tls ->
+check_options([{transport, T}|Opts]) when T =:= tcp; T =:= tls; T =:= quic ->
 	check_options(Opts);
 check_options([{ws_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_ws:check_options(ProtoOpts) of
@@ -442,9 +454,9 @@ check_options([Opt|_]) ->
 
 check_protocols_opt(Protocols) ->
 	%% Protocols must not appear more than once, and they
-	%% must be one of http, http2 or socks.
+	%% must be one of http, http2, http3, raw or socks.
 	ProtoNames0 = lists:usort([case P0 of {P, _} -> P; P -> P end || P0 <- Protocols]),
-	ProtoNames = [P || P <- ProtoNames0, lists:member(P, [http, http2, raw, socks])],
+	ProtoNames = [P || P <- ProtoNames0, lists:member(P, [http, http2, http3, raw, socks])],
 	case length(Protocols) =:= length(ProtoNames) of
 		false -> error;
 		true ->
@@ -453,6 +465,7 @@ check_protocols_opt(Protocols) ->
 			TupleCheck = [case P of
 				{http, Opts} -> gun_http:check_options(Opts);
 				{http2, Opts} -> gun_http2:check_options(Opts);
+				{http3, Opts} -> gun_http3:check_options(Opts);
 				{raw, Opts} -> gun_raw:check_options(Opts);
 				{socks, Opts} -> gun_socks:check_options(Opts)
 			end || P <- Protocols, is_tuple(P)],
@@ -468,6 +481,7 @@ consider_tracing(ServerPid, #{trace := true}) ->
 	_ = dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
+	_ = dbg:tpl(gun_http3, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_raw, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_socks, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
@@ -495,6 +509,7 @@ info(ServerPid) ->
 	Info0 = #{
 		owner => Owner,
 		socket => Socket,
+		%% @todo This is no longer correct for https because of QUIC.
 		transport => case OriginScheme of
 			<<"http">> -> tcp;
 			<<"https">> -> tls
@@ -818,7 +833,7 @@ await_body(ServerPid, StreamRef, Timeout, MRef, Acc) ->
 	end.
 
 -spec await_up(pid())
-	-> {ok, http | http2 | raw | socks}
+	-> {ok, http | http2 | http3 | raw | socks}
 	| {error, {down, any()} | timeout}.
 await_up(ServerPid) ->
 	MRef = monitor(process, ServerPid),
@@ -827,7 +842,7 @@ await_up(ServerPid) ->
 	Res.
 
 -spec await_up(pid(), reference() | timeout())
-	-> {ok, http | http2 | raw | socks}
+	-> {ok, http | http2 | http3 | raw | socks}
 	| {error, {down, any()} | timeout}.
 await_up(ServerPid, MRef) when is_reference(MRef) ->
 	await_up(ServerPid, 5000, MRef);
@@ -838,7 +853,7 @@ await_up(ServerPid, Timeout) ->
 	Res.
 
 -spec await_up(pid(), timeout(), reference())
-	-> {ok, http | http2 | raw | socks}
+	-> {ok, http | http2 | http3 | raw | socks}
 	| {error, {down, any()} | timeout}.
 await_up(ServerPid, Timeout, MRef) ->
 	receive
@@ -974,7 +989,8 @@ init({Owner, Host, Port, Opts}) ->
 	%% This is corrected in the gun:info/1 and gun:stream_info/2 functions where applicable.
 	{OriginScheme, Transport} = case OriginTransport of
 		tcp -> {<<"http">>, gun_tcp};
-		tls -> {<<"https">>, gun_tls}
+		tls -> {<<"https">>, gun_tls};
+		quic -> {<<"https">>, gun_quicer}
 	end,
 	OwnerRef = monitor(process, Owner),
 	{EvHandler, EvHandlerState0} = maps:get(event_handler, Opts,
@@ -1062,6 +1078,38 @@ domain_lookup(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
 connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
+		transport=gun_quicer, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	%% @todo We are doing the TLS handshake at the same time,
+	%%       we cannot separate it from the connection. Fire events.
+	ConnectTimeout = maps:get(connect_timeout, Opts, infinity),
+	ConnectEvent = #{
+		lookup_info => LookupInfo,
+		timeout => ConnectTimeout
+	},
+	EvHandlerState1 = EvHandler:connect_start(ConnectEvent, EvHandlerState0),
+	case gun_quicer:connect(LookupInfo, ConnectTimeout) of
+		{ok, Socket} ->
+			%% @todo We should double check the ALPN result.
+			[Protocol] = maps:get(protocols, Opts, [http3]),
+			ProtocolName = case Protocol of
+				{P, _} -> P;
+				P -> P
+			end,
+			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
+				socket => Socket,
+				protocol => ProtocolName
+			}, EvHandlerState1),
+			{next_state, connected_protocol_init,
+				State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {connected, Retries, Socket, Protocol}}};
+		{error, Reason} ->
+			EvHandlerState = EvHandler:connect_end(ConnectEvent#{
+				error => Reason
+			}, EvHandlerState1),
+			{next_state, not_connected, State#state{event_handler_state=EvHandlerState},
+				{next_event, internal, {retries, Retries, Reason}}}
+	end;
+connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 		transport=Transport, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	ConnectTimeout = maps:get(connect_timeout, Opts, infinity),
 	ConnectEvent = #{
@@ -1100,6 +1148,7 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts, origin_host=OriginHost}) ->
 	Protocols = maps:get(protocols, Opts, [http2, http]),
 	HandshakeEvent = #{
+		%% @todo This results in ensure_tls_opts being called twice.
 		tls_opts => ensure_tls_opts(Protocols, maps:get(tls_opts, Opts, []), OriginHost),
 		timeout => maps:get(tls_handshake_timeout, Opts, infinity)
 	},
@@ -1453,13 +1502,22 @@ handle_common_connected(Type, Event, StateName, StateData) ->
 	handle_common_connected_no_input(Type, Event, StateName, StateData).
 
 %% Socket events.
+handle_common_connected_no_input(info, Msg, _, State=#state{
+		protocol=Protocol=gun_http3, protocol_state=ProtoState, cookie_store=CookieStore0,
+		event_handler=EvHandler, event_handler_state=EvHandlerState0})
+		when element(1, Msg) =:= quic ->
+%	ct:pal("~p", [Msg]),
+	{Commands, CookieStore, EvHandlerState} = Protocol:handle(Msg,
+		ProtoState, CookieStore0, EvHandler, EvHandlerState0),
+	maybe_active(commands(Commands, State#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(info, {OK, Socket, Data}, _,
-		State0=#state{socket=Socket, messages={OK, _, _},
+		State=#state{socket=Socket, messages={OK, _, _},
 		protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, CookieStore, EvHandlerState} = Protocol:handle(Data,
 		ProtoState, CookieStore0, EvHandler, EvHandlerState0),
-	maybe_active(commands(Commands, State0#state{cookie_store=CookieStore,
+	maybe_active(commands(Commands, State#state{cookie_store=CookieStore,
 		event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(info, {Closed, Socket}, _,
 		State=#state{socket=Socket, messages={_, Closed, _}}) ->
@@ -1574,6 +1632,8 @@ maybe_active(Other) ->
 	Other.
 
 active(State=#state{active=false}) ->
+	{ok, State};
+active(State=#state{transport=gun_quicer}) ->
 	{ok, State};
 active(State=#state{socket=Socket, transport=Transport}) ->
 	case Transport:setopts(Socket, [{active, once}]) of

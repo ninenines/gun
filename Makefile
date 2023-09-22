@@ -15,7 +15,12 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = public_key ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib 2.13.0
+dep_cowlib = git https://github.com/ninenines/cowlib master
+
+ifeq ($(GUN_QUICER),1)
+DEPS += quicer
+dep_quicer = git https://github.com/emqx/quic main
+endif
 
 DOC_DEPS = asciideck
 
@@ -29,10 +34,8 @@ dep_ranch_commit = 2.0.0
 dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
 DEP_EARLY_PLUGINS = ci.erlang.mk
 
-AUTO_CI_OTP ?= OTP-22+
-#AUTO_CI_HIPE ?= OTP-LATEST
-# AUTO_CI_ERLLVM ?= OTP-LATEST
-AUTO_CI_WINDOWS ?= OTP-22+
+AUTO_CI_OTP ?= OTP-LATEST-24+
+AUTO_CI_WINDOWS ?= OTP-LATEST-24+
 
 # Hex configuration.
 
@@ -58,13 +61,23 @@ ifndef FULL
 CT_SUITES := $(filter-out ws_autobahn,$(CT_SUITES))
 endif
 
-# Enable eunit.
+# Compile options.
 
 TEST_ERLC_OPTS += +'{parse_transform, eunit_autoexport}'
+
+ifeq ($(GUN_QUICER),1)
+ERLC_OPTS += -D GUN_QUICER=1
+TEST_ERLC_OPTS += -D GUN_QUICER=1
+endif
 
 # Generate rebar.config on build.
 
 app:: rebar.config
+
+# Fix quicer compilation for HTTP/3.
+
+autopatch-quicer::
+	$(verbose) printf "%s\n" "all: ;" > $(DEPS_DIR)/quicer/c_src/Makefile.erlang.mk
 
 # h2specd setup.
 

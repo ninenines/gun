@@ -34,6 +34,8 @@ handler(http) -> gun_http;
 handler({http, _}) -> gun_http;
 handler(http2) -> gun_http2;
 handler({http2, _}) -> gun_http2;
+handler(http3) -> gun_http3;
+handler({http3, _}) -> gun_http3;
 handler(raw) -> gun_raw;
 handler({raw, _}) -> gun_raw;
 handler(socks) -> gun_socks;

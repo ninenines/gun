@@ -1,0 +1,36 @@
+## Use workflows from ninenines/ci.erlang.mk to test Gun.
+
+name: Check Gun
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  schedule:
+      ## Every Monday at 2am.
+      - cron: 0 2 * * 1
+
+env:
+  CI_ERLANG_MK: 1
+
+jobs:
+  cleanup-master:
+    name: Cleanup master build
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Cleanup master build if necessary
+      if: ${{ github.event_name == 'schedule' }}
+      run: |
+        gh extension install actions/gh-actions-cache
+        gh actions-cache delete Linux-X64-Erlang-master -R $REPO --confirm || true
+        gh actions-cache delete macOS-X64-Erlang-master -R $REPO --confirm || true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO: ${{ github.repository }}
+
+  check:
+    name: Gun
+    needs: cleanup-master
+    uses: ninenines/ci.erlang.mk/.github/workflows/ci.yaml@master

@@ -69,7 +69,7 @@
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
 	opts = #{} :: gun:http_opts(),
-	version = 'HTTP/1.1' :: cow_http:version(),
+	version = 'HTTP/1.1' :: cow_http1:version(),
 	connection = keepalive :: keepalive | close,
 	buffer = <<>> :: binary(),
 
