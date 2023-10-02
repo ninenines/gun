@@ -997,7 +997,8 @@ request(State=#http2_state{http2_machine=HTTP2Machine}, StreamRef, ReplyTo, Meth
 	case cow_http2_machine:is_remote_concurrency_limit_reached(HTTP2Machine) of
 		true ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
-				too_many_streams},
+				{stream_error, too_many_streams,
+				'Maximum concurrency limit has been reached.'}},
 			{[], CookieStore, EvHandlerState};
 		false ->
 			request1(State, StreamRef, ReplyTo, Method, Host, Port,

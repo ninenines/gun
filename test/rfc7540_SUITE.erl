@@ -380,15 +380,21 @@ lingering_data_counts_toward_connection_window(_) ->
 respect_max_concurrent_streams(_) ->
 	doc("The SETTINGS_MAX_CONCURRENT_STREAMS setting can be used to "
 		"restrict the number of concurrent streams. (RFC7540 5.1.2, RFC7540 6.5.2)"),
-	{ok, Ref, Port} = do_cowboy_max_councurrent_streams(1),
+	Ref = make_ref(),
+	Routes = [{'_', [{"/delayed", delayed_hello_h, 500}]}],
+	ProtoOpts = #{
+		env => #{dispatch => cowboy_router:compile(Routes)},
+		tcp => #{protocols => [http2]},
+		max_concurrent_streams => 1
+	},
+	[{ref, _}, {port, Port}] = gun_test:init_cowboy_tcp(Ref, ProtoOpts, []),
 	try
 		{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
 		{ok, http2} = gun:await_up(ConnPid),
-		StreamRef1 = gun:get(ConnPid, "/"),
-		timer:sleep(100),
-		StreamRef2 = gun:get(ConnPid, "/"),
+		StreamRef1 = gun:get(ConnPid, "/delayed"),
+		StreamRef2 = gun:get(ConnPid, "/delayed"),
 		{error, {stream_error, Reason}} = gun:await(ConnPid, StreamRef2),
-		too_many_streams = Reason,
+		{stream_error, too_many_streams, _Human} = Reason,
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
 		{ok, _} = gun:await_body(ConnPid, StreamRef1),
 		gun:close(ConnPid)
