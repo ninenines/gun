@@ -474,7 +474,7 @@ info(ServerPid) ->
 		origin_port => OriginPort,
 		intermediaries => intermediaries_info(Intermediaries, []),
 		cookie_store => CookieStore,
-		state => CurrentStateName
+		state_name => CurrentStateName
 	},
 	Info = case Socket of
 		undefined ->

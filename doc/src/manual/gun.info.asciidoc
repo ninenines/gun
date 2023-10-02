@@ -23,7 +23,7 @@ Info :: #{
     origin_port    => inet:port_number(),
     intermediaries => [Intermediary],
     cookie_store   => gun_cookies:cookie_store(),
-    state          => atom()
+    state_name     => atom()
 }
 Intermediary :: #{
     type      => connect | socks5,
