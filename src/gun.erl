@@ -1119,8 +1119,7 @@ ensure_alpn_sni(Protocols0, TransOpts0, OriginHost) ->
 		(_, Acc) -> Acc
 	end, [], Protocols0),
 	TransOpts = [
-		{alpn_advertised_protocols, Protocols},
-		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
+		{alpn_advertised_protocols, Protocols}
 	|TransOpts0],
 	%% SNI.
 	%%
