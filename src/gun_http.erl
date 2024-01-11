@@ -26,11 +26,12 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([headers/12]).
--export([request/13]).
+-export([headers/13]).
+-export([request/14]).
 -export([data/7]).
--export([connect/9]).
+-export([connect/10]).
 -export([cancel/5]).
+-export([timeout/3]).
 -export([stream_info/2]).
 -export([down/1]).
 -export([ws_upgrade/11]).
@@ -62,7 +63,8 @@
 	path :: iodata(),
 
 	is_alive :: boolean(),
-	handler_state :: undefined | gun_content_handler:state()
+	handler_state :: undefined | gun_content_handler:state(),
+	timer_ref :: undefined | reference()
 }).
 
 -record(http_state, {
@@ -545,7 +547,8 @@ close_streams(_, [], _) ->
 	ok;
 close_streams(State, [#stream{is_alive=false}|Tail], Reason) ->
 	close_streams(State, Tail, Reason);
-close_streams(State, [#stream{ref=StreamRef, reply_to=ReplyTo}|Tail], Reason) ->
+close_streams(State, [#stream{ref=StreamRef, reply_to=ReplyTo, timer_ref=TimerRef}|Tail], Reason) ->
+	cancel_stream_timer(TimerRef),
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), Reason},
 	close_streams(State, Tail, Reason).
 
@@ -561,14 +564,14 @@ keepalive(#http_state{socket=Socket, transport=Transport, out=head}, _, EvHandle
 keepalive(_State, _, EvHandlerState) ->
 	{[], EvHandlerState}.
 
-headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
+headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerState, _)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
 	{[], CookieStore, EvHandlerState};
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
-		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
+		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0, Timeout) ->
 	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, undefined,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
@@ -576,20 +579,20 @@ headers(State=#http_state{opts=Opts, out=head},
 		ok ->
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
-				ReplyTo, Method, Authority, Path, InitialFlow)};
+				ReplyTo, Method, Authority, Path, InitialFlow, Timeout)};
 		Error={error, _} ->
 			Error
 	end,
 	{Command, CookieStore, EvHandlerState}.
 
-request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
+request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandlerState, _)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
 	{[], CookieStore, EvHandlerState};
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
-		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
+		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0, Timeout) ->
 	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
@@ -597,7 +600,7 @@ request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		ok ->
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
-				ReplyTo, Method, Authority, Path, InitialFlow)};
+				ReplyTo, Method, Authority, Path, InitialFlow, Timeout)};
 		Error={error, _} ->
 			Error
 	end,
@@ -760,19 +763,19 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{[], EvHandlerState0}
 	end.
 
-connect(State, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
+connect(State, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState, _)
 		when is_list(StreamRef) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}},
 	{[], EvHandlerState};
-connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
+connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState, _)
 		when Streams =/= [] ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}},
 	{[], EvHandlerState};
 connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version=Version},
 		StreamRef, ReplyTo, Destination=#{host := Host0}, _TunnelInfo, Headers0, InitialFlow0,
-		EvHandler, EvHandlerState0) ->
+		EvHandler, EvHandlerState0, Timeout) ->
 	Host = case Host0 of
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host0
@@ -817,7 +820,7 @@ connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version
 			EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{{state, new_stream(State, {connect, StreamRef, Destination},
-				ReplyTo, <<"CONNECT">>, Authority, <<>>, InitialFlow)},
+				ReplyTo, <<"CONNECT">>, Authority, <<>>, InitialFlow, Timeout)},
 				EvHandlerState};
 		Error={error, _} ->
 			{Error, EvHandlerState1}
@@ -838,6 +841,17 @@ cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 		false ->
 			error_stream_not_found(State0, StreamRef, ReplyTo),
 			{[], EvHandlerState0}
+	end.
+
+timeout(State0=#http_state{streams=Streams}, {?MODULE, stream_timeout, StreamRef}, TRef) ->
+	case lists:keyfind(StreamRef, #stream.ref, Streams) of
+		#stream{reply_to=ReplyTo, timer_ref=TRef} ->
+			error_stream_timeout(State0, StreamRef, ReplyTo),
+			State = cancel_stream(State0, StreamRef),
+			{state, State};
+		_ ->
+			%% Ignore non-existing streams and streams where TRef doesn't match.
+			[]
 	end.
 
 stream_info(#http_state{streams=Streams}, StreamRef) ->
@@ -861,6 +875,11 @@ down(#http_state{streams=Streams}) ->
 		#websocket{ref=Ref2} -> Ref2;
 		_ -> Ref
 	end || #stream{ref=Ref} <- Streams].
+
+error_stream_timeout(State, StreamRef, ReplyTo) ->
+	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {timeout,
+		"The stream has timed out."}},
+	ok.
 
 error_stream_closed(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
@@ -934,11 +953,13 @@ stream_ref(#websocket{ref=StreamRef}) -> StreamRef;
 stream_ref(StreamRef) -> StreamRef.
 
 new_stream(State=#http_state{streams=Streams}, StreamRef, ReplyTo,
-		Method, Authority, Path, InitialFlow) ->
+		Method, Authority, Path, InitialFlow, Timeout) ->
+	TimerRef = start_stream_timer(StreamRef, Timeout),
 	State#http_state{streams=Streams
 		++ [#stream{ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
 			method=iolist_to_binary(Method), authority=Authority,
-			path=iolist_to_binary(Path), is_alive=true}]}.
+			path=iolist_to_binary(Path), is_alive=true,
+			timer_ref=TimerRef}]}.
 
 is_stream(#http_state{streams=Streams}, StreamRef) ->
 	lists:keymember(StreamRef, #stream.ref, Streams).
@@ -946,14 +967,26 @@ is_stream(#http_state{streams=Streams}, StreamRef) ->
 cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 	Streams2 = [case Ref of
 		StreamRef ->
-			Tuple#stream{is_alive=false};
+			cancel_stream_timer(TimerRef),
+			Tuple#stream{is_alive=false, timer_ref=undefined};
 		_ ->
 			Tuple
-	end || Tuple = #stream{ref=Ref} <- Streams],
+	end || Tuple = #stream{ref=Ref, timer_ref=TimerRef} <- Streams],
 	State#http_state{streams=Streams2}.
 
-end_stream(State=#http_state{streams=[_|Tail]}) ->
+end_stream(State=#http_state{streams=[#stream{timer_ref=TimerRef}|Tail]}) ->
+	cancel_stream_timer(TimerRef),
 	State#http_state{in=head, streams=Tail}.
+
+start_stream_timer(_StreamRef, infinity) ->
+	undefined;
+start_stream_timer(StreamRef, Timeout) ->
+	erlang:start_timer(Timeout, self(), {?MODULE, stream_timeout, StreamRef}).
+
+cancel_stream_timer(undefined) ->
+	ok;
+cancel_stream_timer(TimerRef) ->
+	erlang:cancel_timer(TimerRef).
 
 %% Websocket upgrade.
 
@@ -999,7 +1032,8 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 			{state, new_stream(State#http_state{connection=Conn, out=Out},
 				#websocket{ref=StreamRef, reply_to=ReplyTo, key=Key,
 					extensions=GunExtensions, opts=WsOpts},
-				ReplyTo, <<"GET">>, Authority, Path, InitialFlow)};
+				ReplyTo, <<"GET">>, Authority, Path, InitialFlow,
+				infinity)};
 		Error={error, _} ->
 			Error
 	end,
