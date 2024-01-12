@@ -112,6 +112,7 @@
 -export([connected_ws_only/3]).
 -export([closing/3]).
 -export([terminate/3]).
+-export([reply/2]).
 
 -type req_headers() :: [{binary() | string() | atom(), iodata()}]
 	| #{binary() | string() | atom() => iodata()}.
@@ -198,7 +199,7 @@
 
 -type req_opts() :: #{
 	flow => pos_integer(),
-	reply_to => pid(),
+	reply_to => pid() | {module(), atom(), list()} | fun((_) -> _) | {fun(), list()},
 	tunnel => stream_ref()
 }.
 -export_type([req_opts/0]).
@@ -1148,7 +1149,7 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
 				NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
 			end,
 			Protocol = gun_protocols:handler(NewProtocol),
-			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
+			reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
 			commands([
 				{switch_transport, gun_tls, TLSSocket},
 				{switch_protocol, NewProtocol, ReplyTo}
@@ -1183,7 +1184,7 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, P
 		NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
 	end,
 	Protocol = gun_protocols:handler(NewProtocol),
-	ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
+	reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		socket => Socket,
 		protocol => Protocol:name()
@@ -1245,7 +1246,7 @@ connected_protocol_init(internal, {connected, Retries, Socket, NewProtocol},
 				{next_event, internal, {retries, Retries, Reason}}};
 		{ok, StateName, ProtoState} ->
 			%% @todo Don't send gun_up and gun_down if active/1 fails here.
-			Owner ! {gun_up, self(), Protocol:name()},
+			reply(Owner, {gun_up, self(), Protocol:name()}),
 			State1 = State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState},
 			case active(State1) of
 				{ok, State2} ->
@@ -1267,9 +1268,9 @@ connected_data_only(cast, Msg, _)
 			element(1, Msg) =:= connect; element(1, Msg) =:= ws_upgrade;
 			element(1, Msg) =:= ws_send ->
 	ReplyTo = element(2, Msg),
-	ReplyTo ! {gun_error, self(), {badstate,
+	reply(ReplyTo, {gun_error, self(), {badstate,
 		"This connection does not accept new requests to be opened "
-		"nor does it accept Websocket frames."}},
+		"nor does it accept Websocket frames."}}),
 	keep_state_and_data;
 connected_data_only(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
@@ -1285,8 +1286,8 @@ connected_ws_only(cast, Msg, _)
 		when element(1, Msg) =:= headers; element(1, Msg) =:= request; element(1, Msg) =:= data;
 			element(1, Msg) =:= connect; element(1, Msg) =:= ws_upgrade ->
 	ReplyTo = element(2, Msg),
-	ReplyTo ! {gun_error, self(), {badstate,
-		"This connection only accepts Websocket frames."}},
+	reply(ReplyTo, {gun_error, self(), {badstate,
+		"This connection only accepts Websocket frames."}}),
 	keep_state_and_data;
 connected_ws_only(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
@@ -1389,23 +1390,23 @@ closing(state_timeout, closing_timeout, State=#state{status=Status}) ->
 %% When reconnect is disabled, fail HTTP/Websocket operations immediately.
 closing(cast, {headers, ReplyTo, StreamRef, _Method, _Path, _Headers, _InitialFlow},
 		State=#state{opts=#{retry := 0}}) ->
-	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	reply(ReplyTo, {gun_error, self(), StreamRef, closing}),
 	{keep_state, State};
 closing(cast, {request, ReplyTo, StreamRef, _Method, _Path, _Headers, _Body, _InitialFlow},
 		State=#state{opts=#{retry := 0}}) ->
-	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	reply(ReplyTo, {gun_error, self(), StreamRef, closing}),
 	{keep_state, State};
 closing(cast, {connect, ReplyTo, StreamRef, _Destination, _Headers, _InitialFlow},
 		State=#state{opts=#{retry := 0}}) ->
-	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	reply(ReplyTo, {gun_error, self(), StreamRef, closing}),
 	{keep_state, State};
 closing(cast, {ws_upgrade, ReplyTo, StreamRef, _Path, _Headers},
 		State=#state{opts=#{retry := 0}}) ->
-	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	reply(ReplyTo, {gun_error, self(), StreamRef, closing}),
 	{keep_state, State};
 closing(cast, {ws_upgrade, ReplyTo, StreamRef, _Path, _Headers, _WsOpts},
 		State=#state{opts=#{retry := 0}}) ->
-	ReplyTo ! {gun_error, self(), StreamRef, closing},
+	reply(ReplyTo, {gun_error, self(), StreamRef, closing}),
 	{keep_state, State};
 closing(Type, Event, State) ->
 	handle_common_connected(Type, Event, ?FUNCTION_NAME, State).
@@ -1613,8 +1614,8 @@ handle_common(cast, {set_owner, CurrentOwner, NewOwner}, _,
 	{keep_state, State#state{owner=NewOwner, status={up, NewOwnerRef}}};
 %% We cannot change the owner when we are shutting down.
 handle_common(cast, {set_owner, CurrentOwner, _}, _, #state{owner=CurrentOwner}) ->
-	CurrentOwner ! {gun_error, self(), {badstate,
-		"The owner of the connection cannot be changed when the connection is shutting down."}},
+	reply(CurrentOwner, {gun_error, self(), {badstate,
+		"The owner of the connection cannot be changed when the connection is shutting down."}}),
 	keep_state_and_state;
 handle_common(cast, shutdown, StateName, State=#state{
 		status=Status, socket=Socket, transport=Transport, protocol=Protocol}) ->
@@ -1767,7 +1768,7 @@ disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 			%% We closed the socket, discard any remaining socket events.
 			disconnect_flush(State1),
 			KilledStreams = Protocol:down(ProtoState),
-			Owner ! {gun_down, self(), Protocol:name(), Reason, KilledStreams},
+			reply(Owner, {gun_down, self(), Protocol:name(), Reason, KilledStreams}),
 			Retry = maps:get(retry, Opts, 5),
 			State2 = keepalive_cancel(State1#state{
 				socket=undefined, protocol=undefined, protocol_state=undefined}),
@@ -1844,3 +1845,12 @@ terminate(Reason, StateName, #state{event_handler=EvHandler,
 		reason => Reason
 	},
 	EvHandler:terminate(TerminateEvent, EvHandlerState).
+
+reply(Pid, Reply) when is_pid(Pid) ->
+	Pid ! Reply;
+reply({M, F, A}, Reply) when is_atom(M), is_atom(F), is_list(A) ->
+	apply(M, F, [Reply | A]);
+reply(Fun, Reply) when is_function(Fun, 1) ->
+	Fun(Reply);
+reply({Fun, A}, Reply) when is_list(A), is_function(Fun, length(A) + 1) ->
+	apply(Fun, [Reply | A]).

@@ -125,7 +125,7 @@ init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tun
 					_ = case TunnelProtocol of
 						http -> ok;
 						socks -> ok;
-						_ -> ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()}
+						_ -> gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()})
 					end,
 					{tunnel, State#tunnel_state{socket=OriginSocket, transport=OriginTransport,
 						protocol=Proto, protocol_state=ProtoState},
@@ -202,7 +202,7 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {ok, Negotiated},
 	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
 			ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}) of
 		{ok, _, ProtoState} ->
-			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
+			gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()}),
 			{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}},
 				CookieStore, EvHandlerState};
 		Error={error, _} ->

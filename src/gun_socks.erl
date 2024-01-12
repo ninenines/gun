@@ -167,7 +167,7 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{ref=StreamRef, reply_to=ReplyTo, op
 			[NewProtocol0] = maps:get(protocols, Opts, [http]),
 			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
 			Protocol = gun_protocols:handler(NewProtocol),
-			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
+			gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
 				{switch_protocol, NewProtocol, ReplyTo}]
 	end;
