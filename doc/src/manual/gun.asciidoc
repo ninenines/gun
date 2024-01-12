@@ -442,7 +442,8 @@ Request headers.
 ----
 req_opts() :: #{
     flow     => pos_integer(),
-    reply_to => pid()
+    reply_to => pid() | {module(), atom(), list()}
+                      | fun((_) -> _) | {fun(), list()}
 }
 ----
 
@@ -457,7 +458,8 @@ flow control is disabled.
 
 reply_to (`self()`)::
 
-The pid of the process that will receive the response messages.
+The pid of the process that will receive the response messages,
+or a function that will be called with the message as argument.
 
 === socks_opts()
 
@@ -598,6 +600,7 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.2*: The `reply_to` option now accepts functions.
 * *2.1*: The HTTP/2 option list was updated with new options.
 * *2.0*: The `default_protocol` and `user_opts` Websocket
          options were added.

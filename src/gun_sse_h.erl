@@ -19,7 +19,7 @@
 -export([handle/3]).
 
 -record(state, {
-	reply_to :: pid(),
+	reply_to :: gun:reply_to(),
 	stream_ref :: reference(),
 	sse_state :: cow_sse:state()
 }).
@@ -49,12 +49,12 @@ handle(IsFin, Data, State) ->
 handle(IsFin, Data, State=#state{reply_to=ReplyTo, stream_ref=StreamRef, sse_state=SSE0}, Flow) ->
 	case cow_sse:parse(Data, SSE0) of
 		{event, Event, SSE} ->
-			ReplyTo ! {gun_sse, self(), StreamRef, Event},
+			gun:reply(ReplyTo, {gun_sse, self(), StreamRef, Event}),
 			handle(IsFin, <<>>, State#state{sse_state=SSE}, Flow + 1);
 		{more, SSE} ->
 			Inc = case IsFin of
 				fin ->
-					ReplyTo ! {gun_sse, self(), StreamRef, fin},
+					gun:reply(ReplyTo, {gun_sse, self(), StreamRef, fin}),
 					1;
 				_ ->
 					0

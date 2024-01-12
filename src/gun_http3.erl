@@ -49,7 +49,7 @@
 	ref :: reference(),
 
 	%% Process to send messages to.
-	reply_to :: undefined | pid(),
+	reply_to :: undefined | gun:reply_to(),
 
 	%% Whether the stream is currently in a special state.
 	status :: header | {unidi, control | encoder | decoder}
@@ -67,7 +67,7 @@
 }).
 
 -record(http3_state, {
-	reply_to :: pid(),
+	reply_to :: gun:reply_to(),
 	conn :: gun_quicer:quicer_connection_handle(),
 	transport :: module(),
 	opts = #{} :: gun:http2_opts(),
@@ -382,7 +382,7 @@ headers_frame(State0=#http3_state{opts=Opts}, Stream, IsFin, Headers,
 headers_frame_inform(State, #stream{ref=StreamRef, reply_to=ReplyTo},
 		Status, Headers, EvHandler, EvHandlerState0) ->
 	RealStreamRef = StreamRef, %% @todo stream_ref(State, StreamRef),
-	ReplyTo ! {gun_inform, self(), RealStreamRef, Status, Headers},
+	gun:reply(ReplyTo, {gun_inform, self(), RealStreamRef, Status, Headers}),
 	EvHandlerState = EvHandler:response_inform(#{
 		stream_ref => RealStreamRef,
 		reply_to => ReplyTo,
@@ -395,7 +395,7 @@ headers_frame_response(State=#http3_state{content_handlers=Handlers0},
 		Stream=#stream{ref=StreamRef, reply_to=ReplyTo},
 		IsFin, Status, Headers, EvHandler, EvHandlerState0) ->
 	RealStreamRef = StreamRef, %% @todo stream_ref(State, StreamRef),
-	ReplyTo ! {gun_response, self(), RealStreamRef, IsFin, Status, Headers},
+	gun:reply(ReplyTo, {gun_response, self(), RealStreamRef, IsFin, Status, Headers}),
 	EvHandlerState1 = EvHandler:response_headers(#{
 		stream_ref => RealStreamRef,
 		reply_to => ReplyTo,
@@ -426,7 +426,7 @@ trailers_frame(State, #stream{ref=StreamRef, reply_to=ReplyTo},
 		Trailers, EvHandler, EvHandlerState0) ->
 	%% @todo We probably want to pass this to gun_content_handler?
 	RealStreamRef = StreamRef, %% @todo stream_ref(State, StreamRef),
-	ReplyTo ! {gun_trailers, self(), RealStreamRef, Trailers},
+	gun:reply(ReplyTo, {gun_trailers, self(), RealStreamRef, Trailers}),
 	ResponseEvent = #{
 		stream_ref => RealStreamRef,
 		reply_to => ReplyTo
@@ -719,8 +719,8 @@ stream_update(State=#http3_state{streams=Streams},
 stream_aborted(State0, StreamID, Reason, EvHandler, EvHandlerState0) ->
 	case stream_take(State0, StreamID) of
 		{#stream{ref=StreamRef, reply_to=ReplyTo}, State} ->
-			ReplyTo ! {gun_error, self(), StreamRef, %% @todo stream_ref(State0, StreamRef),
-				{stream_error, Reason, 'Stream reset by server.'}},
+			gun:reply(ReplyTo, {gun_error, self(), StreamRef, %% @todo stream_ref(State0, StreamRef),
+				{stream_error, Reason, 'Stream reset by server.'}}),
 			EvHandlerState = EvHandler:cancel(#{
 				stream_ref => StreamRef, %% @todo stream_ref(State, StreamRef),
 				reply_to => ReplyTo,

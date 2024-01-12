@@ -264,13 +264,25 @@ postpone_request_while_not_connected(_) ->
 
 reply_to_http(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
-	do_reply_to(http).
+	do_reply_to(http, pid).
 
 reply_to_http2(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
-	do_reply_to(http2).
+	do_reply_to(http2, pid).
 
-do_reply_to(Protocol) ->
+reply_to_http_f(_) ->
+	doc("The reply_to option allows using a fun for requests."),
+	do_reply_to(http, f).
+
+reply_to_http_fa(_) ->
+	doc("The reply_to option allows using a fun/args tuple for requests."),
+	do_reply_to(http, fa).
+
+reply_to_http_mfa(_) ->
+	doc("The reply_to option allows using an MFA tuple for requests."),
+	do_reply_to(http, mfa).
+
+do_reply_to(Protocol, ReplyToType) ->
 	{ok, OriginPid, OriginPort} = init_origin(tcp, Protocol,
 		fun(_, _, ClientSocket, ClientTransport) ->
 			{ok, _} = ClientTransport:recv(ClientSocket, 0, infinity),
@@ -302,23 +314,38 @@ do_reply_to(Protocol) ->
 			ok = ClientTransport:send(ClientSocket, ResponseData),
 			timer:sleep(1000)
 		end),
-	{ok, Pid} = gun:open("localhost", OriginPort, #{protocols => [Protocol]}),
-	{ok, Protocol} = gun:await_up(Pid),
+	{ok, GunPid} = gun:open("localhost", OriginPort, #{protocols => [Protocol]}),
+	{ok, Protocol} = gun:await_up(GunPid),
 	handshake_completed = receive_from(OriginPid),
+	do_reply_to_req(GunPid, ReplyToType),
+	gun:close(GunPid).
+
+do_reply_to_req(GunPid, pid) ->
 	Self = self(),
 	ReplyTo = spawn(fun() ->
 		receive Ref when is_reference(Ref) ->
-			Response = gun:await(Pid, Ref, infinity),
+			Response = gun:await(GunPid, Ref, infinity),
 			Self ! Response
 		end
 	end),
-	Ref = gun:get(Pid, "/", [], #{reply_to => ReplyTo}),
+	Ref = gun:get(GunPid, "/", [], #{reply_to => ReplyTo}),
 	ReplyTo ! Ref,
 	receive
 		Msg ->
-			{response, _, _, _} = Msg,
-			gun:close(Pid)
-	end.
+			{response, _, _, _} = Msg
+	end;
+do_reply_to_req(GunPid, ReplyToType) ->
+	ReplyTo = case ReplyToType of
+		f -> Self = self(), fun(Reply) -> Self ! Reply end;
+		fa -> {fun do_reply_to_fun/2, [self()]};
+		mfa -> {?MODULE, do_reply_to_fun, [self()]}
+	end,
+	Ref = gun:get(GunPid, "/", [], #{reply_to => ReplyTo}),
+	{response, _, _, _} = gun:await(GunPid, Ref, infinity),
+	ok.
+
+do_reply_to_fun(Reply, DstPid) ->
+	DstPid ! Reply.
 
 retry_0(_) ->
 	doc("Ensure Gun gives up immediately with retry=0."),
