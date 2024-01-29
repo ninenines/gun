@@ -1643,4 +1643,5 @@ start_stream_timer(StreamRef, Timeout) ->
 cancel_stream_timer(undefined) ->
 	ok;
 cancel_stream_timer(TimerRef) ->
-	erlang:cancel_timer(TimerRef).
+	_ = erlang:cancel_timer(TimerRef),
+	ok.
