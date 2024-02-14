@@ -104,7 +104,7 @@ response_trailers(Event, State) ->
 response_end(Event=#{stream_ref := StreamRef}, State0=#{table := Tid}) ->
 	State = case State0 of
 		#{StreamRef := {fin, nofin}} ->
-			_ = ets:update_counter(Tid, self(), -1),
+			try ets:update_counter(Tid, self(), -1) of _ -> ok catch error:badarg -> ok end,
 			maps:remove(StreamRef, State0);
 		#{StreamRef := {IsFin, nofin}} ->
 			State0#{StreamRef => {IsFin, fin}}
