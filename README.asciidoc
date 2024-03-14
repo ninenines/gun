@@ -25,8 +25,8 @@ and https://pleroma.social/[Pleroma].
 
 == Online documentation
 
-* https://ninenines.eu/docs/en/gun/2.0/guide[User guide]
-* https://ninenines.eu/docs/en/gun/2.0/manual[Function reference]
+* https://ninenines.eu/docs/en/gun/2.1/guide[User guide]
+* https://ninenines.eu/docs/en/gun/2.1/manual[Function reference]
 
 == Offline documentation
 
