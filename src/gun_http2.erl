@@ -585,7 +585,7 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 	ProtoOpts = case Destination of
 		#{transport := tls} ->
 			Protocols = maps:get(protocols, Destination, [http2, http]),
-			TLSOpts = gun:ensure_alpn_sni(Protocols, maps:get(tls_opts, Destination, []), DestHost),
+			TLSOpts = gun:ensure_tls_opts(Protocols, maps:get(tls_opts, Destination, []), DestHost),
 			HandshakeEvent = #{
 				stream_ref => RealStreamRef,
 				reply_to => ReplyTo,

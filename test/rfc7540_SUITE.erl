@@ -62,7 +62,9 @@ do_proxy_init(Proxy=#proxy{parent=Parent, transport=Transport}) ->
 			gen_tcp:listen(0, [binary, {active, false}]);
 		gun_tls ->
 			Opts = ct_helper:get_certs_from_ets(),
-			ssl:listen(0, [binary, {active, false}, {alpn_preferred_protocols, [<<"h2">>]}|Opts])
+			ssl:listen(0, [binary, {active, false}, {verify, verify_none},
+				{fail_if_no_peer_cert, false},
+				{alpn_preferred_protocols, [<<"h2">>]}|Opts])
 	end,
 	{ok, {_, Port}} = Transport:sockname(ListenSocket),
 	Parent ! {self(), Port},

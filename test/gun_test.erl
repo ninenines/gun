@@ -24,7 +24,9 @@ init_cowboy_tcp(Ref, ProtoOpts, Config) ->
 
 init_cowboy_tls(Ref, ProtoOpts, Config) ->
 	Opts = ct_helper:get_certs_from_ets(),
-	{ok, _} = cowboy:start_tls(Ref, Opts ++ [{port, 0}], ProtoOpts),
+	{ok, _} = cowboy:start_tls(Ref,
+		[{verify, verify_none}, {fail_if_no_peer_cert, false}]
+			++ Opts ++ [{port, 0}], ProtoOpts),
 	[{ref, Ref}, {port, ranch:get_port(Ref)}|Config].
 
 %% Origin server helpers.
@@ -64,7 +66,8 @@ init_origin(Parent, tls, Protocol, Fun) ->
 	end,
 	%% sni_hosts is necessary for SNI tests to succeed.
 	Opts = [{sni_hosts, [{net_adm:localhost(), []}]}|Opts1],
-	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false}|Opts]),
+	{ok, ListenSocket} = ssl:listen(0, [binary, {active, false},
+		{fail_if_no_peer_cert, false}|Opts]),
 	{ok, {_, Port}} = ssl:sockname(ListenSocket),
 	Parent ! {self(), Port},
 	{ok, ClientSocket0} = ssl:transport_accept(ListenSocket, 5000),

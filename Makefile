@@ -7,11 +7,12 @@ PROJECT_VERSION = 2.0.1
 # Options.
 
 # ERLC_OPTS = -DDEBUG_PROXY=1
+PLT_APPS = crypto runtime_tools
 CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 
 # Dependencies.
 
-LOCAL_DEPS = ssl
+LOCAL_DEPS = public_key ssl
 
 DEPS = cowlib
 dep_cowlib = git https://github.com/ninenines/cowlib 2.13.0

@@ -55,7 +55,9 @@ init_per_suite(Config) ->
 	},
 	{ok, _} = cowboy:start_clear({?MODULE, tcp}, [], ProtoOpts),
 	TCPOriginPort = ranch:get_port({?MODULE, tcp}),
-	{ok, _} = cowboy:start_tls({?MODULE, tls}, ct_helper:get_certs_from_ets(), ProtoOpts),
+	{ok, _} = cowboy:start_tls({?MODULE, tls},
+		[{fail_if_no_peer_cert, false}|ct_helper:get_certs_from_ets()],
+		ProtoOpts),
 	TLSOriginPort = ranch:get_port({?MODULE, tls}),
 	[{tcp_origin_port, TCPOriginPort}, {tls_origin_port, TLSOriginPort}|Config].
 

@@ -565,7 +565,7 @@ commands([{tls_handshake, HandshakeEvent0, Protocols, ReplyTo}|Tail],
 		stream_ref := StreamRef,
 		tls_opts := TLSOpts0
 	} = HandshakeEvent0,
-	TLSOpts = gun:ensure_alpn_sni(Protocols, TLSOpts0, OriginHost),
+	TLSOpts = gun:ensure_tls_opts(Protocols, TLSOpts0, OriginHost),
 	HandshakeEvent = HandshakeEvent0#{
 		tls_opts => TLSOpts
 	},

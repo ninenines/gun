@@ -462,13 +462,15 @@ server_name_indication_custom(_) ->
 	do_server_name_indication("localhost", net_adm:localhost(), #{
 		tls_opts => [
 			{verify, verify_none}, {versions, ['tlsv1.2']},
+			{fail_if_no_peer_cert, false},
 			{server_name_indication, net_adm:localhost()}]
 	}).
 
 server_name_indication_default(_) ->
 	doc("Ensure a default server_name_indication is accepted."),
 	do_server_name_indication(net_adm:localhost(), net_adm:localhost(), #{
-		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}]
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']},
+			{fail_if_no_peer_cert, false}]
 	}).
 
 do_server_name_indication(Host, Expected, GunOpts) ->
@@ -630,7 +632,8 @@ tls_handshake_error_gun_http2_init_retry_0(_) ->
 		}},
 		protocols => [http2],
 		retry => 0,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}]
 	}),
 	{error, {down, {shutdown, closed}}} = gun:await_up(ConnPid),
 	gun:close(ConnPid).
@@ -665,7 +668,8 @@ tls_handshake_error_gun_http2_init_retry_1(_) ->
 		}},
 		protocols => [http2],
 		retry => 1,
-		transport => tls
+		transport => tls,
+		tls_opts => [{verify, verify_none}]
 	}),
 	{error, {down, {shutdown, closed}}} = gun:await_up(ConnPid),
 	gun:close(ConnPid).
