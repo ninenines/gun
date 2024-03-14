@@ -402,17 +402,6 @@ respect_max_concurrent_streams(_) ->
 		cowboy:stop_listener(Ref)
 	end.
 
-do_cowboy_max_councurrent_streams(MaxConcurrentStreams) ->
-	Ref = make_ref(),
-	Routes = [{'_', [{"/", delayed_hello_h, 500}]}],
-	ProtoOpts = #{
-		env => #{dispatch => cowboy_router:compile(Routes)},
-		tcp => #{protocols => [http2]},
-		max_concurrent_streams => MaxConcurrentStreams
-	},
-	[{ref, _}, {port, Port}] = gun_test:init_cowboy_tcp(Ref, ProtoOpts, []),
-	{ok, Ref, Port}.
-
 headers_priority_flag(_) ->
 	doc("HEADERS frames may include a PRIORITY flag indicating "
 		"that stream dependency information is attached. (RFC7540 6.2)"),
