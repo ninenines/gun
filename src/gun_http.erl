@@ -238,7 +238,7 @@ handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
 			{Trailers, Rest} = cow_http:parse_headers(Data2),
 			%% @todo We probably want to pass this to gun_content_handler?
 			RealStreamRef = stream_ref(State, StreamRef),
-			ReplyTo ! {gun_trailers, self(), RealStreamRef, Trailers},
+			gun:reply(ReplyTo, {gun_trailers, self(), RealStreamRef, Trailers}),
 			ResponseEvent = #{
 				stream_ref => RealStreamRef,
 				reply_to => ReplyTo
@@ -319,7 +319,7 @@ handle_connect(Rest, State=#http_state{
 	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
 	_ = case Stream of
 		#stream{is_alive=false} -> ok;
-		_ -> ReplyTo ! {gun_response, self(), RealStreamRef, fin, Status, Headers}
+		_ -> gun:reply(ReplyTo, {gun_response, self(), RealStreamRef, fin, Status, Headers})
 	end,
 	%% @todo Figure out whether the event should trigger if the stream was cancelled.
 	EvHandlerState1 = EvHandler:response_headers(#{
@@ -355,7 +355,7 @@ handle_connect(Rest, State=#http_state{
 			[NewProtocol0] = maps:get(protocols, Destination, [http]),
 			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, RealStreamRef),
 			Protocol = gun_protocols:handler(NewProtocol),
-			ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},
+			gun:reply(ReplyTo, {gun_tunnel_up, self(), RealStreamRef, Protocol:name()}),
 			{[
 				{origin, <<"http">>, NewHost, NewPort, connect},
 				{switch_protocol, NewProtocol, ReplyTo}
@@ -382,17 +382,17 @@ handle_inform(Rest, State=#http_state{
 				%% @todo We shouldn't ignore Rest.
 				{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
 				Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
-				ReplyTo ! {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers},
+				gun:reply(ReplyTo, {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers}),
 				%% @todo We probably need to add_stream_ref?
 				{{switch_protocol, raw, ReplyTo}, CookieStore, EvHandlerState0}
 			catch _:_ ->
 				%% When the Upgrade header is missing or invalid we treat
 				%% the response as any other informational response.
-				ReplyTo ! {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers},
+				gun:reply(ReplyTo, {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers}),
 				handle(Rest, State, CookieStore, EvHandler, EvHandlerState)
 			end;
 		_ ->
-			ReplyTo ! {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers},
+			gun:reply(ReplyTo, {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers}),
 			handle(Rest, State, CookieStore, EvHandler, EvHandlerState)
 	end.
 
@@ -407,7 +407,7 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 		false ->
 			{undefined, EvHandlerState0};
 		true ->
-			ReplyTo ! {gun_response, self(), RealStreamRef, IsFin, Status, Headers},
+			gun:reply(ReplyTo, {gun_response, self(), RealStreamRef, IsFin, Status, Headers}),
 			EvHandlerState1 = EvHandler:response_headers(#{
 				stream_ref => RealStreamRef,
 				reply_to => ReplyTo,
@@ -546,7 +546,7 @@ close_streams(_, [], _) ->
 close_streams(State, [#stream{is_alive=false}|Tail], Reason) ->
 	close_streams(State, Tail, Reason);
 close_streams(State, [#stream{ref=StreamRef, reply_to=ReplyTo}|Tail], Reason) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), Reason},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), Reason}),
 	close_streams(State, Tail, Reason).
 
 %% We don't send a keep-alive when a CONNECT request was initiated.
@@ -563,8 +563,8 @@ keepalive(_State, _, EvHandlerState) ->
 
 headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
-		{badstate, "The stream is not a tunnel."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
+		{badstate, "The stream is not a tunnel."}}),
 	{[], CookieStore, EvHandlerState};
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
@@ -584,8 +584,8 @@ headers(State=#http_state{opts=Opts, out=head},
 
 request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
-		{badstate, "The stream is not a tunnel."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
+		{badstate, "The stream is not a tunnel."}}),
 	{[], CookieStore, EvHandlerState};
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
@@ -762,13 +762,13 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 
 connect(State, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
 		when is_list(StreamRef) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
-		{badstate, "The stream is not a tunnel."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
+		{badstate, "The stream is not a tunnel."}}),
 	{[], EvHandlerState};
 connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
 		when Streams =/= [] ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
-		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}}),
 	{[], EvHandlerState};
 connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version=Version},
 		StreamRef, ReplyTo, Destination=#{host := Host0}, _TunnelInfo, Headers0, InitialFlow0,
@@ -863,13 +863,13 @@ down(#http_state{streams=Streams}) ->
 	end || #stream{ref=Ref} <- Streams].
 
 error_stream_closed(State, StreamRef, ReplyTo) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
-		"The stream has already been closed."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+		"The stream has already been closed."}}),
 	ok.
 
 error_stream_not_found(State, StreamRef, ReplyTo) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
-		"The stream cannot be found."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+		"The stream cannot be found."}}),
 	ok.
 
 %% Headers information retrieval.
@@ -959,13 +959,13 @@ end_stream(State=#http_state{streams=[_|Tail]}) ->
 
 ws_upgrade(State, StreamRef, ReplyTo, _, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef),
-		{badstate, "The stream is not a tunnel."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
+		{badstate, "The stream is not a tunnel."}}),
 	{[], CookieStore, EvHandlerState};
 ws_upgrade(State=#http_state{version='HTTP/1.0'},
 		StreamRef, ReplyTo, _, _, _, _, _, CookieStore, _, EvHandlerState) ->
-	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
-		"Websocket cannot be used over an HTTP/1.0 connection."}},
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+		"Websocket cannot be used over an HTTP/1.0 connection."}}),
 	{[], CookieStore, EvHandlerState};
 ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		Host, Port, Path, Headers0, WsOpts, CookieStore0, EvHandler, EvHandlerState0) ->
@@ -1047,7 +1047,7 @@ ws_handshake_end(Buffer,
 	end,
 	%% Inform the user that the upgrade was successful and switch the protocol.
 	RealStreamRef = stream_ref(State, StreamRef),
-	ReplyTo ! {gun_upgrade, self(), RealStreamRef, [<<"websocket">>], Headers},
+	gun:reply(ReplyTo, {gun_upgrade, self(), RealStreamRef, [<<"websocket">>], Headers}),
 	{switch_protocol, {ws, #{
 		stream_ref => RealStreamRef,
 		headers => Headers,

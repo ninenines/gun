@@ -442,7 +442,7 @@ Request headers.
 ----
 req_opts() :: #{
     flow     => pos_integer(),
-    reply_to => pid()
+    reply_to => pid() | {module(), atom(), list()} | fun((_) -> _) | {fun(), list()}
 }
 ----
 
@@ -457,7 +457,8 @@ flow control is disabled.
 
 reply_to (`self()`)::
 
-The pid of the process that will receive the response messages.
+The pid of the process that will receive the response messages,
+alternatively a function that will be called with the reponse.
 
 === socks_opts()
 

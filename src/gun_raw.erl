@@ -57,7 +57,7 @@ init(ReplyTo, Socket, Transport, Opts) ->
 handle(Data, State=#raw_state{ref=StreamRef, reply_to=ReplyTo, flow=Flow0},
 		CookieStore, _, EvHandlerState) ->
 	%% When we take over the entire connection there is no stream reference.
-	ReplyTo ! {gun_data, self(), StreamRef, nofin, Data},
+	gun:reply(ReplyTo, {gun_data, self(), StreamRef, nofin, Data}),
 	Flow = case Flow0 of
 		infinity -> infinity;
 		_ -> Flow0 - 1
