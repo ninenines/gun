@@ -24,10 +24,10 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([headers/12]).
--export([request/13]).
+-export([headers/13]).
+-export([request/14]).
 -export([data/7]).
--export([connect/9]).
+-export([connect/10]).
 -export([cancel/5]).
 -export([timeout/3]).
 -export([stream_info/2]).
@@ -288,11 +288,12 @@ keepalive(_State, _EvHandler, EvHandlerState) ->
 %% We pass the headers forward and optionally dereference StreamRef.
 headers(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
 		StreamRef0, ReplyTo, Method, Host, Port, Path, Headers,
-		InitialFlow, CookieStore0, EvHandler, EvHandlerState0) ->
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0,
+		Timeout) ->
 	StreamRef = maybe_dereference(State, StreamRef0),
 	{Commands, CookieStore, EvHandlerState1} = Proto:headers(ProtoState0, StreamRef,
 		ReplyTo, Method, Host, Port, Path, Headers,
-		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0, Timeout),
 	{ResCommands, EvHandlerState} = commands(Commands, State, EvHandler, EvHandlerState1),
 	{ResCommands, CookieStore, EvHandlerState}.
 
@@ -300,11 +301,11 @@ headers(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
 request(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0,
 		info=#{origin_host := OriginHost, origin_port := OriginPort}},
 		StreamRef0, ReplyTo, Method, _Host, _Port, Path, Headers, Body,
-		InitialFlow, CookieStore0, EvHandler, EvHandlerState0) ->
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0, Timeout) ->
 	StreamRef = maybe_dereference(State, StreamRef0),
 	{Commands, CookieStore, EvHandlerState1} = Proto:request(ProtoState0, StreamRef,
 		ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
-		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0, Timeout),
 	{ResCommands, EvHandlerState} = commands(Commands, State, EvHandler, EvHandlerState1),
 	{ResCommands, CookieStore, EvHandlerState}.
 
@@ -344,11 +345,11 @@ data(State=#tunnel_state{socket=Socket, transport=Transport,
 connect(State=#tunnel_state{info=#{origin_host := Host, origin_port := Port},
 		protocol=Proto, protocol_state=ProtoState0},
 		StreamRef0, ReplyTo, Destination, _, Headers, InitialFlow,
-		EvHandler, EvHandlerState0) ->
+		EvHandler, EvHandlerState0, Timeout) ->
 	StreamRef = maybe_dereference(State, StreamRef0),
 	{Commands, EvHandlerState1} = Proto:connect(ProtoState0, StreamRef,
 		ReplyTo, Destination, #{host => Host, port => Port}, Headers, InitialFlow,
-		EvHandler, EvHandlerState0),
+		EvHandler, EvHandlerState0, Timeout),
 	{ResCommands, EvHandlerState} = commands(Commands, State, EvHandler, EvHandlerState1),
 	{ResCommands, EvHandlerState}.
 
