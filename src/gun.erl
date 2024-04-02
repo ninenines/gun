@@ -495,7 +495,7 @@ set_owner(ServerPid, NewOwnerPid) ->
 
 -spec info(pid()) -> map().
 info(ServerPid) ->
-	{_, #state{
+	{CurrentStateName, #state{
 		owner=Owner,
 		socket=Socket,
 		transport=Transport,
@@ -522,7 +522,8 @@ info(ServerPid) ->
 		origin_host => OriginHost,
 		origin_port => OriginPort,
 		intermediaries => intermediaries_info(Intermediaries, []),
-		cookie_store => CookieStore
+		cookie_store => CookieStore,
+		state_name => CurrentStateName
 	},
 	Info = case Socket of
 		undefined ->
