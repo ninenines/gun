@@ -443,7 +443,7 @@ graceful_shutdown_goaway_no_error(_) ->
 	%% NO_ERROR (0x0): The associated condition is not a result of an error.
 	%% For example, a GOAWAY might include this code to indicate graceful
 	%% shutdown of a connection. (RFC7540 7)
-	{ok, _, Port} = init_origin(tcp, http2, fun(Parent, Socket, _Transport) ->
+	{ok, _, Port} = init_origin(tcp, http2, fun(Parent, _ListenSocket, Socket, _Transport) ->
 		%% Expect a GOAWAY with reason NO_ERROR.
 		{ok, <<_:24, 7:8, 0:8, 0:1, 0:31>>} = gen_tcp:recv(Socket, 9, 500),
 		{ok, <<0:1, LastStreamId:31, ErrorCode:32>>} = gen_tcp:recv(Socket, 8, 500),
