@@ -512,7 +512,9 @@ info(ServerPid) ->
 		origin_host=OriginHost,
 		origin_port=OriginPort,
 		intermediaries=Intermediaries,
-		cookie_store=CookieStore
+		cookie_store=CookieStore,
+		event_handler=EventHandler,
+		event_handler_state=EventHandlerState
 	}} = sys:get_state(ServerPid),
 	Info0 = #{
 		owner => Owner,
@@ -522,6 +524,7 @@ info(ServerPid) ->
 			<<"http">> -> tcp;
 			<<"https">> -> tls
 		end,
+		state_name => CurrentStateName,
 		origin_scheme => case Protocol of
 			gun_raw -> undefined;
 			gun_socks -> undefined;
@@ -531,7 +534,8 @@ info(ServerPid) ->
 		origin_port => OriginPort,
 		intermediaries => intermediaries_info(Intermediaries, []),
 		cookie_store => CookieStore,
-		state_name => CurrentStateName
+		event_handler => EventHandler,
+		event_handler_state => EventHandlerState
 	},
 	Info = case Socket of
 		undefined ->
