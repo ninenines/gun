@@ -210,6 +210,7 @@ http2_opts() :: #{
     flow                        => pos_integer(),
     keepalive                   => timeout(),
     keepalive_tolerance         => non_neg_integer(),
+    notify_settings_changed     => boolean(),
 
     %% HTTP/2 state machine configuration.
     connection_window_margin_size  => 0..16#7fffffff,
@@ -265,6 +266,13 @@ The number of unacknowledged pings in flight that are
 tolerated before the connection is closed. By default
 this mechanism is disabled even if `keepalive` is
 enabled.
+
+notify_settings_changed (false)::
+
+Whether Gun should send the notification message
+`{gun_notify, ConnPid, settings_changed, AllSettings}`
+to the user when settings are initiated or changed
+by the server.
 
 === opts()
 
