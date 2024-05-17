@@ -66,6 +66,7 @@ Connection:
 * link:man:gun_up(3)[gun_up(3)] - The connection is up
 * link:man:gun_tunnel_up(3)[gun_tunnel_up(3)] - The tunnel is up
 * link:man:gun_down(3)[gun_down(3)] - The connection is down
+* link:man:gun_notify(3)[gun_notify(3)] - Optional event notification
 * link:man:gun_upgrade(3)[gun_upgrade(3)] - Successful protocol upgrade
 * link:man:gun_error(3)[gun_error(3)] - Stream or connection-wide error
 
@@ -210,6 +211,7 @@ http2_opts() :: #{
     flow                        => pos_integer(),
     keepalive                   => timeout(),
     keepalive_tolerance         => non_neg_integer(),
+    notify_settings_changed     => boolean(),
 
     %% HTTP/2 state machine configuration.
     connection_window_margin_size  => 0..16#7fffffff,
@@ -265,6 +267,11 @@ The number of unacknowledged pings in flight that are
 tolerated before the connection is closed. By default
 this mechanism is disabled even if `keepalive` is
 enabled.
+
+notify_settings_changed (false)::
+
+Whether Gun should send a link:man:gun_notify(3)[gun_notify(3)] message
+to the user when settings are changed by the server.
 
 === opts()
 
@@ -600,6 +607,8 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.2*: The `notify_settings_changed` option for HTTP/2 was
+         documented.
 * *2.2*: The `reply_to` option now accepts functions.
 * *2.1*: The HTTP/2 option list was updated with new options.
 * *2.0*: The `default_protocol` and `user_opts` Websocket

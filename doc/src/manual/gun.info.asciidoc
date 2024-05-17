@@ -49,6 +49,7 @@ the connection.
 
 == Changelog
 
+* *2.2*: The value `state_name` was added.
 * *2.0*: The values `owner`, `origin_scheme` and `cookie_store` were
          added.
 * *1.3*: The values `socket`, `transport`, `protocol`, `origin_host`,
