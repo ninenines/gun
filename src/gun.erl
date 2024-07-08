@@ -1235,7 +1235,7 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
 			reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
 			commands([
 				{switch_transport, gun_tls, TLSSocket},
-				{switch_protocol, NewProtocol, ReplyTo}
+				{switch_protocol, NewProtocol, ReplyTo, <<>>}
 			], State);
 		{error, Reason, State} ->
 			commands({error, Reason}, State)
@@ -1272,7 +1272,7 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, P
 		socket => Socket,
 		protocol => Protocol:name()
 	}, EvHandlerState0),
-	commands([{switch_protocol, NewProtocol, ReplyTo}], State0#state{event_handler_state=EvHandlerState});
+	commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}], State0#state{event_handler_state=EvHandlerState});
 tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeEvent, _, _}},
 		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
@@ -1809,8 +1809,8 @@ commands([{switch_transport, Transport, Socket}|Tail], State0=#state{
 		Disconnect ->
 			Disconnect
 	end;
-commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
-		opts=Opts, socket=Socket, transport=Transport,
+commands([{switch_protocol, NewProtocol, ReplyTo, Buffer}], State0=#state{
+		opts=Opts, socket=Socket, transport=Transport, messages={OK, _, _},
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Protocol, ProtoOpts0} = gun_protocols:handler_and_opts(NewProtocol, Opts),
 	ProtoOpts = case ProtoOpts0 of
@@ -1833,9 +1833,13 @@ commands([{switch_protocol, NewProtocol, ReplyTo}], State0=#state{
 	case active(State1) of
 		{ok, State2} ->
 			State = keepalive_cancel(State2),
+			Actions = case Buffer of
+				<<>> -> [];
+				_ -> [{next_event, info, {OK, Socket, Buffer}}]
+			end,
 			case Protocol:has_keepalive() of
-				true -> {next_state, StateName, keepalive_timeout(State)};
-				false -> {next_state, StateName, State}
+				true -> {next_state, StateName, keepalive_timeout(State), Actions};
+				false -> {next_state, StateName, State, Actions}
 			end;
 		Disconnect ->
 			Disconnect
