@@ -242,13 +242,23 @@ connect_raw_reply_to(_) ->
 
 http11_upgrade_raw_tcp(_) ->
 	doc("Use the HTTP Upgrade mechanism to switch to the raw protocol over TCP."),
-	do_http11_upgrade_raw(tcp).
+	do_http11_upgrade_raw(tcp, "").
 
 http11_upgrade_raw_tls(_) ->
 	doc("Use the HTTP Upgrade mechanism to switch to the raw protocol over TLS."),
-	do_http11_upgrade_raw(tls).
+	do_http11_upgrade_raw(tls, "").
 
-do_http11_upgrade_raw(OriginTransport) ->
+http11_upgrade_raw_tcp_with_init_msg(_) ->
+	doc("Use the HTTP Upgrade mechanism to switch to the raw protocol over TCP,"
+		" with HTTP header immediately followed by the body."),
+	do_http11_upgrade_raw(tcp, "Initial message.").
+
+http11_upgrade_raw_tls_with_init_msg(_) ->
+	doc("Use the HTTP Upgrade mechanism to switch to the raw protocol over TLS,"
+		" with HTTP header immediately followed by the body."),
+	do_http11_upgrade_raw(tls, "Initial message.").
+
+do_http11_upgrade_raw(OriginTransport, InitMsg) ->
 	{ok, OriginPid, OriginPort} = init_origin(OriginTransport, raw,
 		fun (Parent, ListenSocket, ClientSocket, ClientTransport) ->
 			%% We skip the request and send a 101 response unconditionally.
@@ -257,7 +267,7 @@ do_http11_upgrade_raw(OriginTransport) ->
 				"HTTP/1.1 101 Switching Protocols\r\n"
 				"Connection: upgrade\r\n"
 				"Upgrade: custom/1.0\r\n"
-				"\r\n"),
+				"\r\n" ++ InitMsg),
 			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport)
 		end),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
@@ -271,6 +281,14 @@ do_http11_upgrade_raw(OriginTransport) ->
 		<<"upgrade">> => <<"custom/1.0">>
 	}),
 	{upgrade, [<<"custom/1.0">>], _} = gun:await(ConnPid, StreamRef),
+	case InitMsg of
+		[] ->
+			ok;
+		_  ->
+			InitMsgBin = list_to_binary(InitMsg),
+			{data, nofin, InitMsgBin} = gun:await(ConnPid, undefined),
+			ok
+	end,
 	%% When we take over the entire connection there is no stream reference.
 	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
 	{data, nofin, <<"Hello world!">>} = gun:await(ConnPid, undefined),

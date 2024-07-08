@@ -492,7 +492,7 @@ commands([Origin={origin, Scheme, Host, Port, Type}|Tail],
 		origin_port => Port
 	}, EvHandlerState0),
 	commands(Tail, State#tunnel_state{protocol_origin=Origin}, EvHandler, EvHandlerState);
-commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
+commands([{switch_protocol, NewProtocol, ReplyTo, <<>> = _Rest}|Tail],
 		State=#tunnel_state{socket=Socket, transport=Transport, opts=Opts,
 		protocol_origin=undefined},
 		EvHandler, EvHandlerState0) ->
@@ -510,7 +510,7 @@ commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
 		Error={error, _} ->
 			{Error, EvHandlerState0}
 	end;
-commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
+commands([{switch_protocol, NewProtocol, ReplyTo, <<>> = _Rest}|Tail],
 		State=#tunnel_state{transport=Transport, stream_ref=TunnelStreamRef,
 		info=#{origin_host := Host, origin_port := Port}, opts=Opts, protocol=CurrentProto,
 		protocol_origin={origin, _Scheme, OriginHost, OriginPort, Type}},
