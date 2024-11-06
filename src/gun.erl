@@ -477,7 +477,7 @@ check_protocols_opt(Protocols) ->
 	end.
 
 consider_tracing(ServerPid, #{trace := true}) ->
-	dbg:tracer(),
+	_ = dbg:tracer(),
 	_ = dbg:tpl(gun, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_http, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_http2, [{'_', [], [{return_trace}]}]),
@@ -485,7 +485,8 @@ consider_tracing(ServerPid, #{trace := true}) ->
 	_ = dbg:tpl(gun_raw, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_socks, [{'_', [], [{return_trace}]}]),
 	_ = dbg:tpl(gun_ws, [{'_', [], [{return_trace}]}]),
-	dbg:p(ServerPid, all);
+	_ = dbg:p(ServerPid, all),
+	ok;
 consider_tracing(_, _) ->
 	ok.
 
