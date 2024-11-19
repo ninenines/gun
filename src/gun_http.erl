@@ -358,7 +358,7 @@ handle_connect(Rest, State=#http_state{
 			ReplyTo ! {gun_tunnel_up, self(), RealStreamRef, Protocol:name()},
 			{[
 				{origin, <<"http">>, NewHost, NewPort, connect},
-				{switch_protocol, NewProtocol, ReplyTo}
+				{switch_protocol, NewProtocol, ReplyTo, <<>>}
 			], CookieStore, EvHandlerState}
 	end.
 
@@ -379,12 +379,11 @@ handle_inform(Rest, State=#http_state{
 		%% @todo We should check that we asked for an upgrade before accepting it.
 		{'HTTP/1.1', 101, _} when is_reference(StreamRef) ->
 			try
-				%% @todo We shouldn't ignore Rest.
 				{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
 				Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
 				ReplyTo ! {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers},
 				%% @todo We probably need to add_stream_ref?
-				{{switch_protocol, raw, ReplyTo}, CookieStore, EvHandlerState0}
+				{{switch_protocol, raw, ReplyTo, Rest}, CookieStore, EvHandlerState0}
 			catch _:_ ->
 				%% When the Upgrade header is missing or invalid we treat
 				%% the response as any other informational response.
@@ -1034,17 +1033,8 @@ ws_handshake_extensions_and_protocol(Buffer, State,
 	end.
 
 %% We know that the most recent stream is the Websocket one.
-ws_handshake_end(Buffer,
-		State=#http_state{socket=Socket, transport=Transport, streams=[#stream{flow=InitialFlow}|_]},
+ws_handshake_end(Buffer, State=#http_state{streams=[#stream{flow=InitialFlow}|_]},
 		#websocket{ref=StreamRef, reply_to=ReplyTo, opts=Opts}, Headers, Extensions, Handler) ->
-	%% Send ourselves the remaining buffer, if any.
-	_ = case Buffer of
-		<<>> ->
-			ok;
-		_ ->
-			{OK, _, _} = Transport:messages(),
-			self() ! {OK, Socket, Buffer}
-	end,
 	%% Inform the user that the upgrade was successful and switch the protocol.
 	RealStreamRef = stream_ref(State, StreamRef),
 	ReplyTo ! {gun_upgrade, self(), RealStreamRef, [<<"websocket">>], Headers},
@@ -1055,4 +1045,4 @@ ws_handshake_end(Buffer,
 		flow => InitialFlow,
 		handler => Handler,
 		opts => Opts
-	}}, ReplyTo}.
+	}}, ReplyTo, Buffer}.

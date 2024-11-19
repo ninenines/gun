@@ -169,7 +169,7 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{ref=StreamRef, reply_to=ReplyTo, op
 			Protocol = gun_protocols:handler(NewProtocol),
 			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Protocol:name()},
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, NewProtocol, ReplyTo}]
+				{switch_protocol, NewProtocol, ReplyTo, <<>>}]
 	end;
 handle(<<5, Error, _/bits>>, #socks_state{version=5, status=connect}) ->
 	Reason = case Error of
