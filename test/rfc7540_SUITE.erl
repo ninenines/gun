@@ -437,6 +437,25 @@ settings_ack_timeout(_) ->
 	timer:sleep(6000),
 	gun:close(ConnPid).
 
+graceful_shutdown_goaway_no_error(_) ->
+	doc("(...) an endpoint that sends GOAWAY with NO_ERROR during "
+		"graceful shutdown (...) RFC7540 6.8"),
+	%% NO_ERROR (0x0): The associated condition is not a result of an error.
+	%% For example, a GOAWAY might include this code to indicate graceful
+	%% shutdown of a connection. (RFC7540 7)
+	{ok, _, Port} = init_origin(tcp, http2, fun(Parent, _ListenSocket, Socket, _Transport) ->
+		%% Expect a GOAWAY with reason NO_ERROR.
+		{ok, <<_:24, 7:8, 0:8, 0:1, 0:31>>} = gen_tcp:recv(Socket, 9, 500),
+		{ok, <<0:1, LastStreamId:31, ErrorCode:32>>} = gen_tcp:recv(Socket, 8, 500),
+		0 = LastStreamId,
+		0 = ErrorCode,
+		Parent ! done
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	gun:shutdown(ConnPid),
+	receive done -> ok end.
+
 keepalive_tolerance_ping_ack_timeout(_) ->
 	doc("The PING frame may be used to easily test a connection. (RFC7540 8.1.4)"),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, do_ping_ack_loop_fun()),
