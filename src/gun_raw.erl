@@ -23,6 +23,7 @@
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
+-export([ping/3]).
 -export([data/7]).
 -export([down/1]).
 
@@ -83,6 +84,9 @@ closing(_, _, _, EvHandlerState) ->
 
 close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
+
+ping(_State, _PingRef, _ReplyTo) ->
+	{error, unsupported_by_protocol}.
 
 %% @todo Initiate closing on IsFin=fin.
 data(#raw_state{ref=StreamRef, socket=Socket, transport=Transport}, StreamRef,
