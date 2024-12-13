@@ -471,6 +471,30 @@ keepalive_tolerance_ping_ack_timeout(_) ->
 		error(timeout)
 	end.
 
+user_initiated_ping(_) ->
+	doc("The PING frame allows a client to safely test whether a connection is"
+            " still active without sending a request. (RFC7540 8.1.4)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun (_, _, Socket, Transport) ->
+		{ok, Data} = Transport:recv(Socket, 9, infinity),
+		<<Len:24, 6:8, %% PING
+			0:8, %% Flags
+			0:1, 0:31>> = Data,
+		{ok, Payload} = Transport:recv(Socket, Len, 1000),
+		8 = Len = byte_size(Payload),
+		Ack = <<8:24, 6:8, %% PING
+			1:8, %% Ack flag
+			0:1, 0:31, Payload/binary>>,
+		ok = Transport:send(Socket, Ack)
+	end),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	PingRef = gun:ping(Pid),
+	ping_ack = gun:await(Pid, PingRef, 1000),
+	gun:close(Pid).
+
 do_ping_ack_loop_fun() ->
 	%% Receive ping, sync with parent, send ping ack, loop.
 	fun Loop(Parent, ListenSocket, Socket, Transport) ->

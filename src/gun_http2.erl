@@ -27,6 +27,7 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
+-export([ping/3]).
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
@@ -82,6 +83,12 @@
 	tunnel :: undefined | #tunnel{}
 }).
 
+-record(user_ping, {
+	ref :: reference(),
+	reply_to :: pid(),
+	payload :: integer()
+}).
+
 -record(http2_state, {
 	reply_to :: pid(),
 	socket :: inet:socket() | ssl:sslsocket(),
@@ -114,6 +121,9 @@
 	%% have a Ref->ID index for faster lookup when we only have the Ref.
 	streams = #{} :: #{cow_http2:streamid() => #stream{}},
 	stream_refs = #{} :: #{reference() => cow_http2:streamid()},
+
+	%% User-initiated pings that have not yet been acknowledged.
+	user_pings = [] :: [#user_ping{}],
 
 	%% Number of pings that have been sent but not yet acknowledged.
 	%% Used to determine whether the connection should be closed when
@@ -351,7 +361,7 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 
 maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 		transport=Transport, opts=Opts, http2_machine=HTTP2Machine,
-		pings_unack=PingsUnack}, Frame) ->
+		pings_unack=PingsUnack, user_pings=UserPings0}, Frame) ->
 	case Frame of
 		{settings, _} ->
 			%% We notify remote settings changes only if the user requested it.
@@ -371,8 +381,21 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 				ok -> {state, State};
 				Error={error, _} -> Error
 			end;
-		{ping_ack, _Opaque} ->
+		{ping_ack, 0} ->
+			%% Internal ping payload used for keepalive.
 			{state, State#http2_state{pings_unack=PingsUnack - 1}};
+		{ping_ack, Payload} ->
+			%% User ping.
+			case lists:keytake(Payload, #user_ping.payload, UserPings0) of
+				{value, #user_ping{ref=StreamRef, reply_to=PingReplyTo}, UserPings} ->
+					RealStreamRef = stream_ref(State, StreamRef),
+					PingReplyTo ! {gun_ping_ack, self(), RealStreamRef},
+					{state, State#http2_state{user_pings=UserPings}};
+				false ->
+					%% Ignore unexpected ping ack. RFC 7540
+					%% doesn't explicitly forbid it.
+					{state, State}
+			end;
 		_ ->
 			{state, State}
 	end.
@@ -932,6 +955,20 @@ keepalive(State=#http2_state{socket=Socket, transport=Transport, pings_unack=Pin
 			{{state, State#http2_state{pings_unack=PingsUnack + 1}}, EvHandlerState};
 		Error={error, _} ->
 			{Error, EvHandlerState}
+	end.
+
+ping(State=#http2_state{socket=Socket, transport=Transport, user_pings=UserPings}, StreamRef, ReplyTo) ->
+	%% Use non-zero 64-bit payload for user pings. 0 is reserved for keepalive.
+	Payload = case erlang:monotonic_time(microsecond) band 16#ffffffffffffffff of
+		0 -> 1;
+		Payload0 -> Payload0
+	end,
+	case Transport:send(Socket, cow_http2:ping(Payload)) of
+		ok ->
+			UserPing = #user_ping{ref = StreamRef, reply_to = ReplyTo, payload = Payload},
+			{state, State#http2_state{user_pings = UserPings ++ [UserPing]}};
+		Error={error, _} ->
+			Error
 	end.
 
 headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
