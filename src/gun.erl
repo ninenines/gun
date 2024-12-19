@@ -60,6 +60,10 @@
 %% Streaming data.
 -export([data/4]).
 
+%% User pings.
+-export([ping/1]).
+-export([ping/2]).
+
 %% Tunneling.
 -export([connect/2]).
 -export([connect/3]).
@@ -721,6 +725,20 @@ data(ServerPid, StreamRef, IsFin, Data) ->
 			gen_statem:cast(ServerPid, {data, self(), StreamRef, IsFin, Data})
 	end.
 
+%% User pings.
+
+-spec ping(pid()) -> stream_ref().
+ping(ServerPid) ->
+	ping(ServerPid, #{}).
+
+-spec ping(pid(), req_opts()) -> stream_ref().
+ping(ServerPid, ReqOpts) ->
+	Tunnel = get_tunnel(ReqOpts),
+	StreamRef = make_stream_ref(Tunnel),
+	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	gen_statem:cast(ServerPid, {ping, ReplyTo, StreamRef}),
+	StreamRef.
+
 %% Tunneling.
 
 -spec connect(pid(), connect_destination()) -> stream_ref().
@@ -782,6 +800,8 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{up, Protocol};
 		{gun_notify, ServerPid, Type, Info} ->
 			{notify, Type, Info};
+		{gun_ping_ack, ServerPid, StreamRef} ->
+			ping_ack;
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->
@@ -1367,6 +1387,15 @@ connected_ws_only(Type, Event, State) ->
 %%
 %% @todo It might be better, internally, to pass around a URIMap
 %% containing the target URI, instead of separate Host/Port/PathWithQs.
+connected(cast, {ping, ReplyTo, StreamRef},
+		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
+	case erlang:function_exported(Protocol, ping, 3) of
+		true ->
+			Commands = Protocol:ping(ProtoState, dereference_stream_ref(StreamRef, State), ReplyTo),
+			commands(Commands, State);
+		false ->
+			ReplyTo ! {gun_error, self(), StreamRef, not_supported_for_protocol}
+	end;
 connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,

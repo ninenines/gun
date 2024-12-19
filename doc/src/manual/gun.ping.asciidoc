@@ -1,0 +1,68 @@
+= gun:ping(3)
+
+== Name
+
+gun:ping - Check the health or the round-trip time of a connection
+without sending a request.
+
+== Description
+
+[source,erlang]
+----
+ping(ConnPid)
+    -> ping(ConnPid, #{})
+
+ping(ConnPid, ReqOpts)
+    -> PingRef
+
+ConnPid   :: pid()
+ReqOpts   :: gun:req_opts()
+PingRef   :: gun:stream_ref()
+----
+
+Send a ping.
+
+A ping can be sent to check the health or to measure the
+round-trip time of a connection, without sending a request.
+
+The function `ping/1,2` sends a ping immediately, if the
+protocol supports pings. The server responds with a ping ack.
+A call to `gun:await/2,3` returns `ping_ack` when the ping
+ack has been received from the server.
+
+Currently, explicit ping is supported only for HTTP/2.
+
+== Arguments
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+ReqOpts::
+
+Request options. Only the `reply_to` and `tunnel` options
+can be used.
+
+== Return value
+
+A reference that identifies the ping is returned. This
+reference must be passed in subsequent calls and will be
+received in messages related to this ping.
+
+== Changelog
+
+* *2.x*: Function introduced.
+
+== Examples
+
+.Perform a request
+[source,erlang]
+----
+PingRef = gun:ping(ConnPid).
+ping_ack = gun:await(ConnPid, PingRef).
+----
+
+== See also
+
+link:man:gun(3)[gun(3)],
+link:man:gun:await(3)[gun:await(3)],
