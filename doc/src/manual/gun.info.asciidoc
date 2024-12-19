@@ -12,17 +12,19 @@ info(ConnPid) -> Info
 
 ConnPid :: pid()
 Info :: #{
-    owner          => pid(),
-    socket         => inet:socket() | ssl:sslsocket(),
-    transport      => tcp | tls,
-    protocol       => http | http2 | socks | ws,
-    sock_ip        => inet:ip_address(),
-    sock_port      => inet:port_number(),
-    origin_scheme  => binary() | undefined,
-    origin_host    => inet:hostname() | inet:ip_address(),
-    origin_port    => inet:port_number(),
-    intermediaries => [Intermediary],
-    cookie_store   => gun_cookies:cookie_store()
+    owner               => pid(),
+    socket              => inet:socket() | ssl:sslsocket(),
+    transport           => tcp | tls,
+    protocol            => http | http2 | socks | ws,
+    sock_ip             => inet:ip_address(),
+    sock_port           => inet:port_number(),
+    origin_scheme       => binary() | undefined,
+    origin_host         => inet:hostname() | inet:ip_address(),
+    origin_port         => inet:port_number(),
+    intermediaries      => [Intermediary],
+    cookie_store        => gun_cookies:cookie_store(),
+    event_handler       => module(),
+    event_handler_state => any()
 }
 Intermediary :: #{
     type      => connect | socks5,
@@ -48,6 +50,8 @@ the connection.
 
 == Changelog
 
+* *TBD*: The values `event_handler` and `event_handler_state` were
+         added.
 * *2.0*: The values `owner`, `origin_scheme` and `cookie_store` were
          added.
 * *1.3*: The values `socket`, `transport`, `protocol`, `origin_host`,
