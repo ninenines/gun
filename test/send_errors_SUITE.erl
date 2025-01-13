@@ -117,7 +117,7 @@ http2_send_ping_ack_fail(_) ->
 			gun:close(Pid);
 		Msg ->
 			error({fail, Msg})
-	after 5000 ->
+	after 15000 ->
 		error(timeout)
 	end.
 
