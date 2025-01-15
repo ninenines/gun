@@ -201,7 +201,8 @@
 -type req_opts() :: #{
 	flow => pos_integer(),
 	reply_to => pid(),
-	tunnel => stream_ref()
+	tunnel => stream_ref(),
+	timeout => timeout()
 }.
 -export_type([req_opts/0]).
 
@@ -671,8 +672,9 @@ headers(ServerPid, Method, Path, Headers0, ReqOpts) ->
 	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	Timeout = maps:get(timeout, ReqOpts, infinity),
 	gen_statem:cast(ServerPid, {headers, ReplyTo, StreamRef,
-		Method, Path, normalize_headers(Headers0), InitialFlow}),
+		Method, Path, normalize_headers(Headers0), InitialFlow, Timeout}),
 	StreamRef.
 
 -spec request(pid(), iodata(), iodata(), req_headers(), iodata()) -> stream_ref().
@@ -685,8 +687,9 @@ request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
 	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	Timeout = maps:get(timeout, ReqOpts, infinity),
 	gen_statem:cast(ServerPid, {request, ReplyTo, StreamRef,
-		Method, Path, normalize_headers(Headers), Body, InitialFlow}),
+		Method, Path, normalize_headers(Headers), Body, InitialFlow, Timeout}),
 	StreamRef.
 
 get_tunnel(#{tunnel := Tunnel}) when is_reference(Tunnel) ->
@@ -737,8 +740,9 @@ connect(ServerPid, Destination, Headers, ReqOpts) ->
 	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
+	Timeout = maps:get(timeout, ReqOpts, infinity),
 	gen_statem:cast(ServerPid, {connect, ReplyTo, StreamRef,
-		Destination, Headers, InitialFlow}),
+		Destination, Headers, InitialFlow, Timeout}),
 	StreamRef.
 
 %% Awaiting gun messages.
@@ -1367,34 +1371,34 @@ connected_ws_only(Type, Event, State) ->
 %%
 %% @todo It might be better, internally, to pass around a URIMap
 %% containing the target URI, instead of separate Host/Port/PathWithQs.
-connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow},
+connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow, Timeout},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, CookieStore, EvHandlerState} = Protocol:headers(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Method, Host, Port, Path, Headers,
-		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0, Timeout),
 	commands(Commands, State#state{cookie_store=CookieStore,
 		event_handler_state=EvHandlerState});
-connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body, InitialFlow},
+connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body, InitialFlow, Timeout},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, CookieStore, EvHandlerState} = Protocol:request(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
-		InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+		InitialFlow, CookieStore0, EvHandler, EvHandlerState0, Timeout),
 	commands(Commands, State#state{cookie_store=CookieStore,
 		event_handler_state=EvHandlerState});
-connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
+connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow, Timeout},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Commands, EvHandlerState} = Protocol:connect(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Destination, #{host => Host, port => Port},
-		Headers, InitialFlow, EvHandler, EvHandlerState0),
+		Headers, InitialFlow, EvHandler, EvHandlerState0, Timeout),
 	commands(Commands, State#state{event_handler_state=EvHandlerState});
 %% Public Websocket interface.
 connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers}, State=#state{opts=Opts}) ->
@@ -1459,11 +1463,11 @@ closing(state_timeout, closing_timeout, State=#state{status=Status}) ->
 	end,
 	disconnect(State, Reason);
 %% When reconnect is disabled, fail HTTP/Websocket operations immediately.
-closing(cast, {headers, ReplyTo, StreamRef, _Method, _Path, _Headers, _InitialFlow},
+closing(cast, {headers, ReplyTo, StreamRef, _Method, _Path, _Headers, _InitialFlow, _Timeout},
 		State=#state{opts=#{retry := 0}}) ->
 	ReplyTo ! {gun_error, self(), StreamRef, closing},
 	{keep_state, State};
-closing(cast, {request, ReplyTo, StreamRef, _Method, _Path, _Headers, _Body, _InitialFlow},
+closing(cast, {request, ReplyTo, StreamRef, _Method, _Path, _Headers, _Body, _InitialFlow, _Timeout},
 		State=#state{opts=#{retry := 0}}) ->
 	ReplyTo ! {gun_error, self(), StreamRef, closing},
 	{keep_state, State};

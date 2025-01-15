@@ -27,10 +27,10 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([headers/12]).
--export([request/13]).
+-export([headers/13]).
+-export([request/14]).
 -export([data/7]).
--export([connect/9]).
+-export([connect/10]).
 -export([cancel/5]).
 -export([timeout/3]).
 -export([stream_info/2]).
@@ -79,7 +79,10 @@
 	handler_state :: undefined | gun_content_handler:state(),
 
 	%% CONNECT tunnel.
-	tunnel :: undefined | #tunnel{}
+	tunnel :: undefined | #tunnel{},
+
+	%% Request timeout.
+	timer_ref :: undefined | reference()
 }).
 
 -record(http2_state, {
@@ -949,8 +952,8 @@ keepalive(State=#http2_state{socket=Socket, transport=Transport, pings_unack=Pin
 
 headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo, Method, Host, Port,
-		Path, Headers0, InitialFlow0, CookieStore0, EvHandler, EvHandlerState0)
-		when is_reference(StreamRef) ->
+		Path, Headers0, InitialFlow0, CookieStore0, EvHandler, EvHandlerState0,
+		Timeout) when is_reference(StreamRef) ->
 	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(
 		iolist_to_binary(Method), HTTP2Machine0),
 	{ok, PseudoHeaders, Headers, CookieStore} = prepare_headers(
@@ -973,8 +976,10 @@ headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 			EvHandlerState = EvHandler:request_headers(RequestEvent,
 				EvHandlerState1),
 			InitialFlow = initial_flow(InitialFlow0, Opts),
+			TimerRef = start_stream_timer(StreamRef, Timeout),
 			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo,
-				flow=InitialFlow, authority=Authority, path=Path},
+				flow=InitialFlow, authority=Authority, path=Path,
+				timer_ref=TimerRef},
 			{{state, create_stream(State#http2_state{
 				http2_machine=HTTP2Machine}, Stream)}, CookieStore,
 				EvHandlerState};
@@ -983,14 +988,15 @@ headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	end;
 %% Tunneled request.
 headers(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
-		Path, Headers, InitialFlow, CookieStore0, EvHandler, EvHandlerState0) ->
+		Path, Headers, InitialFlow, CookieStore0, EvHandler, EvHandlerState0,
+		Timeout) ->
 	case get_stream_by_ref(State, StreamRef) of
 		%% @todo We should send an error to the user if the stream isn't ready.
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0, info=#{
 				origin_host := OriginHost, origin_port := OriginPort}}} ->
 			{Commands, CookieStore, EvHandlerState1} = Proto:headers(ProtoState0, RealStreamRef,
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers,
-				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+				InitialFlow, CookieStore0, EvHandler, EvHandlerState0, Timeout),
 			{ResCommands, EvHandlerState} = tunnel_commands(Commands, Stream,
 				State, EvHandler, EvHandlerState1),
 			{ResCommands, CookieStore, EvHandlerState};
@@ -1005,8 +1011,8 @@ headers(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
 
 request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo, Method, Host, Port,
-		Path, Headers0, Body, InitialFlow0, CookieStore0, EvHandler, EvHandlerState0)
-		when is_reference(StreamRef) ->
+		Path, Headers0, Body, InitialFlow0, CookieStore0, EvHandler, EvHandlerState0,
+		Timeout) when is_reference(StreamRef) ->
 	Headers1 = lists:keystore(<<"content-length">>, 1, Headers0,
 		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
 	{ok, StreamID, HTTP2Machine1} = cow_http2_machine:init_stream(
@@ -1035,8 +1041,9 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		ok ->
 			EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
 			InitialFlow = initial_flow(InitialFlow0, Opts),
+			TimerRef = start_stream_timer(StreamRef, Timeout),
 			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
-				authority=Authority, path=Path},
+				authority=Authority, path=Path, timer_ref=TimerRef},
 			State = create_stream(State0#http2_state{http2_machine=HTTP2Machine}, Stream),
 			case IsFin of
 				fin ->
@@ -1048,6 +1055,10 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 				nofin ->
 					{StateOrError, EvHandlerStateRet} = maybe_send_data(
 						State, StreamID, fin, Body, EvHandler, EvHandlerState),
+					case StateOrError of
+						{state, _} -> ok;
+						{error, _} -> cancel_stream_timer(TimerRef)
+					end,
 					{StateOrError, CookieStore, EvHandlerStateRet}
 			end;
 		Error={error, _} ->
@@ -1055,14 +1066,15 @@ request(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	end;
 %% Tunneled request.
 request(State, RealStreamRef=[StreamRef|_], ReplyTo, Method, _Host, _Port,
-		Path, Headers, Body, InitialFlow, CookieStore0, EvHandler, EvHandlerState0) ->
+		Path, Headers, Body, InitialFlow, CookieStore0, EvHandler, EvHandlerState0,
+		Timeout) ->
 	case get_stream_by_ref(State, StreamRef) of
 		%% @todo We should send an error to the user if the stream isn't ready.
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0, info=#{
 				origin_host := OriginHost, origin_port := OriginPort}}} ->
 			{Commands, CookieStore, EvHandlerState1} = Proto:request(ProtoState0, RealStreamRef,
 				ReplyTo, Method, OriginHost, OriginPort, Path, Headers, Body,
-				InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+				InitialFlow, CookieStore0, EvHandler, EvHandlerState0, Timeout),
 			{ResCommands, EvHandlerState} = tunnel_commands(Commands,
 				Stream, State, EvHandler, EvHandlerState1),
 			{ResCommands, CookieStore, EvHandlerState};
@@ -1238,7 +1250,8 @@ reset_stream(State0=#http2_state{socket=Socket, transport=Transport},
 	case Transport:send(Socket, cow_http2:rst_stream(StreamID, Reason)) of
 		ok ->
 			case take_stream(State0, StreamID) of
-				{#stream{ref=StreamRef, reply_to=ReplyTo}, State} ->
+				{#stream{ref=StreamRef, reply_to=ReplyTo, timer_ref=TimerRef}, State} ->
+					cancel_stream_timer(TimerRef),
 					ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), StreamError},
 					{state, State};
 				error ->
@@ -1251,7 +1264,7 @@ reset_stream(State0=#http2_state{socket=Socket, transport=Transport},
 connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo,
 		Destination=#{host := Host0}, TunnelInfo, Headers0, InitialFlow0,
-		EvHandler, EvHandlerState0)
+		EvHandler, EvHandlerState0, Timeout)
 		when is_reference(StreamRef) ->
 	Host = case Host0 of
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
@@ -1298,9 +1311,11 @@ connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 			},
 			EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
 			InitialFlow = initial_flow(InitialFlow0, Opts),
+			TimerRef = start_stream_timer(StreamRef, Timeout),
 			Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo,
 				flow=InitialFlow, authority=Authority, path= <<>>,
-				tunnel=#tunnel{destination=Destination, info=TunnelInfo}},
+				tunnel=#tunnel{destination=Destination, info=TunnelInfo},
+				timer_ref=TimerRef},
 			{{state, create_stream(State#http2_state{http2_machine=HTTP2Machine}, Stream)},
 				EvHandlerState};
 		Error={error, _} ->
@@ -1308,13 +1323,13 @@ connect(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 	end;
 %% Tunneled request.
 connect(State, RealStreamRef=[StreamRef|_], ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow,
-		EvHandler, EvHandlerState0) ->
+		EvHandler, EvHandlerState0, Timeout) ->
 	case get_stream_by_ref(State, StreamRef) of
 		%% @todo Should we send an error to the user if the stream isn't ready.
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 			{Commands, EvHandlerState1} = Proto:connect(ProtoState0, RealStreamRef,
 				ReplyTo, Destination, TunnelInfo, Headers0, InitialFlow,
-				EvHandler, EvHandlerState0),
+				EvHandler, EvHandlerState0, Timeout),
 			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState1);
 		#stream{tunnel=undefined} ->
 			ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
@@ -1364,6 +1379,22 @@ cancel(State, RealStreamRef=[StreamRef|_], ReplyTo, EvHandler, EvHandlerState0) 
 			{[], EvHandlerState0}
 	end.
 
+timeout(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP2Machine0}, {?MODULE, stream_timeout, StreamRef}, TRef) ->
+	case get_stream_by_ref(State, StreamRef) of
+		#stream{id=StreamID, reply_to=ReplyTo, timer_ref=TRef} ->
+			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
+			case Transport:send(Socket, cow_http2:rst_stream(StreamID, cancel)) of
+				ok ->
+					error_stream_timeout(State, StreamRef, ReplyTo),
+					{state, delete_stream(State#http2_state{http2_machine=HTTP2Machine},
+						StreamID)};
+				Error={error, _} ->
+					Error
+			end;
+		%% We ignore timeout events for streams that no longer exist.
+		error ->
+			{state, State}
+	end;
 timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, undefined, Name}, TRef) ->
 	case cow_http2_machine:timeout(Name, TRef, HTTP2Machine0) of
 		{ok, HTTP2Machine} ->
@@ -1543,6 +1574,11 @@ connection_error(#http2_state{socket=Socket, transport=Transport,
 
 %% Stream functions.
 
+error_stream_timeout(State, StreamRef, ReplyTo) ->
+	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {timeout,
+		"The stream has timed out."}},
+	ok.
+
 error_stream_closed(State, StreamRef, ReplyTo) ->
 	ReplyTo ! {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"The stream has already been closed."}},
@@ -1609,8 +1645,20 @@ maybe_delete_stream(State, _, _, _) ->
 	State.
 
 delete_stream(State=#http2_state{streams=Streams, stream_refs=Refs}, StreamID) ->
-	#{StreamID := #stream{ref=StreamRef}} = Streams,
+	#{StreamID := #stream{ref=StreamRef, timer_ref=TimerRef}} = Streams,
+	cancel_stream_timer(TimerRef),
 	State#http2_state{
 		streams=maps:remove(StreamID, Streams),
 		stream_refs=maps:remove(StreamRef, Refs)
 	}.
+
+start_stream_timer(_StreamRef, infinity) ->
+	undefined;
+start_stream_timer(StreamRef, Timeout) ->
+	erlang:start_timer(Timeout, self(), {?MODULE, stream_timeout, StreamRef}).
+
+cancel_stream_timer(undefined) ->
+	ok;
+cancel_stream_timer(TimerRef) ->
+	_ = erlang:cancel_timer(TimerRef),
+	ok.
