@@ -389,7 +389,7 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 			case lists:keytake(Payload, #user_ping.payload, UserPings0) of
 				{value, #user_ping{ref=StreamRef, reply_to=PingReplyTo}, UserPings} ->
 					RealStreamRef = stream_ref(State, StreamRef),
-					PingReplyTo ! {gun_ping_ack, self(), RealStreamRef},
+					PingReplyTo ! {gun_notify, self(), ping_ack, RealStreamRef},
 					{state, State#http2_state{user_pings=UserPings}};
 				false ->
 					%% Ignore unexpected ping ack. RFC 7540
@@ -959,16 +959,13 @@ keepalive(State=#http2_state{socket=Socket, transport=Transport, pings_unack=Pin
 
 ping(State=#http2_state{socket=Socket, transport=Transport, user_pings=UserPings}, StreamRef, ReplyTo) ->
 	%% Use non-zero 64-bit payload for user pings. 0 is reserved for keepalive.
-	Payload = case erlang:monotonic_time(microsecond) band 16#ffffffffffffffff of
-		0 -> 1;
-		Payload0 -> Payload0
-	end,
+	Payload = erlang:unique_integer([monotonic, positive]),
 	case Transport:send(Socket, cow_http2:ping(Payload)) of
 		ok ->
 			UserPing = #user_ping{ref = StreamRef, reply_to = ReplyTo, payload = Payload},
 			{state, State#http2_state{user_pings = UserPings ++ [UserPing]}};
 		Error={error, _} ->
-			Error
+			{ok, Error}
 	end.
 
 headers(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,

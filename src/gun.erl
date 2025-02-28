@@ -800,8 +800,6 @@ await(ServerPid, StreamRef, Timeout, MRef) ->
 			{up, Protocol};
 		{gun_notify, ServerPid, Type, Info} ->
 			{notify, Type, Info};
-		{gun_ping_ack, ServerPid, StreamRef} ->
-			ping_ack;
 		{gun_error, ServerPid, StreamRef, Reason} ->
 			{error, {stream_error, Reason}};
 		{gun_error, ServerPid, Reason} ->
@@ -1389,13 +1387,8 @@ connected_ws_only(Type, Event, State) ->
 %% containing the target URI, instead of separate Host/Port/PathWithQs.
 connected(cast, {ping, ReplyTo, StreamRef},
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	case erlang:function_exported(Protocol, ping, 3) of
-		true ->
-			Commands = Protocol:ping(ProtoState, dereference_stream_ref(StreamRef, State), ReplyTo),
-			commands(Commands, State);
-		false ->
-			ReplyTo ! {gun_error, self(), StreamRef, not_supported_for_protocol}
-	end;
+	Commands = Protocol:ping(ProtoState, dereference_stream_ref(StreamRef, State), ReplyTo),
+	commands(Commands, State);
 connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
 			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,

@@ -492,7 +492,12 @@ user_initiated_ping(_) ->
 	{ok, http2} = gun:await_up(Pid),
 	handshake_completed = receive_from(OriginPid),
 	PingRef = gun:ping(Pid),
-	ping_ack = gun:await(Pid, PingRef, 1000),
+	receive
+		{gun_notify, Pid, ping_ack, PingRef} ->
+			ok
+	after 1000 ->
+		error(timeout)
+	end,
 	gun:close(Pid).
 
 do_ping_ack_loop_fun() ->

@@ -46,12 +46,12 @@ can be used.
 == Return value
 
 A reference that identifies the ping is returned. This
-reference must be passed in subsequent calls and will be
-received in messages related to this ping.
+reference is included in the notification received when
+a ping ack is received from the server.
 
 == Changelog
 
-* *2.x*: Function introduced.
+* *2.2*: Function introduced.
 
 == Examples
 
@@ -59,7 +59,10 @@ received in messages related to this ping.
 [source,erlang]
 ----
 PingRef = gun:ping(ConnPid).
-ping_ack = gun:await(ConnPid, PingRef).
+receive
+    {gun_notify, ConnPid, ping_ack, PingRef} ->
+        ok
+end.
 ----
 
 == See also
