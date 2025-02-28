@@ -487,7 +487,7 @@ close(_Reason, _State, _, EvHandlerState) ->
 keepalive(_State, _, _EvHandlerState) ->
 	error(todo).
 
--spec ping(_, _, _) -> {error, not_implented}.
+-spec ping(_, _, _) -> {error, not_implemented}.
 
 ping(_State, _PingRef, _ReplyTo) ->
 	{error, not_implemented}.
