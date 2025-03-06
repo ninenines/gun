@@ -15,7 +15,7 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = public_key ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/Nordix/cowlib respect-remote-concurrency-limit
+dep_cowlib = git https://github.com/ninenines/cowlib master
 
 ifeq ($(GUN_QUICER),1)
 DEPS += quicer
