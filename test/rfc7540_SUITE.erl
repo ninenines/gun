@@ -392,6 +392,7 @@ respect_max_concurrent_streams(_) ->
 		{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
 		{ok, http2} = gun:await_up(ConnPid),
 		StreamRef1 = gun:get(ConnPid, "/delayed"),
+		timer:sleep(100),
 		StreamRef2 = gun:get(ConnPid, "/delayed"),
 		{error, {stream_error, Reason}} = gun:await(ConnPid, StreamRef2),
 		{stream_error, too_many_streams, _Human} = Reason,
