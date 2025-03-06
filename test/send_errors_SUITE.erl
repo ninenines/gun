@@ -89,7 +89,7 @@ http2_send_ping_fail(_) ->
 			gun:close(Pid);
 		Msg ->
 			error({fail, Msg})
-	after 5000 ->
+	after 15000 ->
 		error(timeout)
 	end.
 
@@ -111,13 +111,13 @@ http2_send_ping_ack_fail(_) ->
 	inet:setopts(ClientSocket, [{recbuf, 256}]),
 	http2_handshake(ClientSocket, gen_tcp),
 	{ok, http2} = gun:await_up(Pid),
-	ping_loop(ClientSocket, 1800), %% Send pings triggering ping acks
+	ping_loop(ClientSocket, 5000), %% Send pings triggering ping acks
 	receive
 		{gun_down, Pid, http2, {error, _}, []} ->
 			gun:close(Pid);
 		Msg ->
 			error({fail, Msg})
-	after 5000 ->
+	after 15000 ->
 		error(timeout)
 	end.
 

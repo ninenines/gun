@@ -1,0 +1,56 @@
+= gun_notify(3)
+
+== Name
+
+gun_notify - Optional event notification
+
+== Description
+
+[source,erlang]
+----
+{gun_notify, ConnPid, settings_changed, Settings}
+
+ConnPid  :: pid()
+Settings :: map()
+----
+
+Optional event notification.
+
+Only one event notification currently exists, for HTTP/2.
+This message informs the relevant process that the server
+has modified the connection settings.
+
+== Elements
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+Event::
+
+Identifier for the event. Currently can only be
+`settings_changed`.
+
+Data::
+
+Data for the event. Currently can only be the
+new connection settings.
+
+== Changelog
+
+* *2.2*: Message introduced.
+
+== Examples
+
+.Receive a gun_notify message in a gen_server
+[source,erlang]
+----
+handle_info({gun_notify, ConnPid, settings_changed, Settings},
+            State=#state{conn_pid=ConnPid}) ->
+    %% Do something.
+    {noreply, State}.
+----
+
+== See also
+
+link:man:gun(3)[gun(3)]

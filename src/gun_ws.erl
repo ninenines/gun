@@ -42,7 +42,7 @@
 }).
 
 -record(ws_state, {
-	reply_to :: pid(),
+	reply_to :: gun:reply_to(),
 	stream_ref :: reference(),
 	socket :: inet:socket() | ssl:sslsocket(),
 	transport :: module(),
@@ -83,6 +83,12 @@ do_check_options([Opt={protocols, L}|Opts]) when is_list(L) ->
 		_ -> {error, {options, {ws, Opt}}}
 	end;
 do_check_options([{reply_to, P}|Opts]) when is_pid(P) ->
+	do_check_options(Opts);
+do_check_options([{reply_to, F}|Opts]) when is_function(F, 1) ->
+	do_check_options(Opts);
+do_check_options([{reply_to, {F, A}}|Opts]) when is_function(F, 1 + length(A)) ->
+	do_check_options(Opts);
+do_check_options([{reply_to, {M, F, A}}|Opts]) when is_atom(M), is_atom(F), is_list(A) ->
 	do_check_options(Opts);
 do_check_options([{silence_pings, B}|Opts]) when is_boolean(B) ->
 	do_check_options(Opts);

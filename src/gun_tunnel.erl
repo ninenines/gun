@@ -41,7 +41,7 @@
 	%% We accept 'undefined' only to simplify the init code.
 	socket = undefined :: #{
 		gun_pid := pid(),
-		reply_to := pid(),
+		reply_to := gun:reply_to(),
 		stream_ref := gun:stream_ref(),
 		handle_continue_stream_ref := gun:stream_ref()
 	} | pid() | undefined,
@@ -125,7 +125,7 @@ init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tun
 					_ = case TunnelProtocol of
 						http -> ok;
 						socks -> ok;
-						_ -> ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()}
+						_ -> gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()})
 					end,
 					{tunnel, State#tunnel_state{socket=OriginSocket, transport=OriginTransport,
 						protocol=Proto, protocol_state=ProtoState},
@@ -202,7 +202,7 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {ok, Negotiated},
 	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
 			ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}) of
 		{ok, _, ProtoState} ->
-			ReplyTo ! {gun_tunnel_up, self(), StreamRef, Proto:name()},
+			gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()}),
 			{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}},
 				CookieStore, EvHandlerState};
 		Error={error, _} ->
@@ -492,7 +492,7 @@ commands([Origin={origin, Scheme, Host, Port, Type}|Tail],
 		origin_port => Port
 	}, EvHandlerState0),
 	commands(Tail, State#tunnel_state{protocol_origin=Origin}, EvHandler, EvHandlerState);
-commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
+commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}|Tail],
 		State=#tunnel_state{socket=Socket, transport=Transport, opts=Opts,
 		protocol_origin=undefined},
 		EvHandler, EvHandlerState0) ->
@@ -510,7 +510,7 @@ commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
 		Error={error, _} ->
 			{Error, EvHandlerState0}
 	end;
-commands([{switch_protocol, NewProtocol, ReplyTo}|Tail],
+commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}|Tail],
 		State=#tunnel_state{transport=Transport, stream_ref=TunnelStreamRef,
 		info=#{origin_host := Host, origin_port := Port}, opts=Opts, protocol=CurrentProto,
 		protocol_origin={origin, _Scheme, OriginHost, OriginPort, Type}},

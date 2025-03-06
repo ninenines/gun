@@ -17,6 +17,11 @@ LOCAL_DEPS = public_key ssl
 DEPS = cowlib
 dep_cowlib = git https://github.com/Nordix/cowlib respect-remote-concurrency-limit
 
+ifeq ($(GUN_QUICER),1)
+DEPS += quicer
+dep_quicer = git https://github.com/emqx/quic main
+endif
+
 DOC_DEPS = asciideck
 
 TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper cowboy ranch jsx
@@ -29,10 +34,8 @@ dep_ranch_commit = 2.0.0
 dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
 DEP_EARLY_PLUGINS = ci.erlang.mk
 
-AUTO_CI_OTP ?= OTP-22+
-#AUTO_CI_HIPE ?= OTP-LATEST
-# AUTO_CI_ERLLVM ?= OTP-LATEST
-AUTO_CI_WINDOWS ?= OTP-22+
+AUTO_CI_OTP ?= OTP-LATEST-24+
+AUTO_CI_WINDOWS ?= OTP-LATEST-24+
 
 # Hex configuration.
 
@@ -58,13 +61,23 @@ ifndef FULL
 CT_SUITES := $(filter-out ws_autobahn,$(CT_SUITES))
 endif
 
-# Enable eunit.
+# Compile options.
 
 TEST_ERLC_OPTS += +'{parse_transform, eunit_autoexport}'
+
+ifeq ($(GUN_QUICER),1)
+ERLC_OPTS += -D GUN_QUICER=1
+TEST_ERLC_OPTS += -D GUN_QUICER=1
+endif
 
 # Generate rebar.config on build.
 
 app:: rebar.config
+
+# Fix quicer compilation for HTTP/3.
+
+autopatch-quicer::
+	$(verbose) printf "%s\n" "all: ;" > $(DEPS_DIR)/quicer/c_src/Makefile.erlang.mk
 
 # h2specd setup.
 
