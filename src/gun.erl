@@ -1401,13 +1401,14 @@ connected(cast, {request, ReplyTo, StreamRef, Method, Path, Headers, Body, Initi
 		event_handler_state=EvHandlerState});
 connected(cast, {connect, ReplyTo, StreamRef, Destination, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,
-			protocol=Protocol, protocol_state=ProtoState,
+			protocol=Protocol, protocol_state=ProtoState, cookie_store=CookieStore0,
 			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	{Commands, EvHandlerState} = Protocol:connect(ProtoState,
+	{Commands, CookieStore, EvHandlerState} = Protocol:connect(ProtoState,
 		dereference_stream_ref(StreamRef, State), ReplyTo,
 		Destination, #{host => Host, port => Port},
-		Headers, InitialFlow, EvHandler, EvHandlerState0),
-	commands(Commands, State#state{event_handler_state=EvHandlerState});
+		Headers, InitialFlow, CookieStore0, EvHandler, EvHandlerState0),
+	commands(Commands, State#state{cookie_store=CookieStore,
+		event_handler_state=EvHandlerState});
 %% Public Websocket interface.
 connected(cast, {ws_upgrade, ReplyTo, StreamRef, Path, Headers}, State=#state{opts=Opts}) ->
 	WsOpts = maps:get(ws_opts, Opts, #{}),

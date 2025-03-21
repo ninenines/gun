@@ -31,7 +31,7 @@
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
--export([connect/9]).
+-export([connect/10]).
 -export([cancel/5]).
 -export([timeout/3]).
 -export([stream_info/2]).
@@ -637,10 +637,11 @@ data(State=#http3_state{conn=Conn, transport=Transport}, StreamRef, _ReplyTo, Is
 %			{[], EvHandlerState}
 	end.
 
--spec connect(_, _, _, _, _, _, _, _, _) -> no_return().
+-spec connect(_, _, _, _, _, _, _, _, _, _) -> no_return().
 
 connect(_State, StreamRef, _ReplyTo, _Destination, _TunnelInfo, _Headers0,
-		_InitialFlow0, _EvHandler, _EvHandlerState0) when is_reference(StreamRef) ->
+		_InitialFlow0, _CookieStore, _EvHandler, _EvHandlerState0)
+		when is_reference(StreamRef) ->
 	error(unimplemented).
 
 -spec cancel(_, _, _, _, _) -> no_return().

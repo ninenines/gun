@@ -377,7 +377,19 @@ lingering_data_counts_toward_connection_window(_) ->
 	timer:sleep(300),
 	gun:close(ConnPid).
 
-max_concurrent_streams(_) ->
+max_concurrent_streams_headers(_) ->
+	do_max_concurrent_streams(post, "/").
+
+max_concurrent_streams_request(_) ->
+	do_max_concurrent_streams(get, "/").
+
+max_concurrent_streams_connect(_) ->
+	do_max_concurrent_streams(connect, #{host => "localhost", port => 33333}).
+
+max_concurrent_streams_ws_upgrade(_) ->
+	do_max_concurrent_streams(ws_upgrade, "/").
+
+do_max_concurrent_streams(Function, PathOrDestination) ->
 	doc("The SETTINGS_MAX_CONCURRENT_STREAMS setting can be used to "
 		"restrict the number of concurrent streams. (RFC7540 5.1.2, RFC7540 6.5.2)"),
 	Ref = make_ref(),
@@ -397,9 +409,13 @@ max_concurrent_streams(_) ->
 		%% Wait for SETTINGS_MAX_CONCURRENT_STREAMS to be received by Gun.
 		receive {gun_notify, ConnPid, settings_changed, _} -> ok after 5000 -> error(timeout) end,
 		StreamRef1 = gun:get(ConnPid, "/delayed"),
-		StreamRef2 = gun:get(ConnPid, "/delayed"),
+		%% Call the function we are currently testing.
+		%% Path doesn't matter as the request should not go through.
+		StreamRef2 = gun:Function(ConnPid, PathOrDestination, []),
+		%% Confirm we reached the concurrency limit.
 		{error, {stream_error, Reason}} = gun:await(ConnPid, StreamRef2),
 		{stream_error, too_many_streams, _Human} = Reason,
+		%% Confirm that the first request went through.
 		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef1),
 		{ok, _} = gun:await_body(ConnPid, StreamRef1),
 		gun:close(ConnPid)

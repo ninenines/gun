@@ -29,7 +29,7 @@
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
--export([connect/9]).
+-export([connect/10]).
 -export([cancel/5]).
 -export([stream_info/2]).
 -export([down/1]).
@@ -759,19 +759,20 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 			{[], EvHandlerState0}
 	end.
 
-connect(State, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
+connect(State, StreamRef, ReplyTo, _, _, _, _, CookieStore, _, EvHandlerState)
 		when is_list(StreamRef) ->
 	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
 		{badstate, "The stream is not a tunnel."}}),
-	{[], EvHandlerState};
-connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _, _, EvHandlerState)
+	{[], CookieStore, EvHandlerState};
+connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _,
+		CookieStore, _, EvHandlerState)
 		when Streams =/= [] ->
 	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), {badstate,
 		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}}),
-	{[], EvHandlerState};
+	{[], CookieStore, EvHandlerState};
 connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version=Version},
 		StreamRef, ReplyTo, Destination=#{host := Host0}, _TunnelInfo, Headers0, InitialFlow0,
-		EvHandler, EvHandlerState0) ->
+		CookieStore, EvHandler, EvHandlerState0) ->
 	Host = case Host0 of
 		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
 		_ -> Host0
@@ -817,9 +818,9 @@ connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{{state, new_stream(State, {connect, StreamRef, Destination},
 				ReplyTo, <<"CONNECT">>, Authority, <<>>, InitialFlow)},
-				EvHandlerState};
+				CookieStore, EvHandlerState};
 		Error={error, _} ->
-			{Error, EvHandlerState1}
+			{Error, CookieStore, EvHandlerState1}
 	end.
 
 %% We can't cancel anything, we can just stop forwarding messages to the owner.
