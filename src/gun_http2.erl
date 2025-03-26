@@ -972,8 +972,11 @@ keepalive(State=#http2_state{socket=Socket, transport=Transport, pings_unack=Pin
 
 ping(State=#http2_state{socket=Socket, transport=Transport, user_pings=UserPings},
 		undefined, ReplyTo, PingRef) ->
-	%% Use non-zero 64-bit payload for user pings. 0 is reserved for keepalive.
-	Payload = erlang:unique_integer([monotonic, positive]),
+	%% User pings use the 64-bit payload for identification.
+	%% The payload 0 is already used for keepalive, and payloads
+	%% 1 through 9999 are reserved for future use. Payloads 10000
+	%% and above are used by user pings.
+	Payload = 9999 + erlang:unique_integer([monotonic, positive]),
 	case Transport:send(Socket, cow_http2:ping(Payload)) of
 		ok ->
 			UserPing = #user_ping{ref = PingRef, reply_to = ReplyTo, payload = Payload},
