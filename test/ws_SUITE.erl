@@ -30,7 +30,8 @@ groups() ->
 		http10_upgrade_error,
 		http11_request_error,
 		http11_keepalive,
-		http11_keepalive_default_silence_pings
+		http11_keepalive_default_silence_pings,
+		unix_socket_hostname
 	],
 	[
 		{http, [], Tests},
@@ -258,6 +259,45 @@ subprotocol_required_but_missing(Config) ->
 	{response, nofin, 400, _} = gun:await(ConnPid, StreamRef),
 	{ok, <<"undefined">>} = gun:await_body(ConnPid, StreamRef),
 	gun:close(ConnPid).
+
+unix_socket_hostname(_) ->
+	case os:type() of
+		{win32, _} ->
+			{skip, "Unix Domain Sockets are not available on Windows."};
+		_ ->
+			do_unix_socket_hostname()
+	end.
+
+do_unix_socket_hostname() ->
+	doc("Ensure that the hostname used for Websocket upgrades "
+		"on Unix Domain Sockets is 'localhost' by default."),
+	DataDir = "/tmp/gun",
+	SocketPath = filename:join(DataDir, "gun.sock"),
+	ok = filelib:ensure_dir(SocketPath),
+	_ = file:delete(SocketPath),
+	TCPOpts = [
+		{ifaddr, {local, SocketPath}},
+		binary, {nodelay, true}, {active, false},
+		{packet, raw}, {reuseaddr, true}
+	],
+	{ok, LSock} = gen_tcp:listen(0, TCPOpts),
+	Tester = self(),
+	Acceptor = fun() ->
+		{ok, S} = gen_tcp:accept(LSock),
+		{ok, R} = gen_tcp:recv(S, 0),
+		Tester ! {recv, R},
+		ok = gen_tcp:close(S),
+		ok = gen_tcp:close(LSock)
+	end,
+	spawn(Acceptor),
+	{ok, ConnPid} = gun:open_unix(SocketPath, #{}),
+	#{origin_host := <<"localhost">>} = gun:info(ConnPid),
+	_ = gun:ws_upgrade(ConnPid, "/", []),
+	receive
+		{recv, Recv} ->
+			{_, _} = binary:match(Recv, <<"\r\nhost: localhost\r\n">>),
+			gun:close(ConnPid)
+	end.
 
 %% Internal.
 

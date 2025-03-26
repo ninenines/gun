@@ -1016,6 +1016,18 @@ start_link(Owner, Host, Port, Opts) ->
 init({Owner, Host, Port, Opts}) ->
 	Retry = maps:get(retry, Opts, 5),
 	OriginTransport = maps:get(transport, Opts, default_transport(Port)),
+	%% When Unix Domain Sockets are used we set
+	%% the origin authority to "localhost" by default.
+	{OriginHost, OriginPort} = case Host of
+		{local, _} ->
+			OriginPort0 = case OriginTransport of
+				tcp -> 80;
+				_ -> 443
+			end,
+			{<<"localhost">>, OriginPort0};
+		_ ->
+			{Host, Port}
+	end,
 	%% The OriginScheme is not really http when we connect to socks/raw.
 	%% This is corrected in the gun:info/1 and gun:stream_info/2 functions where applicable.
 	{OriginScheme, Transport} = case OriginTransport of
@@ -1037,7 +1049,7 @@ init({Owner, Host, Port, Opts}) ->
 	CookieStore = maps:get(cookie_store, Opts, undefined),
 	State = #state{owner=Owner, status={up, OwnerRef},
 		host=Host, port=Port, origin_scheme=OriginScheme,
-		origin_host=Host, origin_port=Port, opts=Opts,
+		origin_host=OriginHost, origin_port=OriginPort, opts=Opts,
 		transport=Transport, messages=Transport:messages(),
 		event_handler=EvHandler, event_handler_state=EvHandlerState,
 		cookie_store=CookieStore},

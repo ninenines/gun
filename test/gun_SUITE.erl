@@ -759,11 +759,13 @@ do_unix_socket_connect() ->
 		ok = gen_tcp:close(LSock)
 	end,
 	spawn(Acceptor),
-	{ok, Pid} = gun:open_unix(SocketPath, #{}),
-	_ = gun:get(Pid, "/", [{<<"host">>, <<"localhost">>}]),
+	{ok, ConnPid} = gun:open_unix(SocketPath, #{}),
+	#{origin_host := <<"localhost">>} = gun:info(ConnPid),
+	_ = gun:get(ConnPid, "/"),
 	receive
-		{recv, _} ->
-			gun:close(Pid)
+		{recv, Recv} ->
+			{_, _} = binary:match(Recv, <<"\r\nhost: localhost\r\n">>),
+			gun:close(ConnPid)
 	end.
 
 uppercase_header_name(_) ->
