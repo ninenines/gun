@@ -23,7 +23,6 @@
 -export([handle/5]).
 -export([closing/4]).
 -export([close/4]).
--export([ping/3]).
 %% @todo down
 
 -record(socks_state, {
@@ -206,6 +205,3 @@ closing(_, _, _, EvHandlerState) ->
 
 close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
-
-ping(_State, _PingRef, _ReplyTo) ->
-	{error, unsupported_by_protocol}.

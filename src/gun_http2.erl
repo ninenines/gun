@@ -27,7 +27,7 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([ping/3]).
+-export([ping/4]).
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
@@ -389,9 +389,8 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 		{ping_ack, Payload} ->
 			%% User ping.
 			case lists:keytake(Payload, #user_ping.payload, UserPings0) of
-				{value, #user_ping{ref=StreamRef, reply_to=PingReplyTo}, UserPings} ->
-					RealStreamRef = stream_ref(State, StreamRef),
-					PingReplyTo ! {gun_notify, self(), ping_ack, RealStreamRef},
+				{value, #user_ping{ref=PingRef, reply_to=PingReplyTo}, UserPings} ->
+					PingReplyTo ! {gun_notify, self(), ping_ack, PingRef},
 					{state, State#http2_state{user_pings=UserPings}};
 				false ->
 					%% Ignore unexpected ping ack. RFC 7540
@@ -971,15 +970,36 @@ keepalive(State=#http2_state{socket=Socket, transport=Transport, pings_unack=Pin
 			{Error, EvHandlerState}
 	end.
 
-ping(State=#http2_state{socket=Socket, transport=Transport, user_pings=UserPings}, StreamRef, ReplyTo) ->
+ping(State=#http2_state{socket=Socket, transport=Transport, user_pings=UserPings},
+		undefined, ReplyTo, PingRef) ->
 	%% Use non-zero 64-bit payload for user pings. 0 is reserved for keepalive.
 	Payload = erlang:unique_integer([monotonic, positive]),
 	case Transport:send(Socket, cow_http2:ping(Payload)) of
 		ok ->
-			UserPing = #user_ping{ref = StreamRef, reply_to = ReplyTo, payload = Payload},
-			{state, State#http2_state{user_pings = UserPings ++ [UserPing]}};
-		Error={error, _} ->
-			{ok, Error}
+			UserPing = #user_ping{ref = PingRef, reply_to = ReplyTo, payload = Payload},
+			{state, State#http2_state{user_pings = [UserPing|UserPings]}};
+		Error = {error, _} ->
+			Error
+	end;
+%% Tunneled ping.
+ping(State, TunnelRef=[StreamRef|_], ReplyTo, PingRef) ->
+	case get_stream_by_ref(State, StreamRef) of
+		%% @todo We should send an error to the user if the stream isn't ready.
+		Stream=#stream{tunnel=Tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
+			case Proto:ping(ProtoState0, TunnelRef, ReplyTo, PingRef) of
+				{state, ProtoState} ->
+					{state, store_stream(State, Stream#stream{
+						tunnel=Tunnel#tunnel{protocol_state=ProtoState}})};
+				Error = {error, _} ->
+					Error
+			end;
+		#stream{tunnel=undefined} ->
+			gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), {badstate,
+				"The stream is not a tunnel."}}),
+			{state, State};
+		error ->
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{state, State}
 	end.
 
 headers(State, StreamRef, ReplyTo, Method, Host, Port, Path,

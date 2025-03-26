@@ -28,7 +28,7 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([ping/3]).
+-export([ping/4]).
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
@@ -487,9 +487,9 @@ close(_Reason, _State, _, EvHandlerState) ->
 keepalive(_State, _, _EvHandlerState) ->
 	error(todo).
 
--spec ping(_, _, _) -> {error, not_implemented}.
+-spec ping(_, _, _, _) -> {error, not_implemented}.
 
-ping(_State, _PingRef, _ReplyTo) ->
+ping(_State, _Tunnel, _ReplyTo, _PingRef) ->
 	{error, not_implemented}.
 
 headers(State0=#http3_state{conn=Conn, transport=Transport,

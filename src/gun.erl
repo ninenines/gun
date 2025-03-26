@@ -739,17 +739,17 @@ data(ServerPid, StreamRef, IsFin, Data) ->
 
 %% User pings.
 
--spec ping(pid()) -> stream_ref().
+-spec ping(pid()) -> reference().
 ping(ServerPid) ->
 	ping(ServerPid, #{}).
 
--spec ping(pid(), req_opts()) -> stream_ref().
+-spec ping(pid(), req_opts()) -> reference().
 ping(ServerPid, ReqOpts) ->
 	Tunnel = get_tunnel(ReqOpts),
-	StreamRef = make_stream_ref(Tunnel),
+	PingRef = make_ref(),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
-	gen_statem:cast(ServerPid, {ping, ReplyTo, StreamRef}),
-	StreamRef.
+	gen_statem:cast(ServerPid, {ping, ReplyTo, Tunnel, PingRef}),
+	PingRef.
 
 %% Tunneling.
 
@@ -1397,9 +1397,13 @@ connected_ws_only(Type, Event, State) ->
 %%
 %% @todo It might be better, internally, to pass around a URIMap
 %% containing the target URI, instead of separate Host/Port/PathWithQs.
-connected(cast, {ping, ReplyTo, StreamRef},
+connected(cast, {ping, ReplyTo, Tunnel0, PingRef},
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	Commands = Protocol:ping(ProtoState, dereference_stream_ref(StreamRef, State), ReplyTo),
+	Tunnel = case dereference_stream_ref(Tunnel0, State) of
+		[] -> undefined;
+		Tunnel1 -> Tunnel1
+	end,
+	Commands = Protocol:ping(ProtoState, Tunnel, ReplyTo, PingRef),
 	commands(Commands, State);
 connected(cast, {headers, ReplyTo, StreamRef, Method, Path, Headers, InitialFlow},
 		State=#state{origin_host=Host, origin_port=Port,

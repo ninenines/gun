@@ -26,7 +26,7 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
--export([ping/3]).
+-export([ping/4]).
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
@@ -561,7 +561,7 @@ keepalive(#http_state{socket=Socket, transport=Transport, out=head}, _, EvHandle
 keepalive(_State, _, EvHandlerState) ->
 	{[], EvHandlerState}.
 
-ping(_State, _PingRef, _ReplyTo) ->
+ping(_State, undefined, _ReplyTo, _PingRef) ->
 	{error, unsupported_by_protocol}.
 
 headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerState)

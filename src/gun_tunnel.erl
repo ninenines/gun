@@ -24,6 +24,7 @@
 -export([closing/4]).
 -export([close/4]).
 -export([keepalive/3]).
+-export([ping/4]).
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
@@ -284,6 +285,19 @@ close(_Reason, _State, _EvHandler, EvHandlerState) ->
 keepalive(_State, _EvHandler, EvHandlerState) ->
 	%% @todo Need to figure out how to handle keepalive for tunnels.
 	{[], EvHandlerState}.
+
+ping(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
+		TunnelRef0, ReplyTo, PingRef) ->
+	TunnelRef = case maybe_dereference(State, TunnelRef0) of
+		[] -> undefined;
+		TunnelRef1 -> TunnelRef1
+	end,
+	case Proto:ping(ProtoState0, TunnelRef, ReplyTo, PingRef) of
+		{state, ProtoState} ->
+			{state, State#tunnel_state{protocol_state=ProtoState}};
+		Error = {error, _} ->
+			Error
+	end.
 
 %% We pass the headers forward and optionally dereference StreamRef.
 headers(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
