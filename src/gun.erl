@@ -1212,6 +1212,14 @@ ensure_tls_opts(Protocols0, TransOpts0, OriginHost) ->
 					end
 			end
 	end,
+	%% Wildcard certificate matching.
+	TransOpts2 = case lists:keymember(customize_hostname_check, 1, TransOpts1) of
+		true ->
+			TransOpts1;
+		false ->
+			HTTPSMatchFun = public_key:pkix_verify_hostname_match_fun(https),
+			[{customize_hostname_check, [{match_fun, HTTPSMatchFun}]}|TransOpts1]
+	end,
 	%% ALPN.
 	Protocols = lists:foldl(fun
 		(http, Acc) -> [<<"http/1.1">>|Acc];
@@ -1222,7 +1230,7 @@ ensure_tls_opts(Protocols0, TransOpts0, OriginHost) ->
 	end, [], Protocols0),
 	TransOpts = [
 		{alpn_advertised_protocols, Protocols}
-	|TransOpts1],
+	|TransOpts2],
 	%% SNI.
 	%%
 	%% Normally only DNS hostnames are supported for SNI. However, the ssl
