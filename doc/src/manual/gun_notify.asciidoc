@@ -16,9 +16,13 @@ Settings :: map()
 
 Optional event notification.
 
-Only one event notification currently exists, for HTTP/2.
-This message informs the relevant process that the server
-has modified the connection settings.
+Only two event notifications currently exist:
+
+* `settings_changed` informs the user that the server has
+  modified its connection settings.
+
+* `ping_ack` informs the user that acknowledgement for a
+  user ping was received.
 
 == Elements
 
@@ -29,12 +33,12 @@ The pid of the Gun connection process.
 Event::
 
 Identifier for the event. Currently can only be
-`settings_changed`.
+`settings_changed` or `ping_ack`.
 
 Data::
 
 Data for the event. Currently can only be the
-new connection settings.
+new connection settings, or the ping reference.
 
 == Changelog
 
@@ -53,4 +57,5 @@ handle_info({gun_notify, ConnPid, settings_changed, Settings},
 
 == See also
 
-link:man:gun(3)[gun(3)]
+link:man:gun(3)[gun(3)],
+link:man:gun:ping(3)[gun:ping(3)]

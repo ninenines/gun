@@ -2,8 +2,7 @@
 
 == Name
 
-gun:ping - Check the health or the round-trip time of a connection
-without sending a request.
+gun:ping - Check the health or RTT of the connection
 
 == Description
 
@@ -17,20 +16,32 @@ ping(ConnPid, ReqOpts)
 
 ConnPid   :: pid()
 ReqOpts   :: gun:req_opts()
-PingRef   :: gun:stream_ref()
+PingRef   :: reference()
 ----
 
-Send a ping.
+Check the health or round-trip time of the connection.
 
-A ping can be sent to check the health or to measure the
-round-trip time of a connection, without sending a request.
+On protocols that support it, Gun will send a PING
+frame and wait for its corresponding acknowledgement.
+When it receives that acknowledgement the user process
+gets notified via a `gun_notify` message.
 
-The function `ping/1,2` sends a ping immediately, if the
-protocol supports pings. The server responds with a ping ack.
-A call to `gun:await/2,3` returns `ping_ack` when the ping
-ack has been received from the server.
+As this happens asynchronously and multiple pings
+can be sent concurrently, Gun returns a unique
+reference to the caller that can be used to identify
+the related acknowledgement.
 
-Currently, explicit ping is supported only for HTTP/2.
+The following protocols implement PING mechanisms
+and are supported by this function: HTTP/2.
+
+The following protocols implement PING mechanisms
+but are not yet supported by this function: HTTP/3
+and Websocket. Note that in the case of Websocket,
+the user can set `silence_pings` to `false` and
+send and receive PING frames.
+
+The following protocols do not implement PING
+mechanisms: HTTP/1.1, raw and SOCKS5.
 
 == Arguments
 
@@ -41,7 +52,7 @@ The pid of the Gun connection process.
 ReqOpts::
 
 Request options. Only the `reply_to` and `tunnel` options
-can be used.
+are relevant.
 
 == Return value
 
@@ -55,17 +66,15 @@ a ping ack is received from the server.
 
 == Examples
 
-.Perform a request
+.Send a ping and receive an ack
 [source,erlang]
 ----
 PingRef = gun:ping(ConnPid).
-receive
-    {gun_notify, ConnPid, ping_ack, PingRef} ->
-        ok
-end.
+{notify, ping_ack, PingRef} = gun:await(ConnPid, undefined).
 ----
 
 == See also
 
 link:man:gun(3)[gun(3)],
 link:man:gun:await(3)[gun:await(3)],
+link:man:gun_notify(3)[gun_notify(3)]
