@@ -487,10 +487,10 @@ close(_Reason, _State, _, EvHandlerState) ->
 keepalive(_State, _, _EvHandlerState) ->
 	error(todo).
 
--spec ping(_, _, _, _) -> {error, not_implemented}.
+-spec ping(_, _, _, _) -> {error, {ping_not_implemented, reference()}}.
 
-ping(_State, _Tunnel, _ReplyTo, _PingRef) ->
-	{error, not_implemented}.
+ping(_State, _Tunnel, _ReplyTo, PingRef) ->
+	{error, {ping_not_implemented, PingRef}}.
 
 headers(State0=#http3_state{conn=Conn, transport=Transport,
 		http3_machine=HTTP3Machine0}, StreamRef, ReplyTo, Method, Host, Port,

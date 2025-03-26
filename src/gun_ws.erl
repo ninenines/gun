@@ -308,8 +308,8 @@ close(_, _, _, EvHandlerState) ->
 keepalive(State=#ws_state{reply_to=ReplyTo}, EvHandler, EvHandlerState0) ->
 	send(ping, State, ReplyTo, EvHandler, EvHandlerState0).
 
-ping(_State, undefined, _ReplyTo, _PingRef) ->
-	{error, not_implemented}.
+ping(_State, undefined, _ReplyTo, PingRef) ->
+	{error, {ping_not_implemented, PingRef}}.
 
 %% Send one frame.
 send(Frame, State=#ws_state{stream_ref=StreamRef,
