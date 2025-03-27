@@ -65,6 +65,15 @@ cancellation mechanism which allows Gun to inform the
 server to stop sending a response for this particular
 request, saving resources.
 
+Note that because HTTP/2 headers are compressed, there
+are scenarios where it is possible to probe or extract
+data, creating security risks. One scenario being the
+use of Gun as a proxy to create a single connection to
+an origin, with requests coming from multiple mutually
+distrustful entities. Gun will provide configuration
+options to restrict headers that can be compressed in
+a future release.
+
 === Websocket
 
 Websocket is a binary protocol built on top of HTTP that
