@@ -256,23 +256,33 @@ dispatch(Rest, State0=#ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
 				_ -> Flow0 - Dec
 			end,
 			State1 = State0#ws_state{flow=Flow, handler_state=HandlerState},
-			{State, EvHandlerState} = case Frame of
+			case Frame of
 				ping ->
-					{[], EvHandlerState2} = send(pong, State1, ReplyTo, EvHandler, EvHandlerState1),
-					{State1, EvHandlerState2};
+					case send(pong, State1, ReplyTo, EvHandler, EvHandlerState1) of
+						{[], EvHandlerState2} ->
+							handle(Rest, State1, EvHandler, EvHandlerState2);
+						{Error={error, _}, EvHandlerState2} ->
+							{[{state, State1}, Error], EvHandlerState2}
+					end;
 				{ping, Payload} ->
-					{[], EvHandlerState2} = send({pong, Payload}, State1, ReplyTo, EvHandler, EvHandlerState1),
-					{State1, EvHandlerState2};
+					case send({pong, Payload}, State1, ReplyTo, EvHandler, EvHandlerState1) of
+						{[], EvHandlerState2} ->
+							handle(Rest, State1, EvHandler, EvHandlerState2);
+						{Error={error, _}, EvHandlerState2} ->
+							{[{state, State1}, Error], EvHandlerState2}
+					end;
 				close ->
-					{State1#ws_state{in=close}, EvHandlerState1};
+					State = State1#ws_state{in=close},
+					handle(Rest, State, EvHandler, EvHandlerState1);
 				{close, _, _} ->
-					{State1#ws_state{in=close}, EvHandlerState1};
+					State = State1#ws_state{in=close},
+					handle(Rest, State, EvHandler, EvHandlerState1);
 				{fragment, fin, _, _} ->
-					{State1#ws_state{frag_state=undefined}, EvHandlerState1};
+					State = State1#ws_state{frag_state=undefined},
+					handle(Rest, State, EvHandler, EvHandlerState1);
 				_ ->
-					{State1, EvHandlerState1}
-			end,
-			handle(Rest, State, EvHandler, EvHandlerState)
+					handle(Rest, State1, EvHandler, EvHandlerState1)
+			end
 	end.
 
 update_flow(State=#ws_state{flow=Flow0}, _ReplyTo, _StreamRef, Inc) ->
@@ -340,7 +350,7 @@ send(Frame, State=#ws_state{stream_ref=StreamRef,
 					{[], EvHandlerState}
 			end;
 		Error={error, _} ->
-			{Error, EvHandlerState0}
+			{Error, EvHandlerState1}
 	end.
 
 %% Send many frames.
