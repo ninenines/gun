@@ -131,6 +131,8 @@ cb_send(Pid, Data) ->
 	try
 		gen_statem:call(Pid, {?FUNCTION_NAME, Data})
 	catch
+		exit:{{shutdown, close}, _} ->
+			{error, closed};
 		exit:{noproc, _} ->
 			{error, closed}
 	end.
@@ -140,6 +142,8 @@ cb_setopts(Pid, Opts) ->
 	try
 		gen_statem:call(Pid, {?FUNCTION_NAME, Opts})
 	catch
+		exit:{{shutdown, close}, _} ->
+			{error, closed};
 		exit:{noproc, _} ->
 			{error, einval}
 	end.
@@ -178,6 +182,9 @@ sockname(Pid) ->
 close(Pid) ->
 	?DEBUG_LOG("pid ~0p", [Pid]),
 	try
+		%% We must unlink before closing otherwise the closing
+		%% will take down the Gun process with it.
+		unlink(Pid),
 		gen_statem:call(Pid, ?FUNCTION_NAME)
 	catch
 		%% May happen for example when the handshake fails.
@@ -236,11 +243,13 @@ not_connected(cast, Msg={setopts, _}, State) ->
 	{keep_state_and_data, postpone};
 not_connected(cast, Msg={connect_proc, {ok, Socket}}, State=#state{owner_pid=OwnerPid, extra=Extra}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
-	OwnerPid ! {?MODULE, self(), {ok, ssl:negotiated_protocol(Socket)}, Extra},
-	%% We need to spawn this call before OTP-21.2 because it triggers
-	%% a cb_setopts call that blocks us. Might be OK to just leave it
-	%% like this once we support 21.2+ only.
-	spawn(fun() -> ok = ssl:setopts(Socket, [{active, true}]) end),
+	Negotiated = ssl:negotiated_protocol(Socket),
+	_ = case ssl:setopts(Socket, [{active, true}]) of
+		ok ->
+			OwnerPid ! {?MODULE, self(), {ok, Negotiated}, Extra};
+		Error ->
+			OwnerPid ! {?MODULE, self(), Error, Extra}
+	end,
 	{next_state, connected, State#state{proxy_socket=Socket}};
 not_connected(cast, Msg={connect_proc, Error}, State=#state{owner_pid=OwnerPid, extra=Extra}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
@@ -332,8 +341,20 @@ handle_common(cast, Msg={cb_controlling_process, ProxyPid}, State) ->
 handle_common(cast, Msg={setopts, Opts}, State) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
 	{keep_state, owner_setopts(Opts, State)};
-handle_common(cast, Msg={send_result, From, Result}, State) ->
+handle_common(cast, Msg={send_result, From, Result0}, State=#state{proxy_socket=Socket}) ->
 	?DEBUG_LOG("msg ~0p state ~0p", [Msg, State]),
+	%% See gun:maybe_tls_alert for details.
+	Result = case Result0 of
+		{error, closed} ->
+			receive
+				{ssl_error, Socket, Reason} ->
+					{error, Reason}
+			after 200 ->
+				Result0
+			end;
+		_ ->
+			Result0
+	end,
 	gen_statem:reply(From, Result),
 	keep_state_and_data;
 %% Messages from the real socket.

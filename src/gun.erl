@@ -332,7 +332,7 @@
 	keepalive_ref :: undefined | reference(),
 	socket :: undefined | inet:socket() | ssl:sslsocket() | pid(),
 	transport :: module(),
-	active = true :: boolean(),
+	active = false :: boolean(),
 	messages :: {atom(), atom(), atom()},
 	protocol :: module(),
 	protocol_state :: any(),
@@ -1331,10 +1331,18 @@ normal_tls_handshake(Socket, State=#state{
 	EvHandlerState1 = EvHandler:tls_handshake_start(HandshakeEvent, EvHandlerState0),
 	case gun_tls:connect(Socket, TLSOpts, TLSTimeout) of
 		{ok, TLSSocket} ->
-			%% This call may return {error,closed} when the socket has
-			%% been closed by the peer. This should be very rare (due to
-			%% timing) but can happen for example when client certificates
-			%% were required but not sent or invalid with some servers.
+			%% When initially connecting we are in passive mode and
+			%% in that state we expect this call to always succeed.
+			%% In rare scenarios (suspended Gun process) it may
+			%% return {error,closed}, but this indicates that the
+			%% socket process is gone and we cannot retrieve a potential
+			%% TLS alert.
+			%%
+			%% When using HTTP/1.1 CONNECT we are also in passive mode
+			%% because CONNECT involves a response that is received via
+			%% active mode, which automatically goes into passive mode
+			%% ({active,once}), and we only reenable active mode after
+			%% processing commands.
 			case ssl:negotiated_protocol(TLSSocket) of
 				{error, Reason = closed} ->
 					EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
@@ -1368,7 +1376,8 @@ connected_protocol_init(internal, {connected, Retries, Socket, NewProtocol},
 		{ok, StateName, ProtoState} ->
 			%% @todo Don't send gun_up and gun_down if active/1 fails here.
 			reply(Owner, {gun_up, self(), Protocol:name()}),
-			State1 = State0#state{socket=Socket, protocol=Protocol, protocol_state=ProtoState},
+			State1 = State0#state{socket=Socket, protocol=Protocol,
+				protocol_state=ProtoState, active=true},
 			case active(State1) of
 				{ok, State2} ->
 					State = case Protocol:has_keepalive() of
@@ -1899,7 +1908,8 @@ commands([TLSHandshake={tls_handshake, _, _, _}], State) ->
 disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 		intermediaries=Intermediaries, socket=Socket, transport=Transport0,
 		protocol=Protocol, protocol_state=ProtoState,
-		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason) ->
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason0) ->
+	Reason = maybe_tls_alert(State0, Reason0),
 	EvHandlerState1 = Protocol:close(Reason, ProtoState, EvHandler, EvHandlerState0),
 	_ = Transport0:close(Socket),
 	EvHandlerState = EvHandler:disconnect(#{reason => Reason}, EvHandlerState1),
@@ -1913,6 +1923,9 @@ disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 			%% We closed the socket, discard any remaining socket events.
 			disconnect_flush(State1),
 			KilledStreams = Protocol:down(ProtoState),
+			%% @todo Reason here may be {error, Reason1} which leads to
+			%% different behavior compared to down messages received
+			%% from failing to connect where Reason1 is what gets sent.
 			reply(Owner, {gun_down, self(), Protocol:name(), Reason, KilledStreams}),
 			Retry = maps:get(retry, Opts, 5),
 			State2 = keepalive_cancel(State1#state{
@@ -1934,6 +1947,66 @@ disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 			{next_state, not_connected, State,
 				{next_event, internal, {retries, Retry, Reason}}}
 	end.
+
+%% With TLS 1.3 the handshake may not have validated the certificate
+%% by the time it completes. The validation may therefore fail at any
+%% time afterwards. TLS 1.3 also introduced post-handshake authentication
+%% which would produce the same results. Erlang/OTP's ssl has a number
+%% of asynchronous functions which won't return the alert as an error
+%% and instead return a plain {error,closed}, including ssl:send.
+%% Gun must therefore check whether a close is resulting from a TLS alert
+%% and use that alert as a more descriptive disconnect reason.
+%%
+%% Sometimes, ssl:send will return {error,einval}, because while the
+%% TLS pseudo-socket still exists, the underlying TCP socket is already
+%% gone. In that case we can still query the TLS pseudo-socket to get
+%% the detailed TLS alert.
+%%
+%% @todo We currently do not support retrieving the alert from a gun_tls_proxy
+%% socket. We need a test case to best understand what should be done there.
+%% But since the socket belongs to that process we likely need additional
+%% changes there to make it work.
+maybe_tls_alert(#state{socket=Socket, transport=gun_tls,
+		active=true, messages={_, _, Error}}, Reason0)
+		%% The unwrapped tuple we get half the time makes this clause more complex.
+		when Reason0 =:= {error, closed}; Reason0 =:= {error, einval}; Reason0 =:= closed ->
+	%% When active mode is enabled we should have the alert in our
+	%% mailbox so we can just retrieve it. In case it is late we
+	%% use a short timeout to increase the chances of catching it.
+	receive
+		{Error, Socket, Reason} ->
+			Reason
+	after 200 ->
+		Reason0
+	end;
+maybe_tls_alert(#state{socket=Socket, transport=Transport=gun_tls,
+		active=false}, Reason0)
+		when Reason0 =:= {error, closed}; Reason0 =:= {error, einval}; Reason0 =:= closed ->
+	%% When active mode is disabled we can do a number of operations to
+	%% receive the alert. Enabling active mode is one of them.
+	case Transport:setopts(Socket, [{active, once}]) of
+		{error, Reason={tls_alert, _}} ->
+			Reason;
+		_ ->
+			Reason0
+	end;
+%% We unwrap the TLS alert error for consistency.
+%% @todo Consistenly wrap/unwrap all errors instead of just this one.
+maybe_tls_alert(_, {error, Reason={tls_alert, _}}) ->
+	Reason;
+%% We may also need to receive the alert when proxying TLS.
+maybe_tls_alert(#state{socket=Socket, transport=gun_tls_proxy,
+		active=true, messages={_, _, Error}}, Reason0)
+		%% The unwrapped tuple we get half the time makes this clause more complex.
+		when Reason0 =:= {error, closed}; Reason0 =:= {error, einval}; Reason0 =:= closed ->
+	receive
+		{Error, Socket, Reason} ->
+			Reason
+	after 200 ->
+		Reason0
+	end;
+maybe_tls_alert(_, Reason) ->
+	Reason.
 
 disconnect_flush(State=#state{socket=Socket, messages={OK, Closed, Error}}) ->
 	receive

@@ -29,10 +29,31 @@ suite() ->
 	[{timetrap, 30000}].
 
 all() ->
-	[{group, gun}].
+	[
+		{group, tls13_post_handshake_alert},
+		{group, gun},
+		{group, tls13_post_handshake_alert}
+	].
 
 groups() ->
-	[{gun, [parallel], ct_helper:all(?MODULE)}].
+	[
+		{gun, [parallel], ct_helper:all(?MODULE)},
+		%% We run these tests in parallel in 'gun' as well as
+		%% sequentially to have more chances of hitting different
+		%% parts of the code. We also run them before/after 'gun'.
+		{tls13_post_handshake_alert, [], [
+			tls13_post_handshake_alert_http1,
+			tls13_post_handshake_alert_http2,
+			tls13_post_handshake_alert_http1_via_http,
+			tls13_post_handshake_alert_http2_via_http,
+			tls13_post_handshake_alert_http1_via_https,
+			tls13_post_handshake_alert_http2_via_https,
+			tls13_post_handshake_alert_http1_via_h2c,
+			tls13_post_handshake_alert_http2_via_h2c,
+			tls13_post_handshake_alert_http1_via_h2,
+			tls13_post_handshake_alert_http2_via_h2
+		]}
+	].
 
 %% Tests.
 
@@ -632,6 +653,309 @@ supervise_false(_) ->
 	{ok, http} = gun:await_up(Pid),
 	[] = [P || {_, P, _, _} <- supervisor:which_children(gun_sup), P =:= Pid],
 	ok.
+
+tls13_post_handshake_alert_http1(_) ->
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_http1();
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+do_tls13_post_handshake_alert_http1() ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when using HTTP/1.1 in mTLS scenarios."),
+	TestOpts = ct_helper:get_certs_from_ets(),
+	{ok, ListenSocket} = ssl:listen(0, [binary,
+		{log_level, none},
+		{versions, ['tlsv1.3']},
+		%% The alert will be triggered by the missing certificate.
+		{verify, verify_peer},
+		{fail_if_no_peer_cert, true},
+		%% We only use the certs, not other options,
+		%% as we require TLS 1.3 and want a specific behavior.
+		{cacerts, proplists:get_value(cacerts, TestOpts)},
+		{cert, proplists:get_value(cert, TestOpts)},
+		{key, proplists:get_value(key, TestOpts)}
+	]),
+	{ok, {_, OriginPort}} = ssl:sockname(ListenSocket),
+	_ = spawn_link(fun() ->
+		{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+		{error, {tls_alert, _}} = ssl:handshake(ClientSocket, 5000),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		retry => 0,
+		transport => tls,
+		tls_opts => [
+			{log_level, none},
+			{verify, verify_none}
+		]
+	}),
+	%% We want to send data immediately as soon as the connection is up.
+	%% So we do it before we receive the gun_up message.
+	StreamRef = gun:post(ConnPid, "/", [{<<"content-type">>, <<"application/octet-stream">>}]),
+	%% Yes, this was written on April 1st.
+	_ = [begin
+		gun:data(ConnPid, StreamRef, nofin, <<"April fools!">>)
+	end || _ <- lists:seq(1, 100)],
+	%% The alert will occur after the gun_up message has been sent
+	%% in the case of HTTP/1.1 (when active mode gets enabled).
+	{ok, http} = gun:await_up(ConnPid),
+	{error, {down, {shutdown,
+		{tls_alert, {certificate_required, _}}}}} = gun:await(ConnPid, undefined),
+	gun:close(ConnPid).
+
+tls13_post_handshake_alert_http2(_) ->
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_http2();
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+do_tls13_post_handshake_alert_http2() ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when using HTTP/2 in mTLS scenarios."),
+	TestOpts = ct_helper:get_certs_from_ets(),
+	{ok, ListenSocket} = ssl:listen(0, [binary,
+		{log_level, none},
+		{versions, ['tlsv1.3']},
+		%% Enable HTTP/2.
+		{alpn_preferred_protocols, [<<"h2">>]},
+		%% The alert will be triggered by the missing certificate.
+		{verify, verify_peer},
+		{fail_if_no_peer_cert, true},
+		%% We only use the certs, not other options,
+		%% as we require TLS 1.3 and want a specific behavior.
+		{cacerts, proplists:get_value(cacerts, TestOpts)},
+		{cert, proplists:get_value(cert, TestOpts)},
+		{key, proplists:get_value(key, TestOpts)}
+	]),
+	{ok, {_, OriginPort}} = ssl:sockname(ListenSocket),
+	_ = spawn_link(fun() ->
+		{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+		{error, {tls_alert, _}} = ssl:handshake(ClientSocket, 5000),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		retry => 0,
+		transport => tls,
+		tls_opts => [
+			{log_level, none},
+			{verify, verify_none}
+		]
+	}),
+	case gun:await_up(ConnPid) of
+		{error, {down, {shutdown, {tls_alert, {certificate_required, _}}}}} ->
+			ct:log("TLS alert received in gun:await_up");
+		{ok, http2} ->
+			{error, {down, {shutdown,
+				{tls_alert, {certificate_required, _}}}}} = gun:await(ConnPid, undefined),
+			ct:log("TLS alert received after gun:await_up")
+	end,
+	gun:close(ConnPid).
+
+tls13_post_handshake_alert_http1_via_http(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/1.1 server "
+		"over an HTTP/1.1 clear-text tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(http, http);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+tls13_post_handshake_alert_http2_via_http(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/2 server "
+		"over an HTTP/1.1 clear-text tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(http, http2);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+tls13_post_handshake_alert_http1_via_https(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/1.1 server "
+		"over an HTTP/1.1 TLS tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(https, http);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+tls13_post_handshake_alert_http2_via_https(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/2 server "
+		"over an HTTP/1.1 TLS tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(https, http2);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+tls13_post_handshake_alert_http1_via_h2c(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/1.1 server "
+		"over an HTTP/2 clear-text tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(h2c, http);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+tls13_post_handshake_alert_http2_via_h2c(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/2 server "
+		"over an HTTP/2 clear-text tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(h2c, http2);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+tls13_post_handshake_alert_http1_via_h2(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/1.1 server "
+		"over an HTTP/2 TLS tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(h2, http);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+tls13_post_handshake_alert_http2_via_h2(_) ->
+	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
+		"propagated when connecting to an HTTP/2 server "
+		"over an HTTP/2 TLS tunnel in mTLS scenarios."),
+	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
+		{{unix, linux}, true} ->
+			do_tls13_post_handshake_alert_via_tunnel(h2, http2);
+		{{unix, linux}, false} ->
+			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
+		_ ->
+			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
+	end.
+
+do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol) ->
+	TestOpts = ct_helper:get_certs_from_ets(),
+	ExtraOpts = case OriginProtocol of
+		http -> [];
+		http2 -> [{alpn_preferred_protocols, [<<"h2">>]}]
+	end,
+	{ok, ListenSocket} = ssl:listen(0, [binary,
+		{log_level, none},
+		{versions, ['tlsv1.3']},
+		%% The alert will be triggered by the missing certificate.
+		{verify, verify_peer},
+		{fail_if_no_peer_cert, true},
+		%% We only use the certs, not other options,
+		%% as we require TLS 1.3 and want a specific behavior.
+		{cacerts, proplists:get_value(cacerts, TestOpts)},
+		{cert, proplists:get_value(cert, TestOpts)},
+		{key, proplists:get_value(key, TestOpts)}
+	|ExtraOpts]),
+	{ok, {_, OriginPort}} = ssl:sockname(ListenSocket),
+	_ = spawn_link(fun() ->
+		{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+		{error, {tls_alert, _}} = ssl:handshake(ClientSocket, 5000),
+		receive after infinity -> ok end
+	end),
+	{ok, ProxyPid, ProxyPort} = tunnel_SUITE:do_proxy_start(ProxyType),
+	{ProxyTransport, ProxyProtocol} = tunnel_SUITE:do_type(ProxyType),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		retry => 0,
+		transport => ProxyTransport,
+		tls_opts => [{verify, verify_none}],
+		protocols => [ProxyProtocol]
+		%,trace => true
+	}),
+	{ok, ProxyProtocol} = gun:await_up(ConnPid),
+	tunnel_SUITE:do_handshake_completed(ProxyProtocol, ProxyPid),
+	TunnelStreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tls,
+		tls_opts => [
+			{log_level, none},
+			{verify, verify_none}
+		]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, TunnelStreamRef),
+	%% When going through an HTTP/2 tunnel we must wait for the protocol
+	%% to be up before sending data.
+	Continue = case ProxyProtocol of
+		http2 ->
+			case gun:await(ConnPid, TunnelStreamRef) of
+				{up, OriginProtocol} ->
+					ok;
+				{error, {stream_error, {stream_error,
+						{tls_alert, {certificate_required, _}}, _}}} ->
+					stop
+			end;
+		http ->
+			ok
+	end,
+	case Continue of
+		stop ->
+			ok;
+		ok ->
+			%% Otherwise we want to send data immediately as soon as the connection
+			%% is up. So we do it before we receive the gun_up message.
+			StreamRef = gun:post(ConnPid, "/", [{<<"content-type">>, <<"application/octet-stream">>}],
+				#{tunnel => TunnelStreamRef}),
+			%% Yes, this was written on April 1st.
+			_ = [begin
+				gun:data(ConnPid, StreamRef, nofin, <<"April fools!">>)
+			end || _ <- lists:seq(1, 100)],
+			_ = case ProxyProtocol of
+				http2 ->
+					%% We already received the gun_tunnel_up at this point for HTTP/2.
+					{error, {stream_error, {stream_error,
+						{tls_alert, {certificate_required, _}}, _}}} = gun:await(ConnPid, TunnelStreamRef);
+				http ->
+					%% The alert will occur after the gun_up message has been sent
+					%% in the case of HTTP/1.1 (when active mode gets enabled).
+					%% But when we are using TLS over TLS the timing is a little
+					%% different and we may get a failure before receiving gun_tunnel_up.
+					case gun:await(ConnPid, TunnelStreamRef) of
+						{up, OriginProtocol} ->
+							{error, {down, {shutdown,
+								{tls_alert, {certificate_required, _}}}}} = gun:await(ConnPid, undefined);
+						{error, {stream_error, {closed,
+								{tls_alert, {certificate_required, _}}}}} ->
+							ok
+					end
+			end
+	end,
+	gun:close(ConnPid).
 
 tls_handshake_error_gun_http2_init_retry_0(_) ->
 	doc("Ensure an early TLS connection close is propagated "

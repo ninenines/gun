@@ -35,7 +35,7 @@ connect(Socket, Opts, Timeout) ->
 send(Socket, Packet) ->
 	ssl:send(Socket, Packet).
 
--spec setopts(ssl:sslsocket(), list()) -> ok | {error, atom()}.
+-spec setopts(ssl:sslsocket(), list()) -> ok | {error, any()}.
 setopts(Socket, Opts) ->
 	ssl:setopts(Socket, Opts).
 
