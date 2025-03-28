@@ -122,3 +122,20 @@ receive
         handle_frame(ConnPid, StreamRef, Frame)
 end.
 ----
+
+=== Automatic reconnect gotchas
+
+It is recommended to disable automatic reconnect when
+Websocket is used because Gun cannot automatically upgrade
+to Websocket on reconnect, and so an undetected disconnect
+may lead to many error messages from Gun.
+
+This can be done by setting the `retry` option to `0`
+when opening a connection:
+
+[source,erlang]
+----
+{ok, ConnPid} = gun:open("localhost", 12345, #{
+    retry ⇒ 0
+}).
+----
