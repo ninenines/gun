@@ -104,6 +104,7 @@ default_keepalive() -> infinity.
 init(ReplyTo, Conn, Transport, Opts) ->
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	{ok, SettingsBin, HTTP3Machine0} = cow_http3_machine:init(client, Opts),
+	%% @todo We may get a TLS 1.3 error/alert here in mTLS scenarios.
 	{ok, ControlID} = Transport:start_unidi_stream(Conn, [<<0>>, SettingsBin]),
 	{ok, EncoderID} = Transport:start_unidi_stream(Conn, [<<2>>]),
 	{ok, DecoderID} = Transport:start_unidi_stream(Conn, [<<3>>]),

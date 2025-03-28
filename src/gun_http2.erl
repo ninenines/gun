@@ -206,6 +206,16 @@ init(ReplyTo, Socket, Transport, Opts0) ->
 			{ok, connected, #http2_state{reply_to=ReplyTo, socket=Socket, transport=Transport,
 				opts=Opts, base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
 				content_handlers=Handlers, http2_machine=HTTP2Machine}};
+		Error0={error, R} when R =:= closed; R =:= einval ->
+			%% Check whether we have a TLS alert and in that case,
+			%% return it. We must do this here because Protocol:init
+			%% failure doesn't go through disconnect.
+			case Transport:setopts(Socket, [{active, once}]) of
+				Error={error, {tls_alert, _}} ->
+					Error;
+				_ ->
+					Error0
+			end;
 		Error={error, _Reason} ->
 			Error
 	end.
@@ -488,8 +498,20 @@ tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
 		State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}},
 		State, EvHandler, EvHandlerState);
-tunnel_commands([{error, Reason}|_], #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},
+tunnel_commands([{error, Reason0}|_], #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},
 		State, _EvHandler, EvHandlerState) ->
+	%% See gun:maybe_tls_alert for details.
+	Reason = case Reason0 of
+		closed ->
+			receive
+				{handle_continue, StreamRef, {tls_proxy_error, _Socket, Reason1}} ->
+					Reason1
+			after 200 ->
+				Reason0
+			end;
+		_ ->
+			Reason0
+	end,
 	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
 		{stream_error, Reason, 'Tunnel closed unexpectedly.'}}),
 	{{state, delete_stream(State, StreamID)}, EvHandlerState};
@@ -948,6 +970,7 @@ close(Reason0, State=#http2_state{streams=Streams}, _, EvHandlerState) ->
 	end, [], Streams),
 	EvHandlerState.
 
+%% @todo This can get {error,closed} leading to {closed,{error,closed}}.
 close_reason(closed) -> closed;
 close_reason(Reason) -> {closed, Reason}.
 

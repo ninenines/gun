@@ -110,7 +110,8 @@ do_proxy_parse(<<Len:24, 0:8, _:8, StreamID:32, Payload:Len/binary, Rest/bits>>,
 		ok ->
 			do_proxy_parse(Rest, Proxy);
 		{error, _} ->
-			ok
+			%% Wait forever when a connection gets closed. We will exit with the test process.
+			timer:sleep(infinity)
 	end;
 do_proxy_parse(<<Len:24, 1:8, _:8, StreamID:32, ReqHeadersBlock:Len/binary, Rest/bits>>,
 		Proxy=#proxy{parent=Parent, socket=Socket, transport=Transport,
