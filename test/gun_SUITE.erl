@@ -730,6 +730,18 @@ transform_header_name(_) ->
 	1 = length(HostLines),
 	gun:close(Pid).
 
+ws_send_http(_) ->
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		protocols => [http]
+	}),
+	{ok, _ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	{ok, http} = gun:await_up(ConnPid),
+	gun:ws_send(ConnPid, make_ref(), ping),
+	{error, {connection_error, {badstate, _}}} = gun:await(ConnPid, undefined),
+	gun:close(ConnPid).
+
 unix_socket_connect(_) ->
 	case os:type() of
 		{win32, _} ->

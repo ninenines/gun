@@ -35,6 +35,7 @@
 -export([stream_info/2]).
 -export([down/1]).
 -export([ws_upgrade/11]).
+-export([ws_send/6]).
 
 %% Functions shared with gun_http2 and gun_pool.
 -export([host_header/3]).
@@ -1051,3 +1052,16 @@ ws_handshake_end(Buffer, State=#http_state{streams=[#stream{flow=InitialFlow}|_]
 		handler => Handler,
 		opts => Opts
 	}}, ReplyTo, Buffer}.
+
+%% Reject attempts to send Websocket frames on HTTP.
+%% This can happen either because the user explicitly
+%% called ws_send on an HTTP connection, or because
+%% the connection was dropped and automatically
+%% reconnected. Automatic reconnection doesn't perform
+%% a Websocket upgrade automatically.
+ws_send(_, _, _, ReplyTo, _, EvHandlerState) ->
+	gun:reply(ReplyTo, {gun_error, self(), {badstate,
+		"This connection does not currently accept Websocket frames. "
+		"The Websocket upgrade was not performed. "
+		"This may happen as a result of automatic reconnect."}}),
+	{[], EvHandlerState}.
