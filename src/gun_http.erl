@@ -654,6 +654,8 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 	SendResult = Transport:send(Socket, [
 		cow_http:request(Method, Path, Version, Headers),
 		[Body || Body =/= undefined]]),
+
+							timer:sleep(1000), ct:pal("g ~p", [process_info(self(), messages)]),
 	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
 	EvHandlerState = case Out of
 		head ->
@@ -730,12 +732,15 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 								EvHandlerState0),
 							{{state, State#http_state{out=head}}, EvHandlerState};
 						Error={error, _} ->
+							timer:sleep(100), ct:pal("g ~p", [process_info(self(), messages)]),
 							{Error, EvHandlerState0}
 					end;
 				body_chunked when Version =:= 'HTTP/1.1' ->
 					case Transport:send(Socket, cow_http_te:chunk(Data)) of
 						ok -> {[], EvHandlerState0};
-						Error={error, _} -> {Error, EvHandlerState0}
+						Error={error, _} -> 
+							timer:sleep(100), ct:pal("g ~p", [process_info(self(), messages)]),
+						{Error, EvHandlerState0}
 					end;
 				{body, Length} when DataLength =< Length ->
 					Length2 = Length - DataLength,
@@ -750,6 +755,7 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 						ok when Length2 > 0, IsFin =:= nofin ->
 							{{state, State#http_state{out={body, Length2}}}, EvHandlerState0};
 						Error={error, _} ->
+							timer:sleep(100), ct:pal("g ~p", [process_info(self(), messages)]),
 							{Error, EvHandlerState0}
 					end;
 				body_chunked -> %% HTTP/1.0

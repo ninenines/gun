@@ -633,6 +633,42 @@ supervise_false(_) ->
 	[] = [P || {_, P, _, _} <- supervisor:which_children(gun_sup), P =:= Pid],
 	ok.
 
+tls_alert_delayed(_) ->
+	%% @todo doc
+	{ok, ListenSocket} = ssl:listen(0, [binary,
+		{versions, ['tlsv1.3']},
+		%% The alert will be triggered by the missing certificate.
+		{verify, verify_peer},
+		{fail_if_no_peer_cert, true},
+		{keyfile, "/home/essen/Downloads/server.key"},
+		{certfile, "/home/essen/Downloads/server.crt"},
+		{cacertfile, "/home/essen/Downloads/cacert.pem"}]),
+	{ok, {_, OriginPort}} = ssl:sockname(ListenSocket),
+	AcceptPid = spawn_link(fun() ->
+		{ok, ClientSocket} = ssl:transport_accept(ListenSocket, 5000),
+		{error, {tls_alert, _}} = ssl:handshake(ClientSocket, 5000),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		retry => 0,
+		transport => tls,
+		tls_opts => [
+			{cb_info, {gen_tcp_delayed_send, tcp, tcp_closed, tcp_error, tcp_passive}},
+			{verify, verify_none}
+		]
+		,trace => true
+	}),
+	ct:pal("~p", [gun:await_up(ConnPid)]),
+	timer:sleep(1000),
+	StreamRef = gun:post(ConnPid, "/", [{<<"content-type">>, <<"application/octet-stream">>}]),
+%	spawn_link(fun SendLoop() -> gun:data(ConnPid, StreamRef, nofin, rand:bytes(64)), timer:sleep(10), SendLoop() end),
+	timer:sleep(2000),
+	ct:pal("~p", [process_info(self(), messages)]),
+	gun:close(ConnPid).
+
+
+
+
 tls_handshake_error_gun_http2_init_retry_0(_) ->
 	doc("Ensure an early TLS connection close is propagated "
 		"to the user of the connection."),
