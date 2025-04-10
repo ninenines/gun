@@ -1,0 +1,88 @@
+[appendix]
+== Migrating from Gun 2.1 to 2.2
+
+Gun 2.2 contains many features and fixes, including
+an experimental HTTP/3 implementation.
+
+Gun 2.2 requires Erlang/OTP 24.0 or greater.
+
+=== Features added
+
+* Gun will now do wildcard certificate matching by
+  default, as required by the HTTP protocol, by
+  setting the `customize_hostname_check` ssl option.
+
+* User pings are now supported for HTTP/2. User pings
+  are PING frames sent by the user, with the
+  corresponding PING_ACK resulting in a `gun_notify`
+  message being sent to the user process. They can
+  be used to measure latency or do other checks.
+
+* The `reply_to` request option has been extended to
+  accept a fun or an MFA that will be called when a
+  reply must be sent to the user process.
+
+* The `state_name`, `event_handler` and `event_handler_state`
+  fields were added to `gun:info/1`.
+
+* Update Cowlib to 2.14.1.
+
+=== Experimental features added
+
+* Experimental support for HTTP/3 has been added.
+  Websocket over HTTP/3 is not currently implemented.
+  HTTP/3 support is disabled by default; to enable,
+  the environment variable GUN_QUICER must be set at
+  compile-time.
+
+=== Bugs fixed
+
+* TLS 1.3 performs certificate validation independently
+  from the handshake, which means that certificate errors
+  can arrive after the handshake has completed. This is
+  in part to support post-handshake authentication. Gun
+  will now replace `{error, closed}` and similar socket
+  errors with the TLS alert when possible, including for
+  TLS over TLS and TLS over HTTP/2 scenarios.
+
+* HTTP/2 tunneling has been improved: WINDOW_UPDATE
+  frames are now properly sent, and flow control is
+  handled. In addition closing the stream is better
+  handled. This impacts both proxying scenarios as
+  well as Websocket over HTTP/2.
+
+* HTTP/2 will now properly send a NO_ERROR "error"
+  code when initiating graceful shutdown.
+
+* HTTP/2 will now properly track the number of
+  streams currently running and immediately fail
+  when the user tries to open a stream too many
+  compared to what the server allows.
+
+* Sometimes stray HTTP/2 timeout messages could
+  be received, producing a log message. This was
+  because they were not cleaned up on disconnect.
+  Now they are.
+
+* Socket errors were not properly handled when
+  sending Websocket PONG frames. This has been
+  corrected.
+
+* Trying to send a Websocket frame over an HTTP
+  connection (before the Websocket upgrade) will
+  now result in an error sent to the user process.
+
+* When connecting to HTTP via a Unix domain socket,
+  Gun will now set the host header to "localhost"
+  by default. Previously an invalid host header
+  was sent.
+
+* Data could be lost when switching to the raw
+  protocol. This has been corrected.
+
+* Documentation has been updated to describe the
+  `notify_settings_changed` option; as well as
+  to recommend disabling automatic reconnect when
+  Websocket is used; and to provide context around
+  potential security risks due to HTTP/2 compressed
+  headers.
