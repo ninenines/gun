@@ -963,11 +963,13 @@ closing(#http2_state{opts=Opts}) ->
 	Timeout = maps:get(closing_timeout, Opts, 15000),
 	{closing, Timeout}.
 
-close(Reason0, State=#http2_state{streams=Streams}, _, EvHandlerState) ->
+close(Reason0, State=#http2_state{http2_machine=HTTP2Machine, streams=Streams},
+		_, EvHandlerState) ->
 	Reason = close_reason(Reason0),
 	_ = maps:fold(fun(_, Stream, _) ->
 		close_stream(State, Stream, Reason)
 	end, [], Streams),
+	cow_http2_machine:terminate(HTTP2Machine),
 	EvHandlerState.
 
 %% @todo This can get {error,closed} leading to {closed,{error,closed}}.
