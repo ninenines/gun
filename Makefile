@@ -28,6 +28,7 @@ TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper cowboy ranch jsx
 dep_ct_helper = git https://github.com/ninenines/ct_helper.git master
 dep_cowboy_commit = 2.9.0
 dep_ranch_commit = 2.0.0
+dep_jsx = git https://github.com/talentdeficit/jsx v3.1.0
 
 # CI configuration.
 
