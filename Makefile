@@ -2,7 +2,7 @@
 
 PROJECT = gun
 PROJECT_DESCRIPTION = HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP.
-PROJECT_VERSION = 2.1.0
+PROJECT_VERSION = 2.2.0
 
 # Options.
 
@@ -15,7 +15,7 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = public_key ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib master
+dep_cowlib = git https://github.com/ninenines/cowlib 2.15.0
 
 ifeq ($(GUN_QUICER),1)
 DEPS += quicer
@@ -43,13 +43,15 @@ define HEX_TARBALL_EXTRA_METADATA
 #{
 	licenses => [<<"ISC">>],
 	links => #{
-		<<"Function reference">> => <<"https://ninenines.eu/docs/en/gun/2.1/manual/">>,
-		<<"User guide">> => <<"https://ninenines.eu/docs/en/gun/2.1/guide/">>,
+		<<"Function reference">> => <<"https://ninenines.eu/docs/en/gun/2.2/manual/">>,
+		<<"User guide">> => <<"https://ninenines.eu/docs/en/gun/2.2/guide/">>,
 		<<"GitHub">> => <<"https://github.com/ninenines/gun">>,
 		<<"Sponsor">> => <<"https://github.com/sponsors/essen">>
 	}
 }
 endef
+
+hex_req_cowlib = >= 2.15.0 and < 3.0.0
 
 # Standard targets.
 
@@ -169,6 +171,9 @@ prepare_tag:
 		echo $$f:; \
 		grep == $$f; \
 	done
+	$(verbose) echo
+	$(verbose) echo -n "LICENSE: " ; head -n1 LICENSE
+	$(verbose) echo -n "Guide:   " ; grep Copyright doc/src/guide/introduction.asciidoc
 	$(verbose) echo
 	$(verbose) echo "Dependencies:"
 	$(verbose) grep ^DEPS Makefile || echo "DEPS ="
