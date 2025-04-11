@@ -25,7 +25,7 @@ Gun 2.2 requires Erlang/OTP 24.0 or greater.
 * The `state_name`, `event_handler` and `event_handler_state`
   fields were added to `gun:info/1`.
 
-* Update Cowlib to 2.14.1.
+* Update Cowlib to 2.15.0.
 
 === Experimental features added
 
