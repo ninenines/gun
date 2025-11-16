@@ -30,6 +30,7 @@
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
+-export([trailers/6]).
 -export([connect/10]).
 -export([cancel/5]).
 -export([stream_info/2]).
@@ -758,6 +759,47 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 						ok -> {[], EvHandlerState0};
 						Error={error, _} -> {Error, EvHandlerState0}
 					end
+			end;
+		_ ->
+			error_stream_not_found(State, StreamRef, ReplyTo),
+			{[], EvHandlerState0}
+	end.
+
+%% We can only send trailers on the last created stream.
+trailers(State=#http_state{out=head}, StreamRef, ReplyTo, _, _, EvHandlerState) ->
+	error_stream_closed(State, StreamRef, ReplyTo),
+	{[], EvHandlerState};
+trailers(State=#http_state{streams=[]}, StreamRef, ReplyTo, _, _, EvHandlerState) ->
+	error_stream_not_found(State, StreamRef, ReplyTo),
+	{[], EvHandlerState};
+trailers(State=#http_state{socket=Socket, transport=Transport, version=Version,
+		out=Out, streams=Streams}, StreamRef, ReplyTo, Trailers, EvHandler,
+		EvHandlerState0) ->
+	case lists:last(Streams) of
+		#stream{ref=StreamRef, is_alive=true} ->
+			case Out of
+				body_chunked when Version =:= 'HTTP/1.1' ->
+					DataToSend = [
+						<<"0\r\n">>,
+						cow_http:headers(Trailers),
+						<<"\r\n">>
+					],
+					case Transport:send(Socket, DataToSend) of
+						ok ->
+							RequestEndEvent = #{
+								stream_ref => stream_ref(State, StreamRef),
+								reply_to => ReplyTo
+							},
+							EvHandlerState = EvHandler:request_end(RequestEndEvent,
+								EvHandlerState0),
+							{{state, State#http_state{out=head}}, EvHandlerState};
+						Error={error, _} ->
+							{Error, EvHandlerState0}
+					end;
+				_ ->
+					gun:reply(ReplyTo, {gun_error, self(),
+						stream_ref(State, StreamRef), {badstate,
+						"Trailers can only be used with HTTP/1.1 and chunked transfer-encoding."}})
 			end;
 		_ ->
 			error_stream_not_found(State, StreamRef, ReplyTo),

@@ -31,6 +31,7 @@
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
+-export([trailers/6]).
 -export([connect/10]).
 -export([cancel/5]).
 -export([timeout/3]).
@@ -1257,6 +1258,10 @@ data(State, RealStreamRef=[StreamRef|_], ReplyTo, IsFin, Data, EvHandler, EvHand
 			error_stream_not_found(State, StreamRef, ReplyTo),
 			{[], EvHandlerState0}
 	end.
+
+trailers(State, StreamRef, ReplyTo, Trailers, EvHandler, EvHandlerState) ->
+	Data = {trailers, Trailers},
+	data(State, StreamRef, ReplyTo, fin, Data, EvHandler, EvHandlerState).
 
 maybe_send_data(State=#http2_state{http2_machine=HTTP2Machine0}, StreamID, IsFin, Data0,
 		EvHandler, EvHandlerState) ->
