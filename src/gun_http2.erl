@@ -908,9 +908,10 @@ update_window(State0=#http2_state{socket=Socket, transport=Transport,
 %% the one previously received.
 goaway(State0=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP2Machine,
 		status=Status, streams=Streams0, stream_refs=Refs}, {goaway, LastStreamID, Reason, _}) ->
-	{Streams, RemovedRefs} = goaway_streams(State0, maps:to_list(Streams0), LastStreamID,
-		{goaway, Reason, 'The connection is going away.'}, [], []),
+	{Streams, RemovedRefs, HTTP2Machine1} = goaway_streams(State0, maps:to_list(Streams0),
+		LastStreamID, {goaway, Reason, 'The connection is going away.'}, [], [], HTTP2Machine),
 	State = State0#http2_state{
+		http2_machine=HTTP2Machine1,
 		streams=maps:from_list(Streams),
 		stream_refs=maps:without(RemovedRefs, Refs)
 	},
@@ -926,15 +927,17 @@ goaway(State0=#http2_state{socket=Socket, transport=Transport, http2_machine=HTT
 			{state, State}
 	end.
 
-%% Cancel server-initiated streams that are above LastStreamID.
-goaway_streams(_, [], _, _, Acc, RefsAcc) ->
-	{Acc, RefsAcc};
-goaway_streams(State, [{StreamID, Stream=#stream{ref=StreamRef}}|Tail], LastStreamID, Reason, Acc, RefsAcc)
+%% Cancel client-initiated streams that are above LastStreamID.
+goaway_streams(_, [], _, _, Acc, RefsAcc, HTTP2Machine) ->
+	{Acc, RefsAcc, HTTP2Machine};
+goaway_streams(State, [{StreamID, Stream=#stream{ref=StreamRef}}|Tail],
+		LastStreamID, Reason, Acc, RefsAcc, HTTP2Machine)
 		when StreamID > LastStreamID, (StreamID rem 2) =:= 1 ->
 	close_stream(State, Stream, Reason),
-	goaway_streams(State, Tail, LastStreamID, Reason, Acc, [StreamRef|RefsAcc]);
-goaway_streams(State, [StreamWithID|Tail], LastStreamID, Reason, Acc, RefsAcc) ->
-	goaway_streams(State, Tail, LastStreamID, Reason, [StreamWithID|Acc], RefsAcc).
+	{ok, HTTP2Machine1} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine),
+	goaway_streams(State, Tail, LastStreamID, Reason, Acc, [StreamRef|RefsAcc], HTTP2Machine1);
+goaway_streams(State, [StreamWithID|Tail], LastStreamID, Reason, Acc, RefsAcc, HTTP2Machine) ->
+	goaway_streams(State, Tail, LastStreamID, Reason, [StreamWithID|Acc], RefsAcc, HTTP2Machine).
 
 %% We are already closing, do nothing.
 closing(_, #http2_state{status=closing}, _, EvHandlerState) ->
