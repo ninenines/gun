@@ -15,11 +15,11 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = public_key ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib 2.15.0
+dep_cowlib = git https://github.com/ninenines/cowlib corral
 
-ifeq ($(GUN_QUICER),1)
-DEPS += quicer
-dep_quicer = git https://github.com/emqx/quic main
+ifdef CORRAL_DEPS
+DEPS += corral
+dep_corral = git https://github.com/ninenines/corral master
 endif
 
 DOC_DEPS = asciideck
@@ -68,19 +68,14 @@ endif
 
 TEST_ERLC_OPTS += +'{parse_transform, eunit_autoexport}'
 
-ifeq ($(GUN_QUICER),1)
-ERLC_OPTS += -D GUN_QUICER=1
-TEST_ERLC_OPTS += -D GUN_QUICER=1
+ifdef CORRAL_DEPS
+ERLC_OPTS += -D CORRAL=1
+TEST_ERLC_OPTS += -D CORRAL=1
 endif
 
 # Generate rebar.config on build.
 
 app:: rebar.config
-
-# Fix quicer compilation for HTTP/3.
-
-autopatch-quicer::
-	$(verbose) printf "%s\n" "all: ;" > $(DEPS_DIR)/quicer/c_src/Makefile.erlang.mk
 
 # h2specd setup.
 
