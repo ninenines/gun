@@ -1033,7 +1033,7 @@ init({Owner, Host, Port, Opts}) ->
 	{OriginScheme, Transport} = case OriginTransport of
 		tcp -> {<<"http">>, gun_tcp};
 		tls -> {<<"https">>, gun_tls};
-		quic -> {<<"https">>, gun_quicer}
+		quic -> {<<"https">>, gun_quic}
 	end,
 	OwnerRef = monitor(process, Owner),
 	{EvHandler, EvHandlerState0} = maps:get(event_handler, Opts,
@@ -1121,7 +1121,7 @@ domain_lookup(Type, Event, State) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, State).
 
 connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
-		transport=gun_quicer, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+		transport=gun_quic, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	%% @todo We are doing the TLS handshake at the same time,
 	%%       we cannot separate it from the connection. Fire events.
 	ConnectTimeout = maps:get(connect_timeout, Opts, infinity),
@@ -1130,7 +1130,7 @@ connecting(_, {retries, Retries, LookupInfo}, State=#state{opts=Opts,
 		timeout => ConnectTimeout
 	},
 	EvHandlerState1 = EvHandler:connect_start(ConnectEvent, EvHandlerState0),
-	case gun_quicer:connect(LookupInfo, ConnectTimeout) of
+	case gun_quic:connect(LookupInfo, ConnectTimeout) of
 		{ok, Socket} ->
 			%% @todo We should double check the ALPN result.
 			[Protocol] = maps:get(protocols, Opts, [http3]),
@@ -1702,7 +1702,7 @@ maybe_active(Other) ->
 
 active(State=#state{active=false}) ->
 	{ok, State};
-active(State=#state{transport=gun_quicer}) ->
+active(State=#state{transport=gun_quic}) ->
 	{ok, State};
 active(State=#state{socket=Socket, transport=Transport}) ->
 	case Transport:setopts(Socket, [{active, once}]) of

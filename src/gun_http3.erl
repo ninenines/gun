@@ -69,7 +69,7 @@
 
 -record(http3_state, {
 	reply_to :: gun:reply_to(),
-	conn :: gun_quicer:quicer_connection_handle(),
+	conn :: gun_quic:conn(),
 	transport :: module(),
 	opts = #{} :: gun:http2_opts(),
 	content_handlers :: gun_content_handler:opt(),
@@ -105,9 +105,9 @@ init(ReplyTo, Conn, Transport, Opts) ->
 	Handlers = maps:get(content_handlers, Opts, [gun_data_h]),
 	{ok, SettingsBin, HTTP3Machine0} = cow_http3_machine:init(client, Opts),
 	%% @todo We may get a TLS 1.3 error/alert here in mTLS scenarios.
-	{ok, ControlID} = Transport:start_unidi_stream(Conn, [<<0>>, SettingsBin]),
-	{ok, EncoderID} = Transport:start_unidi_stream(Conn, [<<2>>]),
-	{ok, DecoderID} = Transport:start_unidi_stream(Conn, [<<3>>]),
+	{ok, ControlID} = Transport:open_unidi_stream(Conn, [<<0>>, SettingsBin]),
+	{ok, EncoderID} = Transport:open_unidi_stream(Conn, [<<2>>]),
+	{ok, DecoderID} = Transport:open_unidi_stream(Conn, [<<3>>]),
 	%% Set the control, encoder and decoder streams in the machine.
 	HTTP3Machine = cow_http3_machine:init_unidi_local_streams(
 		ControlID, EncoderID, DecoderID, HTTP3Machine0),
@@ -123,27 +123,27 @@ switch_transport(_Transport, _Conn, _State) ->
 
 handle(Msg, State0=#http3_state{transport=Transport},
 		CookieStore, EvHandler, EvHandlerState) ->
-	case Transport:handle(Msg) of
-		{data, StreamID, IsFin, Data} ->
+	case Transport:make_event(Msg) of
+		{stream_data, StreamID, IsFin, Data} ->
 			parse(Data, State0, StreamID, IsFin,
 				CookieStore, EvHandler, EvHandlerState);
-		{stream_started, StreamID, StreamType} ->
+		{stream_opened, StreamID, StreamType} ->
 			State = stream_new_remote(State0, StreamID, StreamType),
 			{{state, State}, CookieStore, EvHandlerState};
-		{stream_closed, _StreamID, _ErrorCode} ->
-			%% @todo Clean up the stream.
-			{{state, State0}, CookieStore, EvHandlerState};
-		{stream_peer_send_aborted, StreamID, ErrorCode} ->
+		{stream_reset, StreamID, ErrorCode} ->
 			Reason = cow_http3:code_to_error(ErrorCode),
 			{StateOrError, EvHandlerStateRet} = stream_aborted(
 				State0, StreamID, Reason, EvHandler, EvHandlerState),
 			{StateOrError, CookieStore, EvHandlerStateRet};
-		closed ->
+		{stream_stop_sending, _StreamID, _AppErrno} ->
+			%% @todo Clean up the stream.
+			{{state, State0}, CookieStore, EvHandlerState};
+		{conn_closed, _, _} ->
 			%% @todo Terminate the connection.
 			{{state, State0}, CookieStore, EvHandlerState};
-		ok ->
+		no_event ->
 			{{state, State0}, CookieStore, EvHandlerState};
-		unknown ->
+		unknown_msg ->
 			%% @todo Log a warning.
 			{{state, State0}, CookieStore, EvHandlerState}
 	end.
@@ -281,7 +281,7 @@ parse_unidirectional_stream_header(Data, State0=#http3_state{http3_machine=HTTP3
 		%% Unknown stream types must be ignored. We choose to abort the
 		%% stream instead of reading and discarding the incoming data.
 		{undefined, _} ->
-			{{state, (stream_abort_receive(State0, Stream0, h3_stream_creation_error))},
+			{{state, (stream_stop_sending_local(State0, Stream0, h3_stream_creation_error))},
 				CookieStore, EvHandlerState}
 	end.
 
@@ -455,9 +455,9 @@ reset_stream(_State, _StreamID, _Error) ->
 ignored_frame(_State, _Stream) ->
 	error(todo).
 
-stream_abort_receive(State=#http3_state{conn=Conn, transport=Transport},
+stream_stop_sending_local(State=#http3_state{conn=Conn, transport=Transport},
 		Stream=#stream{id=StreamID}, Reason) ->
-	Transport:shutdown_stream(Conn, StreamID, receiving, cow_http3:error_to_code(Reason)),
+	Transport:stop_sending(Conn, StreamID, cow_http3:error_to_code(Reason)),
 	stream_update(State, Stream#stream{status=discard}).
 
 -spec connection_error(_, _) -> no_return().
@@ -497,8 +497,8 @@ headers(State0=#http3_state{conn=Conn, transport=Transport,
 		http3_machine=HTTP3Machine0}, StreamRef, ReplyTo, Method, Host, Port,
 		Path, Headers0, _InitialFlow0, CookieStore0, EvHandler, EvHandlerState0)
 		when is_reference(StreamRef) ->
-	{ok, StreamID} = Transport:start_bidi_stream(Conn),
-	HTTP3Machine1 = cow_http3_machine:init_bidi_stream(StreamID,
+	{ok, StreamID} = Transport:open_bidi_stream(Conn),
+	HTTP3Machine1 = cow_http3_machine:new_bidi_stream(StreamID,
 		iolist_to_binary(Method), HTTP3Machine0),
 	{ok, PseudoHeaders, Headers, CookieStore} = prepare_headers(
 		Method, Host, Port, Path, Headers0, CookieStore0),
@@ -533,8 +533,8 @@ request(State0=#http3_state{conn=Conn, transport=Transport,
 	Headers1 = lists:keystore(<<"content-length">>, 1, Headers0,
 		{<<"content-length">>, integer_to_binary(iolist_size(Body))}),
 	%% @todo InitialFlow = initial_flow(InitialFlow0, Opts),
-	{ok, StreamID} = Transport:start_bidi_stream(Conn),
-	HTTP3Machine1 = cow_http3_machine:init_bidi_stream(StreamID,
+	{ok, StreamID} = Transport:open_bidi_stream(Conn),
+	HTTP3Machine1 = cow_http3_machine:new_bidi_stream(StreamID,
 		iolist_to_binary(Method), HTTP3Machine0),
 	{ok, PseudoHeaders, Headers, CookieStore} = prepare_headers(
 		Method, Host, Port, Path, Headers1, CookieStore0),
@@ -554,14 +554,14 @@ request(State0=#http3_state{conn=Conn, transport=Transport,
 		StreamID, HTTP3Machine1, fin, PseudoHeaders, Headers),
 	State1 = send_instructions(State0#http3_state{http3_machine=HTTP3Machine}, Instrs),
 	%% @todo Handle send errors.
-	ok = Transport:send(Conn, StreamID, [
+	ok = Transport:send(Conn, StreamID, fin, [
 		cow_http3:headers(HeaderBlock),
 		%% Only send a DATA frame if we have a body.
 		case iolist_size(Body) of
 			0 -> <<>>;
 			_ -> cow_http3:data(Body)
 		end
-	], fin),
+	]),
 	EvHandlerState = EvHandler:request_headers(RequestEvent, EvHandlerState1),
 	Stream = #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo,
 		status=normal, authority=Authority, path=Path},
@@ -619,7 +619,7 @@ data(State=#http3_state{conn=Conn, transport=Transport}, StreamRef, _ReplyTo, Is
 		_EvHandler, EvHandlerState) when is_reference(StreamRef) ->
 	case stream_get_by_ref(State, StreamRef) of
 		#stream{id=StreamID} -> %, tunnel=Tunnel} ->
-			ok = Transport:send(Conn, StreamID, cow_http3:data(Data), IsFin),
+			ok = Transport:send(Conn, StreamID, IsFin, cow_http3:data(Data)),
 			{[], EvHandlerState} %% @todo Probably wrong, need to update/keep states?
 %% @todo
 %			case cow_http2_machine:get_stream_local_state(StreamID, HTTP2Machine) of
@@ -701,7 +701,7 @@ stream_new_remote(State=#http3_state{http3_machine=HTTP3Machine0,
 	%% All remote streams to the client are expected to be unidirectional.
 	%% @todo Handle errors instead of crashing.
 	unidi = StreamType,
-	HTTP3Machine = cow_http3_machine:init_unidi_stream(StreamID,
+	HTTP3Machine = cow_http3_machine:new_unidi_stream(StreamID,
 		unidi_remote, HTTP3Machine0),
 	StreamRef = make_ref(),
 	Stream = #stream{id=StreamID, ref=StreamRef, status=header},
