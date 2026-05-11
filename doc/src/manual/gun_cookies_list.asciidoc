@@ -12,7 +12,10 @@ to a specific connection.
 
 It is possible to implement a custom backend on top of
 `gun_cookies_list` in order to add persistence or sharing
-properties.
+properties. Note that it is the responsibility of the
+custom backend to provide cookies that conform to RFC6265
+if they come from external sources (e.g. files), especially
+for the `name`, `value`, `domain` and `path` fields.
 
 == Exports
 

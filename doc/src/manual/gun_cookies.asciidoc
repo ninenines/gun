@@ -11,6 +11,11 @@ It will be used by Gun when a cookie store is configured.
 It also defines the interface and provides functions used
 to implement cookie store backends.
 
+Note that it is the responsibility of the custom backend
+to provide cookies that conform to RFC6265 if they come
+from external sources (e.g. files), especially for the
+`name`, `value`, `domain` and `path` fields.
+
 == Callbacks
 
 Cookie store backends implement the following interface.
