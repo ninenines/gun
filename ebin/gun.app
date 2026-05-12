@@ -5,6 +5,6 @@
 	{registered, [gun_sup]},
 	{applications, [kernel,stdlib,public_key,ssl,cowlib]},
 	{optional_applications, []},
-	{mod, {gun_app, []}},
+	{mod, {'gun_app', []}},
 	{env, []}
 ]}.
