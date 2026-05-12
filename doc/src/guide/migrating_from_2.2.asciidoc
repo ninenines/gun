@@ -1,0 +1,16 @@
+[appendix]
+== Migrating from Gun 2.2 to 2.3
+
+Gun 2.3 updates Cowlib to the most recent version.
+
+Gun 2.3 requires Erlang/OTP 24.0 or greater.
+
+=== Features added
+
+* Update Cowlib to 2.16.1.
+
+=== Bugs fixed
+
+* The documentation for the `gun_cookies` backend
+  interface now explicitly states that cookie
+  fields must be valid according to RFC6265.
