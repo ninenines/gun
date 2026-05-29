@@ -196,6 +196,70 @@ info(_) ->
 	#{sock_ip := _, sock_port := _, state_name := connected} = gun:info(Pid),
 	gun:close(Pid).
 
+invalid_request_headers_ignore(_) ->
+	doc("Ensure invalid request headers are sent when allowed by configuration."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, Pid} = gun:open("localhost", Port, #{protocols => [http]}),
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:get(Pid, "/", [{<<"x-test">>, <<"bad\r\nvalue">>}], #{
+		invalid_request_headers => ignore
+	}),
+	{ok, Data} = gen_tcp:recv(ClientSocket, 0, 5000),
+	true = binary:match(Data, <<"bad\r\nvalue">>) =/= nomatch,
+	gun:close(Pid).
+
+invalid_request_headers_raise_connect(_) ->
+	doc("Ensure invalid request headers raise an exception for CONNECT."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	%% The connection will not succeed, but we don't need it to.
+	try
+		gun:connect(Pid, #{host => "localhost", port => 1234},
+			[{<<"x-test">>, <<"bad\r\nvalue">>}]),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, _, _} -> ok
+	end,
+	gun:close(Pid).
+
+invalid_request_headers_raise_headers(_) ->
+	doc("Ensure invalid request headers raise an exception."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	%% The connection will not succeed, but we don't need it to.
+	try
+		gun:post(Pid, "/", [{<<"x-test">>, <<"bad\r\nvalue">>}]),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, _, _} -> ok
+	end,
+	gun:close(Pid).
+
+invalid_request_headers_raise_request(_) ->
+	doc("Ensure invalid request headers raise an exception."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	%% The connection will not succeed, but we don't need it to.
+	try
+		gun:get(Pid, "/", [{<<"x-test">>, <<"bad\r\nvalue">>}],
+			#{invalid_request_headers => raise}),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, _, _} -> ok
+	end,
+	gun:close(Pid).
+
+invalid_request_headers_raise_ws_upgrade(_) ->
+	doc("Ensure invalid request headers raise an exception for Websocket upgrades."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	%% The connection will not succeed, but we don't need it to.
+	try
+		gun:ws_upgrade(Pid, "/ws", [{<<"x-test">>, <<"bad\r\nvalue">>}]),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, _, _} -> ok
+	end,
+	gun:close(Pid).
+
 keepalive_infinity(_) ->
 	doc("Ensure infinity for keepalive is accepted by all protocols."),
 	{ok, ConnPid} = gun:open("localhost", 12345, #{

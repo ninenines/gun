@@ -211,6 +211,7 @@
 
 -type req_opts() :: #{
 	flow => pos_integer(),
+	invalid_request_headers => raise | ignore,
 	reply_to => reply_to(),
 	tunnel => stream_ref()
 }.
@@ -290,6 +291,7 @@
 	compress => boolean(),
 	default_protocol => module(),
 	flow => pos_integer(),
+	invalid_request_headers => raise | ignore,
 	keepalive => timeout(),
 	protocols => [{binary(), module()}],
 	reply_to => pid(),
@@ -683,12 +685,14 @@ headers(ServerPid, Method, Path, Headers) ->
 
 -spec headers(pid(), iodata(), iodata(), req_headers(), req_opts()) -> stream_ref().
 headers(ServerPid, Method, Path, Headers0, ReqOpts) ->
+	Headers = normalize_headers(Headers0),
+	maybe_invalid_request_headers(Headers, ReqOpts),
 	Tunnel = get_tunnel(ReqOpts),
 	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
 	gen_statem:cast(ServerPid, {headers, ReplyTo, StreamRef,
-		Method, Path, normalize_headers(Headers0), InitialFlow}),
+		Method, Path, Headers, InitialFlow}),
 	StreamRef.
 
 -spec request(pid(), iodata(), iodata(), req_headers(), iodata()) -> stream_ref().
@@ -697,12 +701,14 @@ request(ServerPid, Method, Path, Headers, Body) ->
 
 -spec request(pid(), iodata(), iodata(), req_headers(), iodata(), req_opts()) -> stream_ref().
 request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
+	NormHeaders = normalize_headers(Headers),
+	maybe_invalid_request_headers(NormHeaders, ReqOpts),
 	Tunnel = get_tunnel(ReqOpts),
 	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
 	ReplyTo = maps:get(reply_to, ReqOpts, self()),
 	gen_statem:cast(ServerPid, {request, ReplyTo, StreamRef,
-		Method, Path, normalize_headers(Headers), Body, InitialFlow}),
+		Method, Path, NormHeaders, Body, InitialFlow}),
 	StreamRef.
 
 get_tunnel(#{tunnel := Tunnel}) when is_reference(Tunnel) ->
@@ -725,6 +731,28 @@ normalize_headers([{Name, Value}|Tail]) when is_atom(Name) ->
 	[{string:lowercase(atom_to_binary(Name, latin1)), Value}|normalize_headers(Tail)];
 normalize_headers(Headers) when is_map(Headers) ->
 	normalize_headers(maps:to_list(Headers)).
+
+maybe_invalid_request_headers(Headers, ReqOpts) ->
+	case maps:get(invalid_request_headers, ReqOpts, raise) of
+		raise ->
+			case maybe_invalid_request_headers(Headers) of
+				ok ->
+					ok;
+				{error, Name} ->
+					error({invalid_request_header, Name,
+						"An invalid request header was detected."})
+			end;
+		ignore ->
+			ok
+	end.
+
+maybe_invalid_request_headers([{Name, Value}|Tail]) ->
+	case binary:match(iolist_to_binary(Value), [<<$\r>>, <<$\n>>]) of
+		nomatch -> maybe_invalid_request_headers(Tail);
+		_ -> {error, Name}
+	end;
+maybe_invalid_request_headers([]) ->
+	ok.
 
 %% Streaming data.
 
@@ -762,7 +790,9 @@ connect(ServerPid, Destination, Headers) ->
 	connect(ServerPid, Destination, Headers, #{}).
 
 -spec connect(pid(), connect_destination(), req_headers(), req_opts()) -> stream_ref().
-connect(ServerPid, Destination, Headers, ReqOpts) ->
+connect(ServerPid, Destination, Headers0, ReqOpts) ->
+	Headers = normalize_headers(Headers0),
+	maybe_invalid_request_headers(Headers, ReqOpts),
 	Tunnel = get_tunnel(ReqOpts),
 	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
@@ -987,19 +1017,23 @@ ws_upgrade(ServerPid, Path) ->
 	ws_upgrade(ServerPid, Path, []).
 
 -spec ws_upgrade(pid(), iodata(), req_headers()) -> stream_ref().
-ws_upgrade(ServerPid, Path, Headers) ->
+ws_upgrade(ServerPid, Path, Headers0) ->
+	Headers = normalize_headers(Headers0),
+	maybe_invalid_request_headers(Headers, #{invalid_request_headers => raise}),
 	StreamRef = make_ref(),
-	gen_statem:cast(ServerPid, {ws_upgrade, self(), StreamRef, Path, normalize_headers(Headers)}),
+	gen_statem:cast(ServerPid, {ws_upgrade, self(), StreamRef, Path, Headers}),
 	StreamRef.
 
 -spec ws_upgrade(pid(), iodata(), req_headers(), ws_opts()) -> stream_ref().
-ws_upgrade(ServerPid, Path, Headers, Opts0) ->
-	Tunnel = get_tunnel(Opts0),
-	Opts = maps:without([tunnel], Opts0),
-	ok = gun_ws:check_options(Opts),
+ws_upgrade(ServerPid, Path, Headers0, WsOpts0) ->
+	Headers = normalize_headers(Headers0),
+	maybe_invalid_request_headers(Headers, WsOpts0),
+	Tunnel = get_tunnel(WsOpts0),
+	WsOpts = maps:without([invalid_request_headers, tunnel], WsOpts0),
+	ok = gun_ws:check_options(WsOpts),
 	StreamRef = make_stream_ref(Tunnel),
-	ReplyTo = maps:get(reply_to, Opts, self()),
-	gen_statem:cast(ServerPid, {ws_upgrade, ReplyTo, StreamRef, Path, normalize_headers(Headers), Opts}),
+	ReplyTo = maps:get(reply_to, WsOpts, self()),
+	gen_statem:cast(ServerPid, {ws_upgrade, ReplyTo, StreamRef, Path, Headers, WsOpts}),
 	StreamRef.
 
 -spec ws_send(pid(), stream_ref(), ws_frame() | [ws_frame()]) -> ok.

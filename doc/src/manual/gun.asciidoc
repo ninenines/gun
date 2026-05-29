@@ -450,6 +450,7 @@ Request headers.
 ----
 req_opts() :: #{
     flow     => pos_integer(),
+    invalid_request_headers => raise | ignore,
     reply_to => pid() | {module(), atom(), list()}
                       | fun((_) -> _) | {fun(), list()},
     tunnel   => gun:stream_ref()
@@ -464,6 +465,14 @@ flow - see below::
 
 The initial flow control value for the stream. By default
 flow control is disabled.
+
+invalid_request_headers (raise)::
+
+Prevent sending HTTP requests with invalid request headers.
+The default `raise` will result in an exception being raised
+when invalid request headers are detected. When set to
+`ignore` the check is not performed at all: use at your
+own risk.
 
 reply_to (`self()`)::
 
@@ -549,6 +558,7 @@ ws_opts() :: #{
     compress         => boolean(),
     default_protocol => module(),
     flow             => pos_integer(),
+    invalid_request_headers => raise | ignore,
     keepalive        => timeout(),
     protocols        => [{binary(), module()}],
     silence_pings    => boolean(),
@@ -582,6 +592,14 @@ flow - see below::
 The initial flow control value for the Websocket connection.
 By default flow control is disabled.
 
+invalid_request_headers (raise)::
+
+Prevent sending HTTP requests with invalid request headers.
+The default `raise` will result in an exception being raised
+when invalid request headers are detected. When set to
+`ignore` the check is not performed at all: use at your
+own risk.
+
 keepalive (infinity)::
 
 Time between pings in milliseconds.
@@ -609,6 +627,8 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.4*: The `invalid_request_headers` request option was added
+         (for both normal requests and Websocket upgrades).
 * *2.2*: The `notify_settings_changed` option for HTTP/2 was
          documented.
 * *2.2*: The `reply_to` option now accepts functions.
