@@ -302,6 +302,78 @@ do_http11_upgrade_raw(OriginTransport, RawData) ->
 	} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
+http11_upgrade_raw_headers_as_list(_) ->
+	doc("Use the HTTP Upgrade mechanism to switch to the raw protocol over TCP. "
+		"Connection and upgrade headers given as list of characters."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw,
+		fun (Parent, ListenSocket, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 5000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"Connection: upgrade\r\n"
+				"Upgrade: custom/1.0\r\n"
+				"\r\n"),
+			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	%% Use a list (non-binary) value for the upgrade header.
+	StreamRef = gun:get(ConnPid, "/", [
+		{<<"connection">>, "upgrade"},
+		{<<"upgrade">>, "custom/1.0"}
+	]),
+	{upgrade, [<<"custom/1.0">>], _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+http11_upgrade_raw_missing_connection_header(_) ->
+	doc("A missing Connection header in the 101 response results "
+		"in a protocol_error connection error. (RFC9110 7.8)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw,
+		fun (Parent, ListenSocket, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 5000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"Upgrade: custom/1.0\r\n"
+				"\r\n"),
+			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/", #{
+		<<"connection">> => <<"upgrade">>,
+		<<"upgrade">> => <<"custom/1.0">>
+	}),
+	{error, {connection_error, {connection_error, protocol_error, _}}}
+		= gun:await(ConnPid, StreamRef),
+	do_http_is_down(ConnPid),
+	gun:close(ConnPid).
+
+http11_upgrade_raw_missing_upgrade_header(_) ->
+	doc("A missing Upgrade header in the 101 response results "
+		"in a protocol_error connection error. (RFC9110 7.8)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw,
+		fun (Parent, ListenSocket, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 5000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"Connection: upgrade\r\n"
+				"\r\n"),
+			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/", #{
+		<<"connection">> => <<"upgrade">>,
+		<<"upgrade">> => <<"custom/1.0">>
+	}),
+	{error, {connection_error, {connection_error, protocol_error, _}}}
+		= gun:await(ConnPid, StreamRef),
+	do_http_is_down(ConnPid),
+	gun:close(ConnPid).
+
 http11_upgrade_raw_reply_to(_) ->
 	doc("When upgrading an HTTP/1.1 connection with the reply_to option set, "
 		"Gun must honor this option in the raw protocol."),
@@ -335,6 +407,28 @@ http11_upgrade_raw_reply_to(_) ->
 	receive {ReplyTo, ready} -> ok after 1000 -> error(timeout) end,
 	gun:data(ConnPid, undefined, nofin, <<"Hello world!">>),
 	receive {ReplyTo, ok} -> gun:close(ConnPid) after 1000 -> error(timeout) end.
+
+http11_upgrade_raw_unrequested(_) ->
+	doc("Receiving a 101 response when no upgrade was requested "
+		"results in a protocol_error connection error. (RFC9110 7.8)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw,
+		fun (Parent, ListenSocket, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 5000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"Connection: upgrade\r\n"
+				"Upgrade: custom/1.0\r\n"
+				"\r\n"),
+			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/", []),
+	{error, {connection_error, {connection_error, protocol_error, _}}}
+		= gun:await(ConnPid, StreamRef),
+	do_http_is_down(ConnPid),
+	gun:close(ConnPid).
 
 http2_connect_tcp_raw_tcp(_) ->
 	doc("Use CONNECT over clear HTTP/2 to connect to a remote endpoint using the raw protocol over TCP."),
@@ -406,4 +500,14 @@ do_echo(Parent, ListenSocket, ClientSocket, ClientTransport) ->
 			do_echo(Parent, ListenSocket, ClientSocket, ClientTransport);
 		{error, closed} ->
 			ok
+	end.
+
+%% Internal.
+
+do_http_is_down(ConnPid) ->
+	receive
+		{gun_down, ConnPid, http, _, _} ->
+			ok
+	after 5000 ->
+		error(timeout)
 	end.

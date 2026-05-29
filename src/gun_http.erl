@@ -63,6 +63,9 @@
 	authority :: iodata(),
 	path :: iodata(),
 
+	%% Non-empty when an upgrade was requested.
+	upgrade = [] :: [binary()],
+
 	is_alive :: boolean(),
 	handler_state :: undefined | gun_content_handler:state()
 }).
@@ -366,7 +369,7 @@ handle_connect(Rest, State=#http_state{
 
 %% @todo We probably shouldn't send info messages if the stream is not alive.
 handle_inform(Rest, State=#http_state{
-		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
+		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
 		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers) ->
 	EvHandlerState = EvHandler:response_inform(#{
 		stream_ref => stream_ref(State, StreamRef),
@@ -377,24 +380,39 @@ handle_inform(Rest, State=#http_state{
 	case {Version, Status, StreamRef} of
 		{'HTTP/1.1', 101, #websocket{}} ->
 			{ws_handshake(Rest, State, StreamRef, Headers), CookieStore, EvHandlerState};
-		%% Any other 101 response results in us switching to the raw protocol.
-		%% @todo We should check that we asked for an upgrade before accepting it.
+		%% Any other 101 response results in us switching to the raw protocol,
+		%% except when we didn't request an upgrade.
 		{'HTTP/1.1', 101, _} when is_reference(StreamRef) ->
-			try
-				{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
-				Upgrade = cow_http_hd:parse_upgrade(Upgrade0),
-				gun:reply(ReplyTo, {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers}),
-				%% @todo We probably need to add_stream_ref?
-				{{switch_protocol, raw, ReplyTo, Rest}, CookieStore, EvHandlerState0}
-			catch _:_ ->
-				%% When the Upgrade header is missing or invalid we treat
-				%% the response as any other informational response.
-				gun:reply(ReplyTo, {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers}),
-				handle(Rest, State, CookieStore, EvHandler, EvHandlerState)
+			case is_expected_upgrade_response(Headers, Stream) of
+				{true, Upgrade} ->
+					gun:reply(ReplyTo, {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers}),
+					%% @todo We probably need to add_stream_ref?
+					{{switch_protocol, raw, ReplyTo, Rest}, CookieStore, EvHandlerState0};
+				false ->
+					gun:reply(ReplyTo, {gun_error, self(),
+						{connection_error, protocol_error,
+							"Unexpected 101 Switching Protocols response."}}),
+					{close, CookieStore, EvHandlerState}
 			end;
 		_ ->
 			gun:reply(ReplyTo, {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers}),
 			handle(Rest, State, CookieStore, EvHandler, EvHandlerState)
+	end.
+
+is_expected_upgrade_response(_, #stream{upgrade=[]}) ->
+	false;
+is_expected_upgrade_response(Headers, #stream{upgrade=Requested}) ->
+	try
+		{_, Conn0} = lists:keyfind(<<"connection">>, 1, Headers),
+		Conn = cow_http_hd:parse_connection(Conn0),
+		true = lists:member(<<"upgrade">>, Conn),
+		{_, Upgrade0} = lists:keyfind(<<"upgrade">>, 1, Headers),
+		%% We only support upgrading to a single protocol at a time.
+		[Protocol] = cow_http_hd:parse_upgrade(Upgrade0),
+		true = lists:member(Protocol, Requested),
+		{true, [Protocol]}
+	catch _:_ ->
+		false
 	end.
 
 handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connection=Conn,
@@ -573,14 +591,14 @@ headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerSt
 headers(State=#http_state{opts=Opts, out=head},
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers,
 		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
-	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+	{SendResult, Authority, Conn, Upgrade, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, undefined,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	Command = case SendResult of
 		ok ->
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
-				ReplyTo, Method, Authority, Path, InitialFlow)};
+				ReplyTo, Method, Authority, Path, Upgrade, InitialFlow)};
 		Error={error, _} ->
 			Error
 	end,
@@ -594,14 +612,14 @@ request(State, StreamRef, ReplyTo, _, _, _, _, _, _, _, CookieStore, _, EvHandle
 request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 		Method, Host, Port, Path, Headers, Body,
 		InitialFlow0, CookieStore0, EvHandler, EvHandlerState0) ->
-	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+	{SendResult, Authority, Conn, Upgrade, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, Method, Host, Port, Path, Headers, Body,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	Command = case SendResult of
 		ok ->
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
-				ReplyTo, Method, Authority, Path, InitialFlow)};
+				ReplyTo, Method, Authority, Path, Upgrade, InitialFlow)};
 		Error={error, _} ->
 			Error
 	end,
@@ -620,6 +638,7 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 	end,
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
+	Upgrade = upgrade_from_headers(Headers2),
 	Out = case Body of
 		undefined when Function =:= ws_upgrade -> head;
 		undefined -> request_io_from_headers(Headers2);
@@ -666,7 +685,19 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 		_ ->
 			EvHandlerState2
 	end,
-	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState}.
+	{SendResult, Authority, Conn, Upgrade, Out, CookieStore, EvHandlerState}.
+
+upgrade_from_headers(Headers) ->
+	try
+		{_, Conn0} = lists:keyfind(<<"connection">>, 1, Headers),
+		%% @todo We are parsing this header twice, improve this.
+		Conn = cow_http_hd:parse_connection(iolist_to_binary(Conn0)),
+		true = lists:member(<<"upgrade">>, Conn),
+		{_, Upgrade} = lists:keyfind(<<"upgrade">>, 1, Headers),
+		cow_http_hd:parse_upgrade(iolist_to_binary(Upgrade))
+	catch _:_ ->
+		[]
+	end.
 
 host_header(TransportName, Host0, Port) ->
 	Host = case Host0 of
@@ -822,7 +853,7 @@ connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version
 			EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState2),
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{{state, new_stream(State, {connect, StreamRef, Destination},
-				ReplyTo, <<"CONNECT">>, Authority, <<>>, InitialFlow)},
+				ReplyTo, <<"CONNECT">>, Authority, <<>>, [], InitialFlow)},
 				CookieStore, EvHandlerState};
 		Error={error, _} ->
 			{Error, CookieStore, EvHandlerState1}
@@ -885,7 +916,8 @@ conn_from_headers(Version, Headers) ->
 			close;
 		false ->
 			keepalive;
-		{_, ConnHd} ->
+		{_, ConnHd0} ->
+			ConnHd = iolist_to_binary(ConnHd0),
 			conn_from_header(cow_http_hd:parse_connection(ConnHd))
 	end.
 
@@ -939,11 +971,11 @@ stream_ref(#websocket{ref=StreamRef}) -> StreamRef;
 stream_ref(StreamRef) -> StreamRef.
 
 new_stream(State=#http_state{streams=Streams}, StreamRef, ReplyTo,
-		Method, Authority, Path, InitialFlow) ->
+		Method, Authority, Path, Upgrade, InitialFlow) ->
 	State#http_state{streams=Streams
 		++ [#stream{ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
 			method=iolist_to_binary(Method), authority=Authority,
-			path=iolist_to_binary(Path), is_alive=true}]}.
+			path=iolist_to_binary(Path), is_alive=true, upgrade=Upgrade}]}.
 
 is_stream(#http_state{streams=Streams}, StreamRef) ->
 	lists:keymember(StreamRef, #stream.ref, Streams).
@@ -995,7 +1027,7 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		{<<"sec-websocket-key">>, Key}
 		|Headers2
 	],
-	{SendResult, Authority, Conn, Out, CookieStore, EvHandlerState} = send_request(State,
+	{SendResult, Authority, Conn, _Upgrade, Out, CookieStore, EvHandlerState} = send_request(State,
 		StreamRef, ReplyTo, <<"GET">>, Host, Port, Path, Headers, undefined,
 		CookieStore0, EvHandler, EvHandlerState0, ?FUNCTION_NAME),
 	Command = case SendResult of
@@ -1004,7 +1036,7 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 			{state, new_stream(State#http_state{connection=Conn, out=Out},
 				#websocket{ref=StreamRef, reply_to=ReplyTo, key=Key,
 					extensions=GunExtensions, opts=WsOpts},
-				ReplyTo, <<"GET">>, Authority, Path, InitialFlow)};
+				ReplyTo, <<"GET">>, Authority, Path, [], InitialFlow)};
 		Error={error, _} ->
 			Error
 	end,
