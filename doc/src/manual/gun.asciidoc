@@ -154,6 +154,8 @@ http_opts() :: #{
     cookie_ignore_informational => boolean(),
     flow                        => pos_integer(),
     keepalive                   => timeout(),
+    max_header_block_size       => non_neg_integer(),
+    max_trailer_block_size      => non_neg_integer(),
     transform_header_name       => fun((binary()) -> binary()),
     version                     => 'HTTP/1.1' | 'HTTP/1.0'
 }
@@ -189,6 +191,22 @@ empty line when the connection is idle. Gun only makes a best
 effort here as servers usually have configurable limits to drop
 idle connections. Disabled by default due to potential
 incompatibilities.
+
+max_header_block_size (100000)::
+
+Maximum size in bytes of the response header block.
+This is a soft limit that ensures we do not accumulate
+too much data in memory when receiving HTTP response
+headers. When the buffer exceeds this limit Gun closes
+the connection with a `limit_reached` connection error.
+
+max_trailer_block_size (10000)::
+
+Maximum size in bytes of the response trailer block.
+This is a soft limit that ensures we do not accumulate
+too much data in memory when receiving HTTP response
+headers. When the buffer exceeds this limit Gun closes
+the connection with a `limit_reached` connection error.
 
 transform_header_name - see below::
 
@@ -627,6 +645,8 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.4*: The `max_header_block_size` and `max_trailer_block_size`
+         HTTP/1.1 options were added.
 * *2.4*: The `invalid_request_headers` request option was added
          (for both normal requests and Websocket upgrades).
 * *2.2*: The `notify_settings_changed` option for HTTP/2 was

@@ -110,6 +110,10 @@ do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
+do_check_options([{max_header_block_size, M}|Opts]) when is_integer(M), M > 0 ->
+	do_check_options(Opts);
+do_check_options([{max_trailer_block_size, M}|Opts]) when is_integer(M), M > 0 ->
+	do_check_options(Opts);
 do_check_options([{transform_header_name, F}|Opts]) when is_function(F) ->
 	do_check_options(Opts);
 do_check_options([{version, V}|Opts]) when V =:= 'HTTP/1.1'; V =:= 'HTTP/1.0' ->
@@ -138,7 +142,7 @@ handle(<<>>, State, CookieStore, _, EvHandlerState) ->
 handle(_, #http_state{streams=[]}, CookieStore, _, EvHandlerState) ->
 	{close, CookieStore, EvHandlerState};
 %% Wait for the full response headers before trying to parse them.
-handle(Data, State=#http_state{in=head, buffer=Buffer,
+handle(Data, State=#http_state{opts=Opts, in=head, buffer=Buffer,
 		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
 		CookieStore, EvHandler, EvHandlerState0) ->
 	%% Send the event only if there was no data in the buffer.
@@ -155,7 +159,16 @@ handle(Data, State=#http_state{in=head, buffer=Buffer,
 	Data2 = << Buffer/binary, Data/binary >>,
 	case binary:match(Data2, <<"\r\n\r\n">>) of
 		nomatch ->
-			{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState};
+			MaxSize = maps:get(max_header_block_size, Opts, 100000),
+			case byte_size(Data2) > MaxSize of
+				true ->
+					Reason = {connection_error, limit_reached,
+						"The response header block is too large."},
+					gun:reply(ReplyTo, {gun_error, self(), Reason}),
+					{{error, Reason}, CookieStore, EvHandlerState};
+				false ->
+					{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState}
+			end;
 		{_, _} ->
 			handle_head(Data2, State#http_state{buffer= <<>>},
 				CookieStore, EvHandler, EvHandlerState)
@@ -232,13 +245,23 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end
 	end;
-handle(Data, State=#http_state{in=body_trailer, buffer=Buffer, connection=Conn,
+handle(Data, State=#http_state{opts=Opts, in=body_trailer,
+		buffer=Buffer, connection=Conn,
 		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
 		CookieStore, EvHandler, EvHandlerState0) ->
 	Data2 = << Buffer/binary, Data/binary >>,
 	case binary:match(Data2, <<"\r\n\r\n">>) of
 		nomatch ->
-			{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState0};
+			MaxSize = maps:get(max_trailer_block_size, Opts, 10000),
+			case byte_size(Data2) > MaxSize of
+				true ->
+					Reason = {connection_error, limit_reached,
+						"The response trailer block is too large."},
+					gun:reply(ReplyTo, {gun_error, self(), Reason}),
+					{{error, Reason}, CookieStore, EvHandlerState0};
+				false ->
+					{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState0}
+			end;
 		{_, _} ->
 			{Trailers, Rest} = cow_http:parse_headers(Data2),
 			%% @todo We probably want to pass this to gun_content_handler?

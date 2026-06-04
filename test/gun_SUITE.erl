@@ -327,6 +327,72 @@ map_headers(_) ->
 	[<<"user-agent: Gun/map-headers">>] = [L || <<"user-agent: ", _/bits>> = L <- Lines],
 	gun:close(Pid).
 
+max_header_block_size(_) ->
+	doc("The max_header_block_size HTTP/1.1 option limits the size of data "
+	    "accumulated while waiting for the response header block terminator."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			%% First send a partial response (no \r\n\r\n yet).
+			ok = ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: 0\r\n"
+			),
+			%% Now send a huge chunk that does not contain the terminator.
+			ok = ClientTransport:send(ClientSocket, [
+				"x-gun: ",
+				lists:duplicate(20000, <<"0123456789ABCDEF">>),
+				"\r\n"
+			])
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	%% Receive a limit_reached connection error.
+	{error, {connection_error, {connection_error, limit_reached, _}}}
+		= gun:await(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http,
+				{error, {connection_error, limit_reached, _}}, _} ->
+			gun:close(ConnPid)
+	end.
+
+max_trailer_block_size(_) ->
+	doc("The max_trailer_block_size HTTP/1.1 option limits the size of data "
+	    "accumulated while waiting for the response trailer block terminator."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 200 OK\r\n"
+				"transfer-encoding: chunked\r\n"
+				"trailer: x-gun\r\n"
+				"\r\n"
+				"6\r\n"
+				"hello \r\n"
+				"6\r\n"
+				"world!\r\n"
+				"0\r\n"
+				"x-gun: ",
+				lists:duplicate(2000, <<"0123456789ABCDEF">>),
+				"\r\n\r\n"
+			])
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	%% First receive the start of the response.
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{data, nofin, <<"hello world!">>} = gun:await(ConnPid, StreamRef),
+	%% Then receive a limit_reached connection error.
+	{error, {connection_error, {connection_error, limit_reached, _}}}
+		= gun:await(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http,
+				{error, {connection_error, limit_reached, _}}, _} ->
+			gun:close(ConnPid)
+	end.
+
 postpone_request_while_not_connected(_) ->
 	doc("Ensure Gun doesn't raise error when requesting in retries"),
 	%% Try connecting to a server that isn't up yet.
