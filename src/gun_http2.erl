@@ -781,38 +781,60 @@ rst_stream_frame(State0, StreamID, Reason, EvHandler, EvHandlerState0) ->
 push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 		status=Status, http2_machine=HTTP2Machine0},
 		StreamID, PromisedStreamID, Headers, #{
-			method := Method, scheme := Scheme,
-			authority := Authority, path := Path},
+			method := PromisedMethod, scheme := PromisedScheme,
+			authority := PromisedAuthority, path := PromisedPath},
 		EvHandler, EvHandlerState0) ->
-	#stream{ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow} = get_stream_by_id(State, StreamID),
+	#stream{
+		ref=StreamRef,
+		authority=Authority,
+		reply_to=ReplyTo,
+		flow=InitialFlow
+	} = get_stream_by_id(State, StreamID),
+	Scheme = scheme(State),
+	%% We cancel the push_promise immediately when we are shutting
+	%% down or when the scheme/authority doesn't match the request's.
+	%% @todo We may wish to extend valid authorities to those that
+	%%       are covered by the server's TLS certificate.
+	OKOrError = case Status of
+		connected ->
+			case {Scheme, iolist_to_binary(Authority)} of
+				{PromisedScheme, PromisedAuthority} -> ok;
+				_ -> protocol_error
+			end;
+		_ ->
+			cancel
+	end,
 	PromisedStreamRef = make_ref(),
 	RealPromisedStreamRef = stream_ref(State, PromisedStreamRef),
-	URI = iolist_to_binary([Scheme, <<"://">>, Authority, Path]),
+	URI = iolist_to_binary([PromisedScheme, <<"://">>, PromisedAuthority, PromisedPath]),
 	PushPromiseEvent0 = #{
 		stream_ref => stream_ref(State, StreamRef),
 		reply_to => ReplyTo,
-		method => Method,
+		method => PromisedMethod,
 		uri => URI,
 		headers => Headers
 	},
-	PushPromiseEvent = case Status of
-		connected ->
+	PushPromiseEvent = case OKOrError of
+		ok ->
 			gun:reply(ReplyTo, {gun_push, self(), stream_ref(State, StreamRef),
-				RealPromisedStreamRef, Method, URI, Headers}),
+				RealPromisedStreamRef, PromisedMethod, URI, Headers}),
 			PushPromiseEvent0#{promised_stream_ref => RealPromisedStreamRef};
 		_ ->
 			PushPromiseEvent0
 	end,
 	EvHandlerState = EvHandler:push_promise_end(PushPromiseEvent, EvHandlerState0),
-	case Status of
-		connected ->
-			NewStream = #stream{id=PromisedStreamID, ref=PromisedStreamRef,
-				reply_to=ReplyTo, flow=InitialFlow, authority=Authority, path=Path},
+	case OKOrError of
+		ok ->
+			NewStream = #stream{
+				id=PromisedStreamID, ref=PromisedStreamRef,
+				reply_to=ReplyTo, flow=InitialFlow,
+				authority=PromisedAuthority, path=PromisedPath
+			},
 			{{state, create_stream(State, NewStream)}, EvHandlerState};
-		%% We cancel the push_promise immediately when we are shutting down.
+		%% Invalid push_promise gets canceled immediately.
 		_ ->
 			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(PromisedStreamID, HTTP2Machine0),
-			case Transport:send(Socket, cow_http2:rst_stream(PromisedStreamID, cancel)) of
+			case Transport:send(Socket, cow_http2:rst_stream(PromisedStreamID, OKOrError)) of
 				ok ->
 					{{state, State#http2_state{http2_machine=HTTP2Machine}}, EvHandlerState};
 				Error={error, _} ->

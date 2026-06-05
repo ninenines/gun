@@ -555,6 +555,42 @@ do_ping_ack_loop_fun() ->
 		Loop(Parent, ListenSocket, Socket, Transport)
 	end.
 
+push_promise_invalid_authority(_) ->
+	doc("An authority in PUSH_PROMISE for which the server is not "
+		"authoritative must be rejected with a PROTOCOL_ERROR "
+		"stream error. (RFC7540 8.2, RFC9113 8.4)"),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(Parent, _, Socket, Transport) ->
+		%% Receive a HEADERS frame.
+		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+		%% Skip the header.
+		{ok, _} = gen_tcp:recv(Socket, SkipLen, 1000),
+		%% Send a PUSH_PROMISE frame.
+		{HeadersBlock, _} = cow_hpack:encode([
+			{<<":method">>, <<"GET">>},
+			{<<":scheme">>, <<"http">>},
+			{<<":authority">>, <<"gun.test">>},
+			{<<":path">>, <<"/">>}
+		]),
+		ok = Transport:send(Socket, [
+			cow_http2:push_promise(1, 2, HeadersBlock)
+		]),
+		%% Receive a PROTOCOL_ERROR RST_STREAM for pushed stream.
+		{ok, << 4:24, 3:8, 2:40, 1:32 >>} = gen_tcp:recv(Socket, 13, 1000),
+		Parent ! done,
+		timer:sleep(5000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	%% Step 1.
+	StreamRef = gun:get(ConnPid, "/"),
+	%% Confirm we never get the gun_push message.
+	{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
+	receive done -> ok end,
+	gun:close(ConnPid).
+
 connect_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a TCP HTTP/2 proxy. (RFC7540 8.3)"),
