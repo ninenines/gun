@@ -393,11 +393,13 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 				ok -> {state, State};
 				Error={error, _} -> Error
 			end;
+		%% Internal ping payload used for keepalive.
 		{ping_ack, 0} ->
-			%% Internal ping payload used for keepalive.
-			{state, State#http2_state{pings_unack=PingsUnack - 1}};
+			%% Since ping_ack may be received unrequested
+			%% we ensure the pings_unack value doesn't go below 0.
+			{state, State#http2_state{pings_unack=max(0, PingsUnack - 1)}};
+		%% User ping.
 		{ping_ack, Payload} ->
-			%% User ping.
 			case lists:keytake(Payload, #user_ping.payload, UserPings0) of
 				{value, #user_ping{ref=PingRef, reply_to=PingReplyTo}, UserPings} ->
 					PingReplyTo ! {gun_notify, self(), ping_ack, PingRef},

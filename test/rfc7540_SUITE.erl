@@ -555,6 +555,33 @@ do_ping_ack_loop_fun() ->
 		Loop(Parent, ListenSocket, Socket, Transport)
 	end.
 
+keepalive_tolerance_unrequested_ping_acks(_) ->
+	doc("The PING frame may be used to easily test a connection. (RFC7540 8.1.4)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		Ack = <<8:24, 6:8, %% PING
+			1:8, %% Ack flag
+			0:1, 0:31,
+			0:64>>, %% Payload
+		_ = [ok = Transport:send(Socket, Ack)
+			|| _ <- lists:seq(1, 100)],
+		timer:sleep(5000)
+	end),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{
+		protocols => [http2],
+		http2_opts => #{keepalive => 1000, keepalive_tolerance => 2}
+	}),
+	{ok, http2} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	%% Gun will receive many ping_ack at once.
+	%% Then Gun proceeds normally with its keepalive.
+	%% After 3s there are 3 outstanding pings. Gun goes down.
+	receive
+		{gun_down, Pid, http2, {error, {connection_error, no_error, _}}, []} ->
+			gun:close(Pid)
+	after 5000 ->
+		error(timeout)
+	end.
+
 push_promise_invalid_authority(_) ->
 	doc("An authority in PUSH_PROMISE for which the server is not "
 		"authoritative must be rejected with a PROTOCOL_ERROR "
