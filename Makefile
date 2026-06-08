@@ -2,7 +2,7 @@
 
 PROJECT = gun
 PROJECT_DESCRIPTION = HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP.
-PROJECT_VERSION = 2.3.0
+PROJECT_VERSION = 2.4.0
 
 # Options.
 
@@ -44,8 +44,8 @@ define HEX_TARBALL_EXTRA_METADATA
 #{
 	licenses => [<<"ISC">>],
 	links => #{
-		<<"Function reference">> => <<"https://ninenines.eu/docs/en/gun/2.3/manual/">>,
-		<<"User guide">> => <<"https://ninenines.eu/docs/en/gun/2.3/guide/">>,
+		<<"Function reference">> => <<"https://ninenines.eu/docs/en/gun/2.4/manual/">>,
+		<<"User guide">> => <<"https://ninenines.eu/docs/en/gun/2.4/guide/">>,
 		<<"GitHub">> => <<"https://github.com/ninenines/gun">>,
 		<<"Sponsor">> => <<"https://github.com/sponsors/essen">>
 	}

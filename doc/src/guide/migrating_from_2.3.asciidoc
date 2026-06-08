@@ -1,0 +1,33 @@
+[appendix]
+== Migrating from Gun 2.3 to 2.4
+
+Gun 2.4 fixes a number of security vulnerabilities.
+It also has a few new options.
+
+Gun 2.4 updates Cowlib to 2.17.0. Both applications
+must be updated as they both contain security fixes.
+
+Gun 2.4 requires Erlang/OTP 24.0 or greater.
+
+=== Features added
+
+* Add `invalid_request_headers` request option.
+  This option is enabled by default and adds a
+  check that raises an exception when invalid
+  headers are detected when asking Gun to send
+  requests.
+
+* Add `max_header_block_size` and `max_trailer_block_size`
+  HTTP/1.1 options.
+
+* Update Cowlib to 2.17.0.
+
+=== Bugs fixed
+
+* Reject HTTP/1.1 101 responses when no upgrade was
+  requested with a protocol_error connection error.
+
+* Restrict push promises to the original request's
+  authority.
+
+* Fix `keepalive_tolerance` with unrequested pings.
