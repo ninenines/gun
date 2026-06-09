@@ -628,13 +628,12 @@ degraded_setup(ConnPid, Msg, StateData0=#state{lookup=#{strategy := random}, con
 				conns=Conns#{ConnPid => {up, Protocol, Settings}},
 				conns_meta=ConnsMeta#{ConnPid => Meta}
 			},
-			case is_degraded(StateData) of
-				true -> {keep_state, StateData};
-				false -> {next_state, operational, StateData#state{await_up=[]},
-					[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
-			end
-	end.
-
+		case is_degraded(StateData) of
+			true -> {keep_state, StateData};
+			false -> {next_state, operational, StateData#state{await_up=[]},
+				[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
+		end
+	end;
 degraded_setup(ConnPid, Msg, StateData0=#state{conns=Conns, conns_meta=ConnsMeta,
 		lookup=#{available := Available, stream_counts := StreamCounts, up_count := UpCount} = Lookup,
 		await_up=AwaitUp}, SetupFun, SetupState0) ->
@@ -797,8 +796,8 @@ handle_common(Type, Event, StateName, StateData) ->
 find_available_connection(#state{lookup=#{strategy := random, table := Tid}, conns=Conns}) ->
 	I = lists:sort([{rand:uniform(), K} || K <- maps:keys(Conns)]),
 	find_available_connection_random(I, Conns, Tid);
-find_available_connection(#state{lookup=#{strategy := least_loaded, available := Available,
-		stream_counts := StreamCounts}, conns=Conns}) ->
+find_available_connection(#state{lookup=#{strategy := least_loaded, available := Available},
+		conns=Conns}) ->
 	%% @todo Use Available gb_tree to pick the least-loaded connection in O(log n).
 	find_available_connection_least_loaded(Available, Conns).
 
