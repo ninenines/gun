@@ -1,0 +1,9 @@
+[appendix]
+== Changes since Gun 2.4
+
+The following patch versions were released since Gun 2.4:
+
+=== Gun 2.4.1
+
+Update Cowlib to 2.17.1 to fix HTTP/2 header decoding
+broken in 2.17.0.

@@ -24,6 +24,8 @@ include::internals_tls_over_tls.asciidoc[Internals: TLS over TLS]
 
 = Additional information
 
+include::migrating_from_2.4.asciidoc[Changes since Gun 2.5]
+
 include::migrating_from_2.3.asciidoc[Migrating from Gun 2.3 to 2.4]
 
 include::migrating_from_2.2.asciidoc[Migrating from Gun 2.2 to 2.3]
