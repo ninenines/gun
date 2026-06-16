@@ -567,6 +567,41 @@ Unique identifier for a stream.
 The exact type is considered to be an implementation
 detail.
 
+=== deflate_opts()
+
+[source,erlang]
+----
+deflate_opts() :: #{
+    server_context_takeover => takeover | no_takeover,
+    client_context_takeover => takeover | no_takeover,
+    server_max_window_bits  => 8..15,
+    client_max_window_bits  => bare | 8..15,
+    level                   => zlib:zlevel(),
+    mem_level               => zlib:zmemlevel(),
+    strategy                => zlib:zstrategy()
+}
+----
+
+Parameters offered by the client when negotiating the
+permessage-deflate Websocket extension (RFC 7692). All fields
+are optional and only those set are included in the offer.
+
+The `server_context_takeover`, `client_context_takeover`,
+`server_max_window_bits` and `client_max_window_bits` fields
+shape the `sec-websocket-extensions` request header offer.
+
+For `client_max_window_bits`, the atom `bare` causes the
+parameter to be offered without a value, advertising support
+for the server to constrain the client's LZ77 sliding window
+in its response (RFC 7692 Section 7.1.2.2). An integer in
+`8..15` also self-imposes that limit on the client. Omitting
+the field disables the parameter altogether.
+
+The `level`, `mem_level` and `strategy` fields are local zlib
+codec tuning options. They are forwarded to Cowlib when the
+deflate context is initialized and have no wire representation.
+Their value domains mirror Cowlib's `cow_ws:deflate_opts()`.
+
 === ws_opts()
 
 [source,erlang]
@@ -574,6 +609,7 @@ detail.
 ws_opts() :: #{
     closing_timeout  => timeout(),
     compress         => boolean(),
+    deflate_opts    => deflate_opts(),
     default_protocol => module(),
     flow             => pos_integer(),
     invalid_request_headers => raise | ignore,
@@ -599,6 +635,20 @@ compress (false)::
 Whether to enable permessage-deflate compression. This does
 not guarantee that compression will be used as it is the
 server that ultimately decides. Defaults to false.
+
+deflate_opts::
+
+Parameters offered in the `sec-websocket-extensions` request header
+when `compress` is enabled, plus local zlib codec tuning forwarded
+to Cowlib. Has no effect when `compress` is `false`.
++
+Setting this option overrides the default offer entirely.
+In particular, `deflate_opts => #{}` advertises a bare
+`permessage-deflate` with no parameters, not the historical
+default. When the option is not set, Gun offers
+`permessage-deflate; client_max_window_bits; server_max_window_bits=15`
+to preserve backwards compatibility. See the `deflate_opts()` type
+and RFC 7692 for details.
 
 default_protocol (gun_ws_h)::
 
@@ -645,6 +695,8 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.5*: The `deflate_opts` Websocket option and the
+         `deflate_opts()` type were added.
 * *2.4*: The `max_header_block_size` and `max_trailer_block_size`
          HTTP/1.1 options were added.
 * *2.4*: The `invalid_request_headers` request option was added

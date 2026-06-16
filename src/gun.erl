@@ -288,9 +288,21 @@
 }.
 -export_type([socks_opts/0]).
 
+-type deflate_opts() :: #{
+	server_context_takeover => takeover | no_takeover,
+	client_context_takeover => takeover | no_takeover,
+	server_max_window_bits => 8..15,
+	client_max_window_bits => bare | 8..15,
+	level => zlib:zlevel(),
+	mem_level => zlib:zmemlevel(),
+	strategy => zlib:zstrategy()
+}.
+-export_type([deflate_opts/0]).
+
 -type ws_opts() :: #{
 	closing_timeout => timeout(),
 	compress => boolean(),
+	deflate_opts => deflate_opts(),
 	default_protocol => module(),
 	flow => pos_integer(),
 	invalid_request_headers => raise | ignore,

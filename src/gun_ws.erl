@@ -15,6 +15,7 @@
 -module(gun_ws).
 
 -export([check_options/1]).
+-export([deflate_offer/1]).
 -export([select_extensions/3]).
 -export([select_protocol/2]).
 -export([name/0]).
@@ -78,6 +79,11 @@ do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
+do_check_options([Opt={deflate_opts, M}|Opts]) when is_map(M) ->
+	case check_deflate_opts(maps:to_list(M)) of
+		ok -> do_check_options(Opts);
+		error -> {error, {options, {ws, Opt}}}
+	end;
 do_check_options([Opt={protocols, L}|Opts]) when is_list(L) ->
 	case lists:usort(lists:flatten([[is_binary(B), is_atom(M)] || {B, M} <- L])) of
 		[true] -> do_check_options(Opts);
@@ -98,22 +104,76 @@ do_check_options([{user_opts, _}|Opts]) ->
 do_check_options([Opt|_]) ->
 	{error, {options, {ws, Opt}}}.
 
+check_deflate_opts([]) ->
+	ok;
+check_deflate_opts([{server_context_takeover, T}|Opts])
+		when T =:= takeover; T =:= no_takeover ->
+	check_deflate_opts(Opts);
+check_deflate_opts([{client_context_takeover, T}|Opts])
+		when T =:= takeover; T =:= no_takeover ->
+	check_deflate_opts(Opts);
+check_deflate_opts([{server_max_window_bits, N}|Opts])
+		when is_integer(N), N >= 8, N =< 15 ->
+	check_deflate_opts(Opts);
+check_deflate_opts([{client_max_window_bits, bare}|Opts]) ->
+	check_deflate_opts(Opts);
+check_deflate_opts([{client_max_window_bits, N}|Opts])
+		when is_integer(N), N >= 8, N =< 15 ->
+	check_deflate_opts(Opts);
+check_deflate_opts([{level, L}|Opts])
+		when L =:= none; L =:= default;
+			L =:= best_compression; L =:= best_speed;
+			is_integer(L), L >= 0, L =< 9 ->
+	check_deflate_opts(Opts);
+check_deflate_opts([{mem_level, N}|Opts])
+		when is_integer(N), N >= 1, N =< 9 ->
+	check_deflate_opts(Opts);
+check_deflate_opts([{strategy, S}|Opts])
+		when S =:= default; S =:= filtered;
+			S =:= huffman_only; S =:= rle ->
+	check_deflate_opts(Opts);
+check_deflate_opts(_) ->
+	error.
+
+deflate_offer(WsOpts) ->
+	case maps:get(deflate_opts, WsOpts, undefined) of
+		undefined ->
+			<<"permessage-deflate; client_max_window_bits; server_max_window_bits=15">>;
+		CompressOpts ->
+			Params = lists:filtermap(fun deflate_param/1, maps:to_list(CompressOpts)),
+			iolist_to_binary([<<"permessage-deflate">>|Params])
+	end.
+
+deflate_param({server_context_takeover, no_takeover}) ->
+	{true, <<"; server_no_context_takeover">>};
+deflate_param({client_context_takeover, no_takeover}) ->
+	{true, <<"; client_no_context_takeover">>};
+deflate_param({server_max_window_bits, N}) when is_integer(N) ->
+	{true, <<"; server_max_window_bits=", (integer_to_binary(N))/binary>>};
+deflate_param({client_max_window_bits, bare}) ->
+	{true, <<"; client_max_window_bits">>};
+deflate_param({client_max_window_bits, N}) when is_integer(N) ->
+	{true, <<"; client_max_window_bits=", (integer_to_binary(N))/binary>>};
+deflate_param(_) ->
+	false.
+
 select_extensions(Headers, Extensions0, Opts) ->
 	case lists:keyfind(<<"sec-websocket-extensions">>, 1, Headers) of
 		false ->
 			#{};
 		{_, ExtHd} ->
 			ParsedExtHd = cow_http_hd:parse_sec_websocket_extensions(ExtHd),
-			validate_extensions(ParsedExtHd, Extensions0, Opts, #{})
+			CompressOpts = maps:get(deflate_opts, Opts, #{}),
+			validate_extensions(ParsedExtHd, Extensions0, CompressOpts, #{})
 	end.
 
 validate_extensions([], _, _, Acc) ->
 	Acc;
-validate_extensions([{Name = <<"permessage-deflate">>, Params}|Tail], Extensions, Opts, Acc0) ->
+validate_extensions([{Name = <<"permessage-deflate">>, Params}|Tail], Extensions, CompressOpts, Acc0) ->
 	case lists:member(Name, Extensions) of
 		true ->
-			case cow_ws:validate_permessage_deflate(Params, Acc0, Opts) of
-				{ok, Acc} -> validate_extensions(Tail, Extensions, Opts, Acc);
+			case cow_ws:validate_permessage_deflate(Params, Acc0, CompressOpts) of
+				{ok, Acc} -> validate_extensions(Tail, Extensions, CompressOpts, Acc);
 				error -> close
 			end;
 		%% Fail the connection if extension was not requested.

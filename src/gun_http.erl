@@ -1031,7 +1031,7 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		Host, Port, Path, Headers0, WsOpts, CookieStore0, EvHandler, EvHandlerState0) ->
 	{Headers1, GunExtensions} = case maps:get(compress, WsOpts, false) of
 		true -> {[{<<"sec-websocket-extensions">>,
-				<<"permessage-deflate; client_max_window_bits; server_max_window_bits=15">>}
+				gun_ws:deflate_offer(WsOpts)}
 			|Headers0],
 			[<<"permessage-deflate">>]};
 		false -> {Headers0, []}

@@ -1,9 +1,28 @@
 [appendix]
-== Changes since Gun 2.4
+== Migrating from Gun 2.4 to 2.5
 
-The following patch versions were released since Gun 2.4:
+Gun 2.5 adds fine-grained configuration of
+the Websocket permessage-deflate extension.
 
-=== Gun 2.4.1
+=== Features added
+
+* Add `deflate_opts` Websocket option.
+  This option lets applications customize both the parameters
+  offered in the `sec-websocket-extensions` request header
+  when `compress` is enabled (`server_context_takeover`,
+  `client_context_takeover`, `server_max_window_bits` and
+  `client_max_window_bits`, per RFC 7692) and the local zlib
+  codec settings forwarded to Cowlib (`level`, `mem_level`,
+  `strategy`). The fields and their value domains mirror
+  Cowlib's `cow_ws:deflate_opts()`. When the option is not set,
+  Gun keeps emitting the historical offer
+  `permessage-deflate; client_max_window_bits; server_max_window_bits=15`,
+  so existing deployments are unaffected.
+  The matching `deflate_opts()` type was also added.
+
+=== Patch versions in the Gun 2.4 series
+
+==== Gun 2.4.1
 
 Update Cowlib to 2.17.1 to fix HTTP/2 header decoding
 broken in 2.17.0.
