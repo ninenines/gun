@@ -290,7 +290,7 @@
 
 -type ws_opts() :: #{
 	closing_timeout => timeout(),
-	compress => boolean(),
+	compress => boolean() | compat,
 	default_protocol => module(),
 	flow => pos_integer(),
 	invalid_request_headers => raise | ignore,

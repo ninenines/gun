@@ -93,7 +93,7 @@ end.
 [source,erlang]
 ----
 StreamRef = gun:ws_upgrade(ConnPid, "/ws", [], #{
-    compress => false
+    compress => true
 }).
 ----
 

@@ -573,7 +573,7 @@ detail.
 ----
 ws_opts() :: #{
     closing_timeout  => timeout(),
-    compress         => boolean(),
+    compress         => boolean() | compat,
     default_protocol => module(),
     flow             => pos_integer(),
     invalid_request_headers => raise | ignore,
@@ -599,6 +599,10 @@ compress (false)::
 Whether to enable permessage-deflate compression. This does
 not guarantee that compression will be used as it is the
 server that ultimately decides. Defaults to false.
++
+The value `compat` will enable compression without sending
+any parameter. It should help connecting to servers that
+reject parameters that Gun sends by default.
 
 default_protocol (gun_ws_h)::
 
@@ -645,6 +649,7 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.5*: Websocket `compress` option value `compat` was added.
 * *2.4*: The `max_header_block_size` and `max_trailer_block_size`
          HTTP/1.1 options were added.
 * *2.4*: The `invalid_request_headers` request option was added

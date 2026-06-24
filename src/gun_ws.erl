@@ -70,6 +70,8 @@ do_check_options([{closing_timeout, T}|Opts]) when is_integer(T), T > 0 ->
 	do_check_options(Opts);
 do_check_options([{compress, B}|Opts]) when is_boolean(B) ->
 	do_check_options(Opts);
+do_check_options([{compress, compat}|Opts]) ->
+	do_check_options(Opts);
 do_check_options([{default_protocol, M}|Opts]) when is_atom(M) ->
 	do_check_options(Opts);
 do_check_options([{flow, InitialFlow}|Opts]) when is_integer(InitialFlow), InitialFlow > 0 ->

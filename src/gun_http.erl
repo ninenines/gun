@@ -1030,11 +1030,15 @@ ws_upgrade(State=#http_state{version='HTTP/1.0'},
 ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 		Host, Port, Path, Headers0, WsOpts, CookieStore0, EvHandler, EvHandlerState0) ->
 	{Headers1, GunExtensions} = case maps:get(compress, WsOpts, false) of
-		true -> {[{<<"sec-websocket-extensions">>,
+		true ->
+			{[{<<"sec-websocket-extensions">>,
 				<<"permessage-deflate; client_max_window_bits">>}
-			|Headers0],
-			[<<"permessage-deflate">>]};
-		false -> {Headers0, []}
+			|Headers0], [<<"permessage-deflate">>]};
+		compat ->
+			{[{<<"sec-websocket-extensions">>, <<"permessage-deflate">>}
+			|Headers0], [<<"permessage-deflate">>]};
+		false ->
+			{Headers0, []}
 	end,
 	Headers2 = case maps:get(protocols, WsOpts, []) of
 		[] -> Headers1;

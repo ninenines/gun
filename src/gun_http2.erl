@@ -1593,6 +1593,9 @@ ws_upgrade1(State=#http2_state{socket=Socket, transport=Transport,
 			{[{<<"sec-websocket-extensions">>,
 				<<"permessage-deflate; client_max_window_bits">>}
 			|Headers1], [<<"permessage-deflate">>]};
+		compat ->
+			{[{<<"sec-websocket-extensions">>, <<"permessage-deflate">>}
+			|Headers1], [<<"permessage-deflate">>]};
 		false ->
 			{Headers1, []}
 	end,
