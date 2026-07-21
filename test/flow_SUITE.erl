@@ -126,6 +126,62 @@ flow_http(_) ->
 		cowboy:stop_listener(?FUNCTION_NAME)
 	end.
 
+flow_http_body_end_keepalive(_) ->
+	doc("Chunked response body ending with exhausted flow window HTTP/1.1"),
+	do_flow_http_body_end_keepalive(no_trailers).
+
+flow_http_trailers_keepalive(_) ->
+	doc("Chunked response body with trailers with exhausted flow window HTTP/1.1"),
+	do_flow_http_body_end_keepalive(trailers).
+
+do_flow_http_body_end_keepalive(HasTrailers) ->
+	{ok, _OriginPid, Port} = gun_test:init_origin(tcp, http,
+		fun(_, _, Socket, Transport) ->
+			chunked_origin(Socket, Transport, HasTrailers)
+		end),
+	{ok, ConnPid} = gun:open("localhost", Port),
+	{ok, http} = gun:await_up(ConnPid),
+	ok = do_flow2_requests(ConnPid, 50),
+	gun:close(ConnPid).
+
+chunked_origin(Socket, Transport, HasTrailers) ->
+	case Transport:recv(Socket, 0, 5000) of
+		{ok, _Req} ->
+			ok = Transport:send(Socket,
+				"HTTP/1.1 200 OK\r\n"
+				"transfer-encoding: chunked\r\n"
+				"\r\n"),
+			Chunk = ["1000\r\n", binary:copy(<<0>>, 16#1000), "\r\n"],
+			[Transport:send(Socket, Chunk) || _ <- lists:seq(1, 25)],
+			MaybeTrailers = case HasTrailers of
+				trailers -> "0\r\nexpires: 0\r\n\r\n";
+				no_trailers -> "0\r\n\r\n"
+			end,
+			Transport:send(Socket, MaybeTrailers),
+			chunked_origin(Socket, Transport, HasTrailers);
+		{error, _} ->
+			ok
+	end.
+
+do_flow2_requests(_, 0) ->
+	ok;
+do_flow2_requests(ConnPid, N) ->
+	StreamRef = gun:get(ConnPid, "/", [], #{flow => 2}),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef, 2000),
+	ok = consume_flow_body(ConnPid, StreamRef),
+	do_flow2_requests(ConnPid, N - 1).
+
+consume_flow_body(ConnPid, StreamRef) ->
+	case gun:await(ConnPid, StreamRef, 2000) of
+		{data, nofin, _} ->
+			gun:update_flow(ConnPid, StreamRef, 1),
+			consume_flow_body(ConnPid, StreamRef);
+		{data, fin, _} ->
+			ok;
+		{trailers, _} ->
+			ok
+	end.
+
 flow_http2(_) ->
 	doc("Confirm flow control works as intended for HTTP/2."),
 	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [], #{env => #{

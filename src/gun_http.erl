@@ -215,7 +215,7 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
 						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, keepalive} ->
-					handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
+					end_keepalive_stream(Rest, State1#http_state{buffer= <<>>},
 						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, close} ->
 					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
@@ -239,7 +239,7 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
 						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, keepalive} ->
-					handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
+					end_keepalive_stream(Rest, State1#http_state{buffer= <<>>},
 						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, close} ->
 					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
@@ -275,7 +275,7 @@ handle(Data, State=#http_state{opts=Opts, in=body_trailer,
 			EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
 			case Conn of
 				keepalive ->
-					handle(Rest, end_stream(State#http_state{buffer= <<>>}),
+					end_keepalive_stream(Rest, State#http_state{buffer= <<>>},
 						CookieStore, EvHandler, EvHandlerState);
 				close ->
 					{[{state, end_stream(State)}, close], CookieStore, EvHandlerState}
@@ -301,7 +301,7 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 			}, EvHandlerState0),
 			case Conn of
 				keepalive ->
-					{[{state, end_stream(State1)}, {active, true}], CookieStore, EvHandlerState};
+					end_keepalive_stream(<<>>, State1, CookieStore, EvHandler, EvHandlerState);
 				close ->
 					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end;
@@ -315,7 +315,8 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 				reply_to => ReplyTo
 			}, EvHandlerState0),
 			case Conn of
-				keepalive -> handle(Rest, end_stream(State1), CookieStore, EvHandler, EvHandlerState);
+				keepalive ->
+					end_keepalive_stream(Rest, State1, CookieStore, EvHandler, EvHandlerState);
 				close -> {[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end
 	end.
@@ -484,9 +485,9 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 		IsFin =:= fin, Conn2 =:= close ->
 			{close, CookieStore, EvHandlerState3};
 		IsFin =:= fin ->
-			handle(Rest, end_stream(State#http_state{in=In,
+			end_keepalive_stream(Rest, State#http_state{in=In,
 				in_state={0, 0}, connection=Conn2,
-				streams=[Stream#stream{handler_state=Handlers}|Tail]}),
+				streams=[Stream#stream{handler_state=Handlers}|Tail]},
 				CookieStore, EvHandler, EvHandlerState3);
 		Conn2 =:= close ->
 			close_streams(State, Tail, closing),
@@ -507,6 +508,20 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 				in_state={0, 0}, connection=Conn2,
 				streams=[Stream#stream{handler_state=Handlers}|Tail]},
 				CookieStore, EvHandler, EvHandlerState3)
+	end.
+
+%% End a keepalive stream and reactivate the socket. Flow belongs to the
+%% stream that just ended, so nothing else will re-enable reading. When
+%% Rest is empty we know handle/5 would only return {state, ...}; when it
+%% is not, commands from parsing the next response may override active.
+end_keepalive_stream(<<>>, State, CookieStore, _, EvHandlerState) ->
+	{[{state, end_stream(State)}, {active, true}], CookieStore, EvHandlerState};
+end_keepalive_stream(Rest, State, CookieStore, EvHandler, EvHandlerState) ->
+	case handle(Rest, end_stream(State), CookieStore, EvHandler, EvHandlerState) of
+		{Commands, CookieStore1, EvHandlerState1} when is_list(Commands) ->
+			{[{active, true}|Commands], CookieStore1, EvHandlerState1};
+		{Command, CookieStore1, EvHandlerState1} ->
+			{[{active, true}, Command], CookieStore1, EvHandlerState1}
 	end.
 
 %% The state must be first in order to retrieve it when the stream ended.
