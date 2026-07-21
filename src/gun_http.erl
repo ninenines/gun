@@ -208,15 +208,15 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 					{fin, EvHandlerState1}
 			end,
 			%% I suppose it doesn't hurt to append an empty binary.
-			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(<<>>, State, IsFin),
+			[{state, State1}, ActiveCommand] = send_data(<<>>, State, IsFin),
 			case {HasTrailers, Conn} of
 				{trailers, _} ->
 					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
 						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, keepalive} ->
-					handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
-						CookieStore, EvHandler, EvHandlerState);
+					prepend_command(ActiveCommand,
+						handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
+						CookieStore, EvHandler, EvHandlerState));
 				{no_trailers, close} ->
 					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end;
@@ -232,15 +232,15 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 					}, EvHandlerState0),
 					{fin, EvHandlerState1}
 			end,
-			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(Data2, State, IsFin),
+			[{state, State1}, ActiveCommand] = send_data(Data2, State, IsFin),
 			case {HasTrailers, Conn} of
 				{trailers, _} ->
 					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
 						CookieStore, EvHandler, EvHandlerState);
 				{no_trailers, keepalive} ->
-					handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
-						CookieStore, EvHandler, EvHandlerState);
+					prepend_command(ActiveCommand,
+						handle(Rest, end_stream(State1#http_state{buffer= <<>>}),
+						CookieStore, EvHandler, EvHandlerState));
 				{no_trailers, close} ->
 					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end
@@ -275,8 +275,9 @@ handle(Data, State=#http_state{opts=Opts, in=body_trailer,
 			EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
 			case Conn of
 				keepalive ->
-					handle(Rest, end_stream(State#http_state{buffer= <<>>}),
-						CookieStore, EvHandler, EvHandlerState);
+					prepend_command({active, true},
+						handle(Rest, end_stream(State#http_state{buffer= <<>>}),
+						CookieStore, EvHandler, EvHandlerState));
 				close ->
 					{[{state, end_stream(State)}, close], CookieStore, EvHandlerState}
 			end
@@ -293,29 +294,29 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 				CookieStore, EvHandlerState0};
 		%% Stream finished, no rest.
 		DataSize =:= Length ->
-			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(Data, State, fin),
+			[{state, State1}, ActiveCommand] = send_data(Data, State, fin),
 			EvHandlerState = EvHandler:response_end(#{
 				stream_ref => stream_ref(State, StreamRef),
 				reply_to => ReplyTo
 			}, EvHandlerState0),
 			case Conn of
 				keepalive ->
-					{[{state, end_stream(State1)}, {active, true}], CookieStore, EvHandlerState};
+					{[{state, end_stream(State1)}, ActiveCommand], CookieStore, EvHandlerState};
 				close ->
 					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end;
 		%% Stream finished, rest.
 		true ->
 			<< Body:Length/binary, Rest/bits >> = Data,
-			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(Body, State, fin),
+			[{state, State1}, ActiveCommand] = send_data(Body, State, fin),
 			EvHandlerState = EvHandler:response_end(#{
 				stream_ref => stream_ref(State1, StreamRef),
 				reply_to => ReplyTo
 			}, EvHandlerState0),
 			case Conn of
-				keepalive -> handle(Rest, end_stream(State1), CookieStore, EvHandler, EvHandlerState);
+				keepalive ->
+					prepend_command(ActiveCommand,
+						handle(Rest, end_stream(State1), CookieStore, EvHandler, EvHandlerState));
 				close -> {[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end
 	end.
@@ -509,6 +510,13 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 				CookieStore, EvHandler, EvHandlerState3)
 	end.
 
+%% Commands from parsing the remaining buffer come after the prepended
+%% command and may override it.
+prepend_command(Command, {Commands, CookieStore, EvHandlerState}) when is_list(Commands) ->
+	{[Command|Commands], CookieStore, EvHandlerState};
+prepend_command(Command, {OneCommand, CookieStore, EvHandlerState}) ->
+	{[Command, OneCommand], CookieStore, EvHandlerState}.
+
 %% The state must be first in order to retrieve it when the stream ended.
 send_data(<<>>, State, nofin) ->
 	[{state, State}, {active, true}];
@@ -522,7 +530,11 @@ send_data(Data, State=#http_state{streams=[Stream=#stream{
 	end,
 	[
 		{state, State#http_state{streams=[Stream#stream{flow=Flow, handler_state=Handlers}|Tail]}},
-		{active, Flow > 0}
+		%% When the response ends, socket must be reactivated regardless of
+		%% the flow window, otherwise nothing is left to make it active
+		%% again, and responses to subsequent requests on a keepalive
+		%% connection would never be read.
+		{active, (Flow > 0) orelse (IsFin =:= fin)}
 	];
 send_data(_, State, _) ->
 	[{state, State}, {active, true}].
