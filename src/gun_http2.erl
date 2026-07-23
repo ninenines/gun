@@ -173,6 +173,7 @@ do_check_options([Opt={Name, _}|Opts]) ->
 		max_fragmented_header_block_size,
 		max_frame_size_received,
 		max_frame_size_sent,
+		max_headers,
 		max_stream_window_size,
 		preface_timeout,
 		settings_timeout,
