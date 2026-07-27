@@ -1,9 +1,27 @@
 [appendix]
-== Changes since Gun 2.4
+== Migrating from Gun 2.4 to 2.5
 
-The following patch versions were released since Gun 2.4:
+Gun 2.5 fixes a number of security vulnerabilities.
+It also has a few new options.
 
-=== Gun 2.4.1
+Gun 2.5 updates Cowlib to 2.19.0. Both applications
+must be updated as they both contain security fixes.
 
-Update Cowlib to 2.17.1 to fix HTTP/2 header decoding
-broken in 2.17.0.
+Gun 2.5 requires Erlang/OTP 24.0 or greater.
+
+=== Features added
+
+* A `compat` Websocket compression mode has been
+  added. In this mode, Gun uses default compression
+  and does not send parameters to accomodate servers
+  that do not support them.
+
+* The HTTP/2 option `max_headers` is now documented.
+
+* Update Cowlib to 2.19.0.
+
+=== Bugs fixed
+
+* The HTTP/1.1 connection could get into a state
+  where it would no longer read from the socket.
+  This has been addressed.
