@@ -884,13 +884,10 @@ do_wpt_json_test(TestFile, TestPath, Config) ->
 
 do_wpt_ctl_test(Fun, TestPath, Config) ->
 	%% Control characters are defined by RFC5234 to be %x00-1F / %x7F.
-	%% We exclude \r for HTTP/1.1 because this causes errors
+	%% We exclude NUL, CR and LF bytes because this causes errors
 	%% at the header parsing level.
-	CTLs0 = lists:seq(0, 16#1F) ++ [16#7F],
-	CTLs = case config(protocol, Config) of
-		http -> CTLs0 -- "\r";
-		http2 -> CTLs0
-	end,
+	CTLs0 = lists:seq(16#01, 16#1F) ++ [16#7F],
+	CTLs = CTLs0 -- "\r\n",
 	%% All CTLs except \t should cause the cookie to be rejected.
 	_ = [begin
 		{Name, Cookie, Expected} = Fun(CTL),
