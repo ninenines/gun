@@ -52,7 +52,7 @@ define HEX_TARBALL_EXTRA_METADATA
 }
 endef
 
-hex_req_cowlib = >= 2.15.0 and < 3.0.0
+hex_req_cowlib = >= 2.19.0 and < 3.0.0
 
 # Standard targets.
 
