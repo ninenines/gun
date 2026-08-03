@@ -299,6 +299,38 @@ killed_streams_http(_) ->
 			gun:close(ConnPid)
 	end.
 
+killed_streams_http_no_body(_) ->
+	doc("Ensure completed responses without a body and with a connection: close "
+		"are not considered killed streams."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun (_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"connection: close\r\n"
+				"content-length: 0\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http, normal, KilledStreams} ->
+			[] = KilledStreams
+	after 1000 ->
+		error(timeout)
+	end,
+	%% The completed stream must not receive an error either.
+	receive
+		{gun_error, ConnPid, StreamRef, Reason} ->
+			error({unexpected_error, Reason})
+	after 0 ->
+		ok
+	end,
+	gun:close(ConnPid).
+
 list_header_name(_) ->
 	doc("Header names may be given as list."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
