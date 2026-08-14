@@ -154,6 +154,7 @@ http_opts() :: #{
     cookie_ignore_informational => boolean(),
     flow                        => pos_integer(),
     keepalive                   => timeout(),
+    max_headers                 => non_neg_integer(),
     max_header_block_size       => non_neg_integer(),
     max_trailer_block_size      => non_neg_integer(),
     transform_header_name       => fun((binary()) -> binary()),
@@ -191,6 +192,14 @@ empty line when the connection is idle. Gun only makes a best
 effort here as servers usually have configurable limits to drop
 idle connections. Disabled by default due to potential
 incompatibilities.
+
+max_headers (100)::
+
+Maximum number of headers allowed per response. Note that
+this is checked only after the full header block was
+received. When the number of headers exceeds this limit
+Gun closes the connection with a `limit_reached`
+connection error.
 
 max_header_block_size (100000)::
 
@@ -650,6 +659,7 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.6*: The `max_headers` HTTP/1.1 option was added.
 * *2.5*: The `max_headers` HTTP/2 option was added.
 * *2.5*: Websocket `compress` option value `compat` was added.
 * *2.4*: The `max_header_block_size` and `max_trailer_block_size`

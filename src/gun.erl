@@ -223,6 +223,7 @@
 	cookie_ignore_informational => boolean(),
 	flow => pos_integer(),
 	keepalive => timeout(),
+	max_headers => non_neg_integer(),
 	max_header_block_size => non_neg_integer(),
 	max_trailer_block_size => non_neg_integer(),
 	transform_header_name => fun((binary()) -> binary()),

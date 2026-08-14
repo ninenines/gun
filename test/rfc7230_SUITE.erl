@@ -75,6 +75,26 @@ do_host_port(Transport, DefaultPort, HostHeaderPort) ->
 	HostHeaderPort = Rest,
 	gun:close(ConnPid).
 
+max_headers(_) ->
+	doc("The number of headers in a response must be limited "
+		"to prevent excessive resource usage. (RFC9110 5.4)"),
+	ExtraHeaders = [io_lib:format("h~p: v\r\n", [N]) || N <- lists:seq(1, 150)],
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 200 OK\r\n",
+				ExtraHeaders,
+				"content-length: 0\r\n"
+				"\r\n"
+			])
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 transfer_encoding_overrides_content_length(_) ->
 	doc("When both transfer-encoding and content-length are provided, "
 		"content-length must be ignored. (RFC7230 3.3.3)"),

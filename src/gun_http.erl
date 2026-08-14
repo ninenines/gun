@@ -110,6 +110,8 @@ do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
+do_check_options([{max_headers, M}|Opts]) when is_integer(M), M > 0 ->
+	do_check_options(Opts);
 do_check_options([{max_header_block_size, M}|Opts]) when is_integer(M), M > 0 ->
 	do_check_options(Opts);
 do_check_options([{max_trailer_block_size, M}|Opts]) when is_integer(M), M > 0 ->
@@ -322,19 +324,28 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 	end.
 
 handle_head(Data, State=#http_state{opts=Opts,
-		streams=[#stream{ref=StreamRef, authority=Authority, path=Path}|_]},
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo, authority=Authority, path=Path}|_]},
 		CookieStore0, EvHandler, EvHandlerState) ->
 	{Version, Status, _, Rest0} = cow_http:parse_status_line(Data),
 	{Headers, Rest} = cow_http:parse_headers(Rest0),
-	CookieStore = gun_cookies:set_cookie_header(scheme(State),
-		Authority, Path, Status, Headers, CookieStore0, Opts),
-	case StreamRef of
-		{connect, _, _} when Status >= 200, Status < 300 ->
-			handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
-		_ when Status >= 100, Status =< 199 ->
-			handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
-		_ ->
-			handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
+	MaxHeaders = maps:get(max_headers, Opts, 100),
+	case length(Headers) > MaxHeaders of
+		true ->
+			Reason = {connection_error, limit_reached,
+				"The number of headers is larger than configuration allows. (RFC9110 5.4)"},
+			gun:reply(ReplyTo, {gun_error, self(), Reason}),
+			{{error, Reason}, CookieStore0, EvHandlerState};
+		false ->
+			CookieStore = gun_cookies:set_cookie_header(scheme(State),
+				Authority, Path, Status, Headers, CookieStore0, Opts),
+			case StreamRef of
+				{connect, _, _} when Status >= 200, Status < 300 ->
+					handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
+				_ when Status >= 100, Status =< 199 ->
+					handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
+				_ ->
+					handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
+			end
 	end.
 
 %% We handle HTTP/1.0 responses to CONNECT requests the same as HTTP/1.1.
