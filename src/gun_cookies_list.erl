@@ -27,12 +27,13 @@
 -export([session_gc/1]).
 
 -type state() :: #{
-	cookies := [gun_cookies:cookie()]
-%% @todo	max_cookies_per_domain => non_neg_integer() | infinity,
-%% @todo	max_cookies => non_neg_integer() | infinity
+	cookies := [gun_cookies:cookie()],
+	max_cookies := non_neg_integer() | infinity
+%% @todo max_cookies_per_domain => non_neg_integer() | infinity
 }.
 
 -type opts() :: #{
+	max_cookies => non_neg_integer() | infinity
 }.
 -export_type([opts/0]).
 
@@ -41,8 +42,11 @@ init() ->
 	init(#{}).
 
 -spec init(opts()) -> {?MODULE, state()}.
-init(_Opts) ->
-	{?MODULE, #{cookies => []}}.
+init(Opts) ->
+	{?MODULE, #{
+		cookies => [],
+		max_cookies => maps:get(max_cookies, Opts, 50)
+	}}.
 
 -spec query(State, uri_string:uri_map())
 	-> {ok, [gun_cookies:cookie()], State}
@@ -121,22 +125,47 @@ set_cookie_get_exact_match(State=#{cookies := Cookies0}, Match) ->
 -spec store(State, gun_cookies:cookie())
 	-> {ok, State} | {error, any()}
 	when State::state().
-store(State=#{cookies := Cookies}, NewCookie=#{expiry_time := ExpiryTime}) ->
+store(State=#{cookies := Cookies0, max_cookies := MaxCookies}, NewCookie=#{expiry_time := ExpiryTime}) ->
 	CurrentTime = erlang:universaltime(),
 	if
 		%% Do not store cookies with an expiry time in the past.
 		ExpiryTime =/= infinity, CurrentTime >= ExpiryTime ->
 			{ok, State};
+		MaxCookies =:= 0 ->
+			{ok, State};
 		true ->
+			Cookies1 = drop_expired(Cookies0, CurrentTime),
+			Cookies = trim(Cookies1, room(MaxCookies)),
 			{ok, State#{cookies => [NewCookie|Cookies]}}
 	end.
 
 -spec gc(State) -> {ok, State} when State::state().
-gc(State=#{cookies := Cookies0}) ->
+gc(State=#{cookies := Cookies0, max_cookies := MaxCookies}) ->
 	CurrentTime = erlang:universaltime(),
-	Cookies = [C || C=#{expiry_time := ExpiryTime} <- Cookies0,
-		(ExpiryTime =:= infinity) orelse (ExpiryTime >= CurrentTime)],
+	Cookies = trim(drop_expired(Cookies0, CurrentTime), MaxCookies),
 	{ok, State#{cookies => Cookies}}.
+
+drop_expired(Cookies, CurrentTime) ->
+	[C || C=#{expiry_time := ExpiryTime} <- Cookies,
+		(ExpiryTime =:= infinity) orelse (ExpiryTime >= CurrentTime)].
+
+%% Evict earliest last-access-time, then earliest creation-time. (RFC6265bis)
+room(infinity) -> infinity;
+room(Max) -> Max - 1.
+
+trim(Cookies, infinity) ->
+	Cookies;
+trim(_Cookies, 0) ->
+	[];
+trim(Cookies, Keep) when length(Cookies) =< Keep ->
+	Cookies;
+trim(Cookies, Keep) ->
+	Sorted = lists:sort(fun evict_le/2, lists:reverse(Cookies)),
+	lists:nthtail(length(Cookies) - Keep, Sorted).
+
+evict_le(#{last_access_time := LA, creation_time := CA},
+		#{last_access_time := LB, creation_time := CB}) ->
+	{LA, CA} =< {LB, CB}.
 
 -spec session_gc(State) -> {ok, State} when State::state().
 session_gc(State=#{cookies := Cookies0}) ->

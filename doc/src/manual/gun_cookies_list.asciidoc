@@ -29,17 +29,24 @@ link:man:gun_cookies(3)[gun_cookies(3)].
 [source,erlang]
 ----
 opts() :: #{
+    max_cookies => non_neg_integer() | infinity
 }
 ----
 
 Cookie store backend options.
 
-There are currently no options available for this backend.
+The default value is given next to the option name:
 
-// The default value is given next to the option name:
+max_cookies (50)::
+
+Maximum number of cookies kept in the store. When
+the limit is reached, expired cookies are dropped
+first, then cookies with the earliest last-access-time.
+The value `infinity` disables the limit.
 
 == Changelog
 
+* *2.6*: The `max_cookies` option was added.
 * *2.0*: Module introduced.
 
 == Examples

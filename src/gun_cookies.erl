@@ -412,6 +412,135 @@ session_gc_test() ->
 	{ok, [#{name := <<"p">>}], _} = query(Store, URIMap),
 	ok.
 
+max_cookies_evicts_oldest_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Access = {{2024, 1, 1}, {0, 0, 0}},
+	Store0 = gun_cookies_list:init(#{max_cookies => 3}),
+	{ok, Store1} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URI, <<"b">>, <<"1">>, #{}),
+	{ok, Store3} = set_cookie(Store2, URI, <<"c">>, <<"1">>, #{}),
+	{gun_cookies_list, State3=#{cookies := Cookies3}} = Store3,
+	Cookies4 = [case N of
+		<<"a">> -> C#{last_access_time => Access, creation_time => {{2024, 1, 1}, {0, 0, 1}}};
+		<<"b">> -> C#{last_access_time => Access, creation_time => {{2024, 1, 1}, {0, 0, 2}}};
+		<<"c">> -> C#{last_access_time => Access, creation_time => {{2024, 1, 1}, {0, 0, 3}}}
+	end || C=#{name := N} <- Cookies3],
+	Store4 = {gun_cookies_list, State3#{cookies => Cookies4}},
+	{ok, Store} = set_cookie(Store4, URI, <<"d">>, <<"1">>, #{}),
+	{ok, Cookies, _} = query(Store, URI),
+	[<<"b">>, <<"c">>, <<"d">>] = lists:sort([N || #{name := N} <- Cookies]),
+	ok.
+
+max_cookies_evicts_lru_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{max_cookies => 3}),
+	{ok, Store1} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URI, <<"b">>, <<"1">>, #{}),
+	{ok, Store3} = set_cookie(Store2, URI, <<"c">>, <<"1">>, #{}),
+	{gun_cookies_list, State3=#{cookies := Cookies3}} = Store3,
+	Cookies4 = [case N of
+		<<"a">> -> C#{last_access_time => {{2024, 1, 1}, {0, 0, 3}}};
+		<<"b">> -> C#{last_access_time => {{2024, 1, 1}, {0, 0, 1}}};
+		<<"c">> -> C#{last_access_time => {{2024, 1, 1}, {0, 0, 2}}}
+	end || C=#{name := N} <- Cookies3],
+	Store4 = {gun_cookies_list, State3#{cookies => Cookies4}},
+	{ok, Store} = set_cookie(Store4, URI, <<"d">>, <<"1">>, #{}),
+	{ok, Cookies, _} = query(Store, URI),
+	[<<"a">>, <<"c">>, <<"d">>] = lists:sort([N || #{name := N} <- Cookies]),
+	ok.
+
+max_cookies_replace_does_not_evict_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{max_cookies => 2}),
+	{ok, Store1} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URI, <<"b">>, <<"1">>, #{}),
+	{ok, Store} = set_cookie(Store2, URI, <<"a">>, <<"2">>, #{}),
+	{ok, Cookies, _} = query(Store, URI),
+	[{<<"a">>, <<"2">>}, {<<"b">>, <<"1">>}]
+		= lists:sort([{N, V} || #{name := N, value := V} <- Cookies]),
+	ok.
+
+max_cookies_expired_evicted_first_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Now = erlang:universaltime(),
+	Past = {{2020, 1, 1}, {0, 0, 0}},
+	Older = {{2019, 1, 1}, {0, 0, 0}},
+	Store0 = gun_cookies_list:init(#{max_cookies => 2}),
+	{gun_cookies_list, State0} = Store0,
+	Live = #{
+		name => <<"live">>,
+		value => <<"1">>,
+		domain => <<"example.org">>,
+		path => <<"/">>,
+		creation_time => Older,
+		last_access_time => Older,
+		expiry_time => infinity,
+		persistent => false,
+		host_only => true,
+		secure_only => false,
+		http_only => false,
+		same_site => default
+	},
+	Expired = #{
+		name => <<"exp">>,
+		value => <<"1">>,
+		domain => <<"example.org">>,
+		path => <<"/">>,
+		creation_time => Now,
+		last_access_time => Now,
+		expiry_time => Past,
+		persistent => true,
+		host_only => true,
+		secure_only => false,
+		http_only => false,
+		same_site => default
+	},
+	Store1 = {gun_cookies_list, State0#{cookies => [Expired, Live]}},
+	{ok, Store} = set_cookie(Store1, URI, <<"new">>, <<"1">>, #{}),
+	{ok, Cookies, _} = query(Store, URI),
+	[<<"live">>, <<"new">>] = lists:sort([N || #{name := N} <- Cookies]),
+	ok.
+
+max_cookies_zero_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{max_cookies => 0}),
+	{ok, Store} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{ok, [], _} = query(Store, URI),
+	ok.
+
+max_cookies_infinity_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{max_cookies => infinity}),
+	Store = lists:foldl(fun(N, S0) ->
+		{ok, S} = set_cookie(S0, URI, integer_to_binary(N), <<"v">>, #{}),
+		S
+	end, Store0, lists:seq(1, 60)),
+	{ok, Cookies, _} = query(Store, URI),
+	60 = length(Cookies),
+	ok.
+
+max_cookies_default_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(),
+	Store = lists:foldl(fun(N, S0) ->
+		{ok, S} = set_cookie(S0, URI, integer_to_binary(N), <<"v">>, #{}),
+		S
+	end, Store0, lists:seq(1, 51)),
+	{ok, Cookies, _} = query(Store, URI),
+	50 = length(Cookies),
+	ok.
+
+max_cookies_gc_trims_excess_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{max_cookies => 1}),
+	{ok, Store1} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{gun_cookies_list, State1=#{cookies := [Cookie]}} = Store1,
+	Store2 = {gun_cookies_list, State1#{cookies => [Cookie#{name => <<"x">>}, Cookie]}},
+	{ok, Store} = gc(Store2),
+	{ok, Cookies, _} = query(Store, URI),
+	1 = length(Cookies),
+	ok.
+
 %% Most of the tests for this module are converted from the
 %% Web platform test suite. At the time of writing they could
 %% be found at https://github.com/web-platform-tests/wpt/tree/master/cookies
