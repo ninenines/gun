@@ -213,8 +213,8 @@ set_cookie(Store, URI=#{host := Host}, Name, Value, Attrs) ->
 				expiry_time => infinity
 			}
 	end,
-	Domain0 = maps:get(domain, Attrs, <<>>),
-	Domain = case gun_public_suffix:match(Domain0) of
+	Domain0 = canonical_domain(maps:get(domain, Attrs, <<>>)),
+	Domain = case is_public_suffix(Domain0) of
 		false ->
 			Domain0;
 		true when Host =:= Domain0 ->
@@ -315,6 +315,28 @@ set_cookie3(Store, Attrs, Cookie=#{name := Name,
 		_ ->
 			set_cookie_store(Store, Cookie)
 	end.
+
+is_public_suffix(Domain) ->
+	try gun_public_suffix:match(Domain)
+	catch error:badarg -> false
+	end.
+
+canonical_domain(Domain) ->
+	trim_trailing_dots(ascii_lower(Domain)).
+
+trim_trailing_dots(<<>>) ->
+	<<>>;
+trim_trailing_dots(Domain) ->
+	case binary:last(Domain) of
+		$. -> trim_trailing_dots(binary:part(Domain, 0, byte_size(Domain) - 1));
+		_ -> Domain
+	end.
+
+ascii_lower(Bin) ->
+	<< <<(ascii_lower_byte(C))>> || <<C>> <= Bin >>.
+
+ascii_lower_byte(C) when C >= $A, C =< $Z -> C + 32;
+ascii_lower_byte(C) -> C.
 
 set_cookie_store(Store0, Cookie) ->
 	Match = maps:with([name, domain, host_only, path], Cookie),
@@ -510,7 +532,10 @@ max_cookies_zero_test() ->
 
 max_cookies_infinity_test() ->
 	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
-	Store0 = gun_cookies_list:init(#{max_cookies => infinity}),
+	Store0 = gun_cookies_list:init(#{
+		max_cookies => infinity,
+		max_cookies_per_domain => infinity
+	}),
 	Store = lists:foldl(fun(N, S0) ->
 		{ok, S} = set_cookie(S0, URI, integer_to_binary(N), <<"v">>, #{}),
 		S
@@ -528,6 +553,122 @@ max_cookies_default_test() ->
 	end, Store0, lists:seq(1, 51)),
 	{ok, Cookies, _} = query(Store, URI),
 	50 = length(Cookies),
+	ok.
+
+max_cookies_per_domain_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{
+		max_cookies => infinity,
+		max_cookies_per_domain => 2
+	}),
+	{ok, Store1} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URI, <<"b">>, <<"1">>, #{}),
+	{ok, Store} = set_cookie(Store2, URI, <<"c">>, <<"1">>, #{}),
+	{ok, Cookies, _} = query(Store, URI),
+	2 = length(Cookies),
+	true = lists:keymember(<<"c">>, 1, [{N, V} || #{name := N, value := V} <- Cookies]),
+	ok.
+
+max_cookies_evicts_same_domain_first_test() ->
+	URIA = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	URIB = #{scheme => <<"http">>, host => <<"example.net">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{
+		max_cookies => 2,
+		max_cookies_per_domain => infinity
+	}),
+	{ok, Store1} = set_cookie(Store0, URIA, <<"a">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URIB, <<"b">>, <<"1">>, #{}),
+	{ok, Store} = set_cookie(Store2, URIA, <<"a2">>, <<"1">>, #{}),
+	{ok, CookiesA, _} = query(Store, URIA),
+	{ok, CookiesB, _} = query(Store, URIB),
+	[<<"a2">>] = [N || #{name := N} <- CookiesA],
+	[<<"b">>] = [N || #{name := N} <- CookiesB],
+	ok.
+
+max_cookies_other_domain_not_blocked_test() ->
+	URIA = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	URIB = #{scheme => <<"http">>, host => <<"example.net">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(),
+	Store1 = lists:foldl(fun(N, S0) ->
+		{ok, S} = set_cookie(S0, URIA, integer_to_binary(N), <<"v">>, #{}),
+		S
+	end, Store0, lists:seq(1, 50)),
+	{ok, Store} = set_cookie(Store1, URIB, <<"b">>, <<"1">>, #{}),
+	{ok, CookiesA, _} = query(Store, URIA),
+	{ok, CookiesB, _} = query(Store, URIB),
+	50 = length(CookiesA),
+	[<<"b">>] = [N || #{name := N} <- CookiesB],
+	ok.
+
+max_cookies_per_registrable_domain_test() ->
+	URIA = #{scheme => <<"http">>, host => <<"a.example.org">>, path => <<"/">>},
+	URIB = #{scheme => <<"http">>, host => <<"b.example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{
+		max_cookies => infinity,
+		max_cookies_per_domain => 2
+	}),
+	{ok, Store1} = set_cookie(Store0, URIA, <<"a">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URIB, <<"b">>, <<"1">>, #{}),
+	{ok, Store} = set_cookie(Store2, URIA, <<"a2">>, <<"1">>, #{}),
+	{ok, CookiesA, _} = query(Store, URIA),
+	{ok, CookiesB, _} = query(Store, URIB),
+	2 = length(CookiesA) + length(CookiesB),
+	true = lists:member(<<"a2">>, [N || #{name := N} <- CookiesA]),
+	ok.
+
+max_cookies_psl_hosts_not_shared_test() ->
+	URIA = #{scheme => <<"http">>, host => <<"a.ck">>, path => <<"/">>},
+	URIB = #{scheme => <<"http">>, host => <<"b.ck">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{
+		max_cookies => infinity,
+		max_cookies_per_domain => 2
+	}),
+	{ok, Store1} = set_cookie(Store0, URIA, <<"a1">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URIA, <<"a2">>, <<"1">>, #{}),
+	{ok, Store3} = set_cookie(Store2, URIB, <<"b1">>, <<"1">>, #{}),
+	{ok, Store} = set_cookie(Store3, URIB, <<"b2">>, <<"1">>, #{}),
+	{ok, CookiesA, _} = query(Store, URIA),
+	{ok, CookiesB, _} = query(Store, URIB),
+	2 = length(CookiesA),
+	2 = length(CookiesB),
+	ok.
+
+max_cookies_trailing_dot_same_quota_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	URIDot = #{scheme => <<"http">>, host => <<"example.org.">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{
+		max_cookies => infinity,
+		max_cookies_per_domain => 2
+	}),
+	{ok, Store1} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{ok, Store2} = set_cookie(Store1, URI, <<"b">>, <<"1">>, #{}),
+	{ok, Store} = set_cookie(Store2, URIDot, <<"c">>, <<"1">>, #{}),
+	{gun_cookies_list, #{cookies := All}} = Store,
+	2 = length(All),
+	ok.
+
+set_cookie_trailing_dot_public_suffix_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.com.">>, path => <<"/">>},
+	{error, domain_is_public_suffix} = set_cookie(
+		gun_cookies_list:init(), URI, <<"a">>, <<"1">>, #{domain => <<"com.">>}),
+	ok.
+
+set_cookie_non_utf8_domain_attr_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	{error, domain_match_failed} = set_cookie(
+		gun_cookies_list:init(), URI, <<"a">>, <<"1">>, #{domain => <<128>>}),
+	ok.
+
+max_cookies_non_utf8_domain_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Store0 = gun_cookies_list:init(#{max_cookies => 2}),
+	{ok, Store1} = set_cookie(Store0, URI, <<"a">>, <<"1">>, #{}),
+	{gun_cookies_list, State1=#{cookies := [Cookie]}} = Store1,
+	Store2 = {gun_cookies_list, State1#{cookies => [Cookie#{domain => <<128>>}, Cookie]}},
+	{ok, Store3} = set_cookie(Store2, URI, <<"b">>, <<"1">>, #{}),
+	{gun_cookies_list, State3} = Store3,
+	Store4 = {gun_cookies_list, State3#{cookies => [Cookie#{domain => <<128, ".com">>}]}},
+	{ok, _} = set_cookie(Store4, URI, <<"c">>, <<"1">>, #{}),
 	ok.
 
 max_cookies_gc_trims_excess_test() ->
