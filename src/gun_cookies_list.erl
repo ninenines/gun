@@ -46,8 +46,8 @@ init() ->
 init(Opts) ->
 	{?MODULE, #{
 		cookies => [],
-		max_cookies => maps:get(max_cookies, Opts, 3000),
-		max_cookies_per_domain => maps:get(max_cookies_per_domain, Opts, 50)
+		max_cookies => maps:get(max_cookies, Opts, 50),
+		max_cookies_per_domain => maps:get(max_cookies_per_domain, Opts, 20)
 	}}.
 
 -spec query(State, uri_string:uri_map())

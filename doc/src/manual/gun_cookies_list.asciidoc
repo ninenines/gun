@@ -38,7 +38,7 @@ Cookie store backend options.
 
 The default value is given next to the option name:
 
-max_cookies (3000)::
+max_cookies (50)::
 
 Maximum number of cookies kept in the store. When
 the limit is reached, expired cookies are dropped
@@ -47,7 +47,7 @@ domain as the cookie being stored, then cookies
 with the earliest last-access-time. The value
 `infinity` disables the limit.
 
-max_cookies_per_domain (50)::
+max_cookies_per_domain (20)::
 
 Maximum number of cookies kept per registrable
 domain (eTLD+1). Host-only cookies count toward

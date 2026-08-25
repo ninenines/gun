@@ -545,14 +545,18 @@ max_cookies_infinity_test() ->
 	ok.
 
 max_cookies_default_test() ->
+	{gun_cookies_list, #{
+		max_cookies := 50,
+		max_cookies_per_domain := 20
+	}} = gun_cookies_list:init(),
 	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
 	Store0 = gun_cookies_list:init(),
 	Store = lists:foldl(fun(N, S0) ->
 		{ok, S} = set_cookie(S0, URI, integer_to_binary(N), <<"v">>, #{}),
 		S
-	end, Store0, lists:seq(1, 51)),
+	end, Store0, lists:seq(1, 21)),
 	{ok, Cookies, _} = query(Store, URI),
-	50 = length(Cookies),
+	20 = length(Cookies),
 	ok.
 
 max_cookies_per_domain_test() ->
@@ -592,11 +596,11 @@ max_cookies_other_domain_not_blocked_test() ->
 	Store1 = lists:foldl(fun(N, S0) ->
 		{ok, S} = set_cookie(S0, URIA, integer_to_binary(N), <<"v">>, #{}),
 		S
-	end, Store0, lists:seq(1, 50)),
+	end, Store0, lists:seq(1, 20)),
 	{ok, Store} = set_cookie(Store1, URIB, <<"b">>, <<"1">>, #{}),
 	{ok, CookiesA, _} = query(Store, URIA),
 	{ok, CookiesB, _} = query(Store, URIB),
-	50 = length(CookiesA),
+	20 = length(CookiesA),
 	[<<"b">>] = [N || #{name := N} <- CookiesB],
 	ok.
 
