@@ -164,11 +164,8 @@ room(Max) -> Max - 1.
 trim_domains(Cookies, infinity) ->
 	Cookies;
 trim_domains(Cookies, Max) ->
-	Groups = maps:values(lists:foldl(fun(C=#{domain := D}, Acc) ->
-		Key = quota_key(D),
-		Acc#{Key => [C|maps:get(Key, Acc, [])]}
-	end, #{}, Cookies)),
-	lists:append([trim(Group, Max) || Group <- Groups]).
+	Groups = maps:groups_from_list(fun(#{domain := D}) -> quota_key(D) end, Cookies),
+	lists:append([trim(Group, Max) || Group <- maps:values(Groups)]).
 
 make_room(Same, Other, infinity) ->
 	Same ++ Other;
