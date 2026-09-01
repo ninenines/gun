@@ -1833,7 +1833,7 @@ handle_common({call, From}, _, _, _) ->
 handle_common(cast, _, StateName, _) when StateName =/= connected ->
 	{keep_state_and_data, postpone};
 handle_common(Type, Event, StateName, StateData) ->
-	error_logger:error_msg("Unexpected event in state ~p of type ~p:~n~w~n~p~n",
+	logger:error("Unexpected event in state ~p of type ~p:~n~w~n~p~n",
 		[StateName, Type, Event, StateData]),
 	keep_state_and_data.
 

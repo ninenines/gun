@@ -122,7 +122,7 @@ process exits.
 receive
     %% Receive Gun messages here...
     {'DOWN', Mref, process, ConnPid, Reason} ->
-        error_logger:error_msg("Oops!"),
+        logger:error("Oops!"),
         exit(Reason)
 end.
 ----
