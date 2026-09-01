@@ -651,6 +651,28 @@ max_cookies_trailing_dot_same_quota_test() ->
 	2 = length(All),
 	ok.
 
+%% rfc6265bis: path comparison is not symmetric. A Secure cookie at
+%% /login does not block a non-secure cookie at / or /foo; it does
+%% block /login and /login/en.
+secure_cookie_nonsecure_broader_path_test() ->
+	SecureURI = #{scheme => <<"https">>, host => <<"example.org">>, path => <<"/login">>},
+	{ok, Store1} = set_cookie(gun_cookies_list:init(), SecureURI, <<"a">>, <<"1">>,
+		#{secure => true, path => <<"/login">>}),
+	InsecureURI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	{ok, _} = set_cookie(Store1, InsecureURI, <<"a">>, <<"2">>, #{path => <<"/">>}),
+	ok.
+
+secure_cookie_nonsecure_same_or_nested_path_test() ->
+	SecureURI = #{scheme => <<"https">>, host => <<"example.org">>, path => <<"/login">>},
+	{ok, Store1} = set_cookie(gun_cookies_list:init(), SecureURI, <<"a">>, <<"1">>,
+		#{secure => true, path => <<"/login">>}),
+	InsecureURI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/login">>},
+	{error, secure_cookie_matches} = set_cookie(Store1, InsecureURI, <<"a">>, <<"2">>,
+		#{path => <<"/login">>}),
+	{error, secure_cookie_matches} = set_cookie(Store1, InsecureURI#{path => <<"/login/en">>},
+		<<"a">>, <<"2">>, #{path => <<"/login/en">>}),
+	ok.
+
 set_cookie_trailing_dot_public_suffix_test() ->
 	URI = #{scheme => <<"http">>, host => <<"example.com.">>, path => <<"/">>},
 	{error, domain_is_public_suffix} = set_cookie(
