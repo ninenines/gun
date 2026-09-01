@@ -686,6 +686,7 @@ headers(ServerPid, Method, Path, Headers) ->
 -spec headers(pid(), iodata(), iodata(), req_headers(), req_opts()) -> stream_ref().
 headers(ServerPid, Method, Path, Headers0, ReqOpts) ->
 	Headers = normalize_headers(Headers0),
+	maybe_invalid_request_line(Method, Path, ReqOpts),
 	maybe_invalid_request_headers(Headers, ReqOpts),
 	Tunnel = get_tunnel(ReqOpts),
 	StreamRef = make_stream_ref(Tunnel),
@@ -702,6 +703,7 @@ request(ServerPid, Method, Path, Headers, Body) ->
 -spec request(pid(), iodata(), iodata(), req_headers(), iodata(), req_opts()) -> stream_ref().
 request(ServerPid, Method, Path, Headers, Body, ReqOpts) ->
 	NormHeaders = normalize_headers(Headers),
+	maybe_invalid_request_line(Method, Path, ReqOpts),
 	maybe_invalid_request_headers(NormHeaders, ReqOpts),
 	Tunnel = get_tunnel(ReqOpts),
 	StreamRef = make_stream_ref(Tunnel),
@@ -732,26 +734,50 @@ normalize_headers([{Name, Value}|Tail]) when is_atom(Name) ->
 normalize_headers(Headers) when is_map(Headers) ->
 	normalize_headers(maps:to_list(Headers)).
 
-maybe_invalid_request_headers(Headers, ReqOpts) ->
+maybe_invalid_request_line(Method, Path, ReqOpts) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of
 		raise ->
-			case maybe_invalid_request_headers(Headers) of
-				ok ->
-					ok;
-				{error, Name} ->
-					error({invalid_request_header, Name,
-						"An invalid request header was detected."})
-			end;
+			validate_request_line(method, Method),
+			validate_request_line(path, Path);
 		ignore ->
 			ok
 	end.
 
-maybe_invalid_request_headers([{Name, Value}|Tail]) ->
-	case binary:match(iolist_to_binary(Value), [<<$\r>>, <<$\n>>]) of
-		nomatch -> maybe_invalid_request_headers(Tail);
-		_ -> {error, Name}
+validate_request_line(Type, Value) ->
+	case is_valid_request(Value) of
+		true -> ok;
+		false -> error({invalid_request_line, Type,
+			"An invalid request line was detected."})
+	end.
+
+is_valid_request(Value) ->
+	nomatch =:= binary:match(iolist_to_binary(Value), [<<$\r>>, <<$\n>>, <<0>>]).
+
+maybe_invalid_request_headers(Headers, ReqOpts) ->
+	case maps:get(invalid_request_headers, ReqOpts, raise) of
+		raise ->
+			validate_request_headers(Headers);
+		ignore ->
+			ok
+	end.
+
+validate_request_headers([{Name, Value}|Tail]) ->
+	case is_valid_request(Name) andalso is_valid_request(Value) of
+		true -> validate_request_headers(Tail);
+		false -> error({invalid_request_header, Name,
+			"An invalid request header was detected."})
 	end;
-maybe_invalid_request_headers([]) ->
+validate_request_headers([]) ->
+	ok.
+
+maybe_invalid_connect_destination(#{host := Host}, ReqOpts) when not is_tuple(Host) ->
+	case maps:get(invalid_request_headers, ReqOpts, raise) of
+		raise ->
+			validate_request_line(host, Host);
+		ignore ->
+			ok
+	end;
+maybe_invalid_connect_destination(_, _) ->
 	ok.
 
 %% Streaming data.
@@ -792,6 +818,7 @@ connect(ServerPid, Destination, Headers) ->
 -spec connect(pid(), connect_destination(), req_headers(), req_opts()) -> stream_ref().
 connect(ServerPid, Destination, Headers0, ReqOpts) ->
 	Headers = normalize_headers(Headers0),
+	maybe_invalid_connect_destination(Destination, ReqOpts),
 	maybe_invalid_request_headers(Headers, ReqOpts),
 	Tunnel = get_tunnel(ReqOpts),
 	StreamRef = make_stream_ref(Tunnel),
@@ -1019,6 +1046,7 @@ ws_upgrade(ServerPid, Path) ->
 -spec ws_upgrade(pid(), iodata(), req_headers()) -> stream_ref().
 ws_upgrade(ServerPid, Path, Headers0) ->
 	Headers = normalize_headers(Headers0),
+	maybe_invalid_request_line(<<"GET">>, Path, #{invalid_request_headers => raise}),
 	maybe_invalid_request_headers(Headers, #{invalid_request_headers => raise}),
 	StreamRef = make_ref(),
 	gen_statem:cast(ServerPid, {ws_upgrade, self(), StreamRef, Path, Headers}),
@@ -1027,6 +1055,7 @@ ws_upgrade(ServerPid, Path, Headers0) ->
 -spec ws_upgrade(pid(), iodata(), req_headers(), ws_opts()) -> stream_ref().
 ws_upgrade(ServerPid, Path, Headers0, WsOpts0) ->
 	Headers = normalize_headers(Headers0),
+	maybe_invalid_request_line(<<"GET">>, Path, WsOpts0),
 	maybe_invalid_request_headers(Headers, WsOpts0),
 	Tunnel = get_tunnel(WsOpts0),
 	WsOpts = maps:without([invalid_request_headers, tunnel], WsOpts0),
