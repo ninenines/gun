@@ -1048,6 +1048,7 @@ start_link(Owner, Host, Port, Opts) ->
 	gen_statem:start_link(?MODULE, {Owner, Host, Port, Opts}, []).
 
 init({Owner, Host, Port, Opts}) ->
+	proc_lib:set_label({?MODULE, Host, Port}),
 	Retry = maps:get(retry, Opts, 5),
 	OriginTransport = maps:get(transport, Opts, default_transport(Port)),
 	%% When Unix Domain Sockets are used we set

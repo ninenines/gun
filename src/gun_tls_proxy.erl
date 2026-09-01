@@ -197,6 +197,7 @@ close(Pid) ->
 callback_mode() -> state_functions.
 
 init({OwnerPid, Host, Port, Opts, Timeout, OutSocket, OutTransport, Extra}) ->
+	proc_lib:set_label({?MODULE, Host, Port}),
 	if
 		is_pid(OutSocket) ->
 			gen_statem:cast(OutSocket, {set_owner, self()});
