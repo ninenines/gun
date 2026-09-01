@@ -867,7 +867,7 @@ wpt_value_ctl(Config) ->
 do_load_json(File0) ->
 	File = "../../test/wpt/cookies/" ++ File0 ++ ".json",
 	{ok, Bin} = file:read_file(File),
-	jsx:decode(Bin, [{return_maps, true}]).
+	json:decode(Bin).
 
 do_wpt_json_test(TestFile, TestPath, Config) ->
 	Tests = do_load_json(TestFile),
