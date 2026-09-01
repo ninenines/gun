@@ -15,10 +15,6 @@
 -module(gun).
 -behavior(gen_statem).
 
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
--endif.
-
 %% Connection.
 -export([open/2]).
 -export([open/3]).
@@ -1244,23 +1240,12 @@ initial_tls_handshake(_, {retries, Retries, Socket}, State0=#state{opts=Opts, or
 
 ensure_tls_opts(Protocols0, TransOpts0, OriginHost) ->
 	%% CA certificates.
-	TransOpts1 = case lists:keymember(cacerts, 1, TransOpts0) of
+	TransOpts1 = case lists:keymember(cacerts, 1, TransOpts0)
+			orelse lists:keymember(cacertfile, 1, TransOpts0) of
 		true ->
 			TransOpts0;
 		false ->
-			case lists:keymember(cacertfile, 1, TransOpts0) of
-				true ->
-					TransOpts0;
-				false ->
-					%% This function was added in OTP-25. We use it  when it is
-					%% available and keep the previous behavior when it isn't.
-					case erlang:function_exported(public_key, cacerts_get, 0) of
-						true ->
-							[{cacerts, public_key:cacerts_get()}|TransOpts0];
-						false ->
-							TransOpts0
-					end
-			end
+			[{cacerts, public_key:cacerts_get()}|TransOpts0]
 	end,
 	%% Wildcard certificate matching.
 	TransOpts2 = case lists:keymember(customize_hostname_check, 1, TransOpts1) of

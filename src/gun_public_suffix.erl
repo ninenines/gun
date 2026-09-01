@@ -13,7 +13,6 @@
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 -module(gun_public_suffix).
--compile(no_type_opt). %% Until at least OTP-23.
 
 -export([match/1]).
 

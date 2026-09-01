@@ -785,11 +785,9 @@ supervise_false(_) ->
 	ok.
 
 tls13_post_handshake_alert_http1(_) ->
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_http1();
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -839,11 +837,9 @@ do_tls13_post_handshake_alert_http1() ->
 	gun:close(ConnPid).
 
 tls13_post_handshake_alert_http2(_) ->
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_http2();
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -894,11 +890,9 @@ tls13_post_handshake_alert_http1_via_http(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/1.1 server "
 		"over an HTTP/1.1 clear-text tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(http, http);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -907,11 +901,9 @@ tls13_post_handshake_alert_http2_via_http(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/2 server "
 		"over an HTTP/1.1 clear-text tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(http, http2);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -920,11 +912,9 @@ tls13_post_handshake_alert_http1_via_https(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/1.1 server "
 		"over an HTTP/1.1 TLS tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(https, http);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -933,11 +923,9 @@ tls13_post_handshake_alert_http2_via_https(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/2 server "
 		"over an HTTP/1.1 TLS tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(https, http2);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -946,11 +934,9 @@ tls13_post_handshake_alert_http1_via_h2c(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/1.1 server "
 		"over an HTTP/2 clear-text tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(h2c, http);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -959,11 +945,9 @@ tls13_post_handshake_alert_http2_via_h2c(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/2 server "
 		"over an HTTP/2 clear-text tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(h2c, http2);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -972,11 +956,9 @@ tls13_post_handshake_alert_http1_via_h2(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/1.1 server "
 		"over an HTTP/2 TLS tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(h2, http);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
@@ -985,11 +967,9 @@ tls13_post_handshake_alert_http2_via_h2(_) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when connecting to an HTTP/2 server "
 		"over an HTTP/2 TLS tunnel in mTLS scenarios."),
-	case {os:type(), erlang:function_exported(lists, enumerate, 3)} of
-		{{unix, linux}, true} ->
+	case os:type() of
+		{unix, linux} ->
 			do_tls13_post_handshake_alert_via_tunnel(h2, http2);
-		{{unix, linux}, false} ->
-			{skip, "Handling of TLS 1.3 alerts was improved in an OTP-26 patch release."};
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
