@@ -32,6 +32,11 @@ groups() ->
 		http11_request_error,
 		http11_keepalive,
 		http11_keepalive_default_silence_pings,
+		max_frame_size_compressed,
+		max_frame_size_control_during_fragment,
+		max_frame_size_fragmented,
+		max_frame_size_infinity,
+		max_frame_size_single,
 		reject_masked_frame_from_server,
 		unix_socket_hostname
 	],
@@ -133,6 +138,194 @@ http11_keepalive_default_silence_pings(Config) ->
 	{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
 	gun:close(ConnPid).
 
+max_frame_size_compressed(_) ->
+	doc("A compressed Websocket frame whose inflated size exceeds "
+		"max_frame_size must close the connection even when its "
+		"wire size does not."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, ReqData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			Lines = binary:split(ReqData, <<"\r\n">>, [global]),
+			[KeyLine] = [L || <<"sec-websocket-key: ", _/bits>> = L <- Lines],
+			<<"sec-websocket-key: ", Key/bits>> = KeyLine,
+			Accept = cow_ws:encode_key(Key),
+			ok = ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"connection: upgrade\r\n"
+				"upgrade: websocket\r\n"
+				"sec-websocket-accept: ", Accept, "\r\n"
+				"sec-websocket-extensions: permessage-deflate\r\n"
+				"\r\n"
+			]),
+			Z = zlib:open(),
+			ok = zlib:deflateInit(Z, default, deflated, -15, 8, default),
+			Payload = binary:copy(<<0>>, 1000000),
+			Deflated = iolist_to_binary(zlib:deflate(Z, Payload, sync)),
+			zlib:close(Z),
+			CompressedSize = byte_size(Deflated) - 4,
+			true = CompressedSize < 1000,
+			<<Compressed:CompressedSize/binary, 0, 0, 255, 255>> = Deflated,
+			Frame = <<1:1, 1:1, 0:2, 2:4, 0:1, 126:7, CompressedSize:16, Compressed/binary>>,
+			ok = ClientTransport:send(ClientSocket, Frame),
+			{ok, CloseData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			1009 = do_ws_close_code(CloseData),
+			ok = ClientTransport:close(ClientSocket)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{protocols => [http]}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", [], #{compress => true, max_frame_size => 1000}),
+	{upgrade, _, _} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_ws, ConnPid, StreamRef, _} ->
+			error(unexpected_ws_frame);
+		{gun_down, ConnPid, ws, _, _} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end,
+	gun:close(ConnPid).
+
+max_frame_size_control_during_fragment(_) ->
+	doc("A ping interleaved with a fragmented message must not count "
+		"toward max_frame_size of that message. (RFC6455 5.4)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, ReqData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			Lines = binary:split(ReqData, <<"\r\n">>, [global]),
+			[KeyLine] = [L || <<"sec-websocket-key: ", _/bits>> = L <- Lines],
+			<<"sec-websocket-key: ", Key/bits>> = KeyLine,
+			Accept = cow_ws:encode_key(Key),
+			ok = ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"connection: upgrade\r\n"
+				"upgrade: websocket\r\n"
+				"sec-websocket-accept: ", Accept, "\r\n"
+				"\r\n"
+			]),
+			Chunk = binary:copy(<<"a">>, 30),
+			Frag1 = <<0:1, 0:3, 1:4, 0:1, 30:7, Chunk/binary>>,
+			Ping = <<1:1, 0:3, 9:4, 0:1, 50:7, (binary:copy(<<"p">>, 50))/binary>>,
+			Frag2 = <<0:1, 0:3, 0:4, 0:1, 30:7, Chunk/binary>>,
+			Frag3 = <<1:1, 0:3, 0:4, 0:1, 30:7, Chunk/binary>>,
+			ok = ClientTransport:send(ClientSocket, [Frag1, Ping, Frag2, Frag3]),
+			{ok, PongData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			<<1:1, 0:3, 10:4, 1:1, _:7, _/bits>> = PongData,
+			receive after infinity -> ok end
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{protocols => [http]}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", [], #{max_frame_size => 100}),
+	{upgrade, _, _} = gun:await(ConnPid, StreamRef),
+	{ws, {text, Data}} = gun:await(ConnPid, StreamRef),
+	Data = binary:copy(<<"a">>, 90),
+	gun:close(ConnPid).
+
+max_frame_size_fragmented(_) ->
+	doc("A fragmented Websocket message larger in total than max_frame_size "
+		"must close the connection instead of being buffered without bound."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, ReqData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			Lines = binary:split(ReqData, <<"\r\n">>, [global]),
+			[KeyLine] = [L || <<"sec-websocket-key: ", _/bits>> = L <- Lines],
+			<<"sec-websocket-key: ", Key/bits>> = KeyLine,
+			Accept = cow_ws:encode_key(Key),
+			ok = ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"connection: upgrade\r\n"
+				"upgrade: websocket\r\n"
+				"sec-websocket-accept: ", Accept, "\r\n"
+				"\r\n"
+			]),
+			Chunk = binary:copy(<<"a">>, 80),
+			Frame1 = <<0:1, 0:3, 1:4, 0:1, (byte_size(Chunk)):7, Chunk/binary>>,
+			Frame2 = <<0:1, 0:3, 0:4, 0:1, (byte_size(Chunk)):7, Chunk/binary>>,
+			ok = ClientTransport:send(ClientSocket, [Frame1, Frame2]),
+			{ok, CloseData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			1009 = do_ws_close_code(CloseData),
+			ok = ClientTransport:close(ClientSocket)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{protocols => [http]}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", [], #{max_frame_size => 100}),
+	{upgrade, _, _} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_ws, ConnPid, StreamRef, _} ->
+			error(unexpected_ws_frame);
+		{gun_down, ConnPid, ws, _, _} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end,
+	gun:close(ConnPid).
+
+max_frame_size_infinity(_) ->
+	doc("max_frame_size set to infinity must accept a frame larger "
+		"than the default limit."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, ReqData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			Lines = binary:split(ReqData, <<"\r\n">>, [global]),
+			[KeyLine] = [L || <<"sec-websocket-key: ", _/bits>> = L <- Lines],
+			<<"sec-websocket-key: ", Key/bits>> = KeyLine,
+			Accept = cow_ws:encode_key(Key),
+			ok = ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"connection: upgrade\r\n"
+				"upgrade: websocket\r\n"
+				"sec-websocket-accept: ", Accept, "\r\n"
+				"\r\n"
+			]),
+			ok = ClientTransport:send(ClientSocket,
+				cow_ws:frame({binary, binary:copy(<<"a">>, 1000001)}, #{})),
+			receive after infinity -> ok end
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{protocols => [http]}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", [], #{max_frame_size => infinity}),
+	{upgrade, _, _} = gun:await(ConnPid, StreamRef),
+	{ws, {binary, Data}} = gun:await(ConnPid, StreamRef),
+	1000001 = byte_size(Data),
+	gun:close(ConnPid).
+
+max_frame_size_single(_) ->
+	doc("A single Websocket frame declaring a length larger than "
+		"max_frame_size must close the connection immediately, "
+		"without buffering the oversized payload."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, ReqData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			Lines = binary:split(ReqData, <<"\r\n">>, [global]),
+			[KeyLine] = [L || <<"sec-websocket-key: ", _/bits>> = L <- Lines],
+			<<"sec-websocket-key: ", Key/bits>> = KeyLine,
+			Accept = cow_ws:encode_key(Key),
+			ok = ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"connection: upgrade\r\n"
+				"upgrade: websocket\r\n"
+				"sec-websocket-accept: ", Accept, "\r\n"
+				"\r\n"
+			]),
+			Header = <<1:1, 0:3, 1:4, 0:1, 126:7, 1000:16>>,
+			ok = ClientTransport:send(ClientSocket, Header),
+			{ok, CloseData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			1009 = do_ws_close_code(CloseData),
+			ok = ClientTransport:close(ClientSocket)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{protocols => [http]}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", [], #{max_frame_size => 100}),
+	{upgrade, _, _} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_ws, ConnPid, StreamRef, _} ->
+			error(unexpected_ws_frame);
+		{gun_down, ConnPid, ws, _, _} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end,
+	gun:close(ConnPid).
+
 http11_request_error(Config) ->
 	doc("Ensure that HTTP/1.1 requests are rejected while using Websocket."),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config)),
@@ -142,6 +335,10 @@ http11_request_error(Config) ->
 	StreamRef2 = gun:get(ConnPid, "/"),
 	{error, {connection_error, {badstate, _}}} = gun:await(ConnPid, StreamRef2),
 	gun:close(ConnPid).
+
+do_ws_close_code(<<1:1, 0:3, 8:4, 1:1, 2:7, MA, MB, _, _, X, Y, _/bits>>) ->
+	<<Code:16>> = <<(X bxor MA), (Y bxor MB)>>,
+	Code.
 
 reject_masked_frame_from_server(_) ->
 	doc("A client must close the connection upon receiving a masked "

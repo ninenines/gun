@@ -148,7 +148,10 @@ connect(Path) ->
 	{ok, Pid} = gun:open("127.0.0.1", 33080, #{retry => 0}),
 	{ok, http} = gun:await_up(Pid),
 	MRef = monitor(process, Pid),
-	StreamRef = gun:ws_upgrade(Pid, Path, [], #{compress => true}),
+	StreamRef = gun:ws_upgrade(Pid, Path, [], #{
+		compress => true,
+		max_frame_size => infinity
+	}),
 	receive
 		{gun_upgrade, Pid, StreamRef, [<<"websocket">>], _} ->
 			ok;

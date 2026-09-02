@@ -588,6 +588,7 @@ ws_opts() :: #{
     flow             => pos_integer(),
     invalid_request_headers => raise | ignore,
     keepalive        => timeout(),
+    max_frame_size   => pos_integer() | infinity,
     protocols        => [{binary(), module()}],
     silence_pings    => boolean(),
     user_opts        => any()
@@ -635,6 +636,13 @@ own risk.
 keepalive (infinity)::
 
 Time between pings in milliseconds.
+
+max_frame_size (1000000)::
+
+Maximum size in bytes of an incoming Websocket message,
+including across fragments and after decompression.
+Gun closes the connection when this limit is exceeded.
+The value `infinity` disables the limit.
 
 protocols ([])::
 

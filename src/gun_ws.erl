@@ -52,12 +52,15 @@
 	in = head :: head | #payload{} | close,
 	out = head :: head | close,
 	frag_state = undefined :: cow_ws:frag_state(),
+	frag_size = 0 :: non_neg_integer(),
 	utf8_state = 0 :: cow_ws:utf8_state(),
 	extensions = #{} :: cow_ws:extensions(),
 	flow :: integer() | infinity,
 	handler :: module(),
 	handler_state :: any()
 }).
+
+-define(MAX_FRAME_SIZE_DEFAULT, 1000000).
 
 check_options(Opts) ->
 	do_check_options(maps:to_list(Opts)).
@@ -79,6 +82,10 @@ do_check_options([{flow, InitialFlow}|Opts]) when is_integer(InitialFlow), Initi
 do_check_options([{keepalive, infinity}|Opts]) ->
 	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
+	do_check_options(Opts);
+do_check_options([{max_frame_size, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{max_frame_size, M}|Opts]) when is_integer(M), M > 0 ->
 	do_check_options(Opts);
 do_check_options([Opt={protocols, L}|Opts]) when is_list(L) ->
 	case lists:usort(lists:flatten([[is_binary(B), is_atom(M)] || {B, M} <- L])) of
@@ -167,8 +174,8 @@ handle(_, State=#ws_state{in=close}, EvHandler, EvHandlerState) ->
 handle(<<>>, State=#ws_state{in=head}, _, EvHandlerState) ->
 	maybe_active(State, EvHandlerState);
 handle(Data, State=#ws_state{reply_to=ReplyTo, stream_ref=StreamRef, buffer=Buffer,
-		in=head, frag_state=FragState, extensions=Extensions},
-		EvHandler, EvHandlerState0) ->
+		in=head, frag_state=FragState, extensions=Extensions,
+		opts=Opts}, EvHandler, EvHandlerState0) ->
 	%% Send the event only if there was no data in the buffer.
 	%% If there is data in the buffer then we already sent the event.
 	EvHandlerState1 = case Buffer of
@@ -183,10 +190,13 @@ handle(Data, State=#ws_state{reply_to=ReplyTo, stream_ref=StreamRef, buffer=Buff
 			EvHandlerState0
 	end,
 	Data2 = << Buffer/binary, Data/binary >>,
+	MaxFrameSize = maps:get(max_frame_size, Opts, ?MAX_FRAME_SIZE_DEFAULT),
 	case cow_ws:parse_header(Data2, Extensions, FragState) of
 		%% A server MUST NOT mask frames it sends to the client. (RFC6455 5.1)
 		{_, _, _, _, MaskKey, _} when MaskKey =/= undefined ->
 			closing({error, badframe}, State, EvHandler, EvHandlerState1);
+		{_, _, _, Len, _, _} when Len > MaxFrameSize ->
+			closing({error, badsize}, State, EvHandler, EvHandlerState1);
 		{Type, FragState2, Rsv, Len, MaskKey, Rest} ->
 			EvHandlerState = EvHandler:ws_recv_frame_header(#{
 				stream_ref => StreamRef,
@@ -207,9 +217,15 @@ handle(Data, State=#ws_state{reply_to=ReplyTo, stream_ref=StreamRef, buffer=Buff
 			closing({error, badframe}, State, EvHandler, EvHandlerState1)
 	end;
 handle(Data, State=#ws_state{in=In=#payload{type=Type, rsv=Rsv, len=Len, mask_key=MaskKey,
-		close_code=CloseCode, unmasked=Unmasked, unmasked_len=UnmaskedLen}, frag_state=FragState,
-		utf8_state=Utf8State, extensions=Extensions}, EvHandler, EvHandlerState) ->
-	case cow_ws:parse_payload(Data, MaskKey, Utf8State, UnmaskedLen, Type, Len, FragState, Extensions, Rsv) of
+		close_code=CloseCode, unmasked=Unmasked, unmasked_len=UnmaskedLen},
+		frag_state=FragState, frag_size=FragSize, utf8_state=Utf8State,
+		extensions=Extensions, opts=Opts}, EvHandler, EvHandlerState) ->
+	MaxFrameSize = case maps:get(max_frame_size, Opts, ?MAX_FRAME_SIZE_DEFAULT) of
+		infinity -> infinity;
+		MaxFrameSize0 -> MaxFrameSize0 - FragSize - byte_size(Unmasked)
+	end,
+	case cow_ws:parse_payload(Data, MaskKey, Utf8State, UnmaskedLen, Type, Len,
+			FragState, Extensions#{max_inflate_size => MaxFrameSize}, Rsv) of
 		{ok, CloseCode2, Payload, Utf8State2, Rest} ->
 			dispatch(Rest, State#ws_state{in=head, utf8_state=Utf8State2}, Type,
 				<<Unmasked/binary, Payload/binary>>, CloseCode2,
@@ -243,9 +259,11 @@ maybe_active(State=#ws_state{flow=Flow}, EvHandlerState) ->
 	], EvHandlerState}.
 
 dispatch(Rest, State0=#ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
-		frag_state=FragState, extensions=Extensions, flow=Flow0,
+		frag_state=FragState, frag_size=FragSize, opts=Opts,
+		extensions=Extensions, flow=Flow0,
 		handler=Handler, handler_state=HandlerState0},
 		Type, Payload, CloseCode, EvHandler, EvHandlerState0) ->
+	MaxFrameSize = maps:get(max_frame_size, Opts, ?MAX_FRAME_SIZE_DEFAULT),
 	EvHandlerState1 = EvHandler:ws_recv_frame_end(#{
 		stream_ref => StreamRef,
 		reply_to => ReplyTo,
@@ -282,8 +300,14 @@ dispatch(Rest, State0=#ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
 				{close, _, _} ->
 					State = State1#ws_state{in=close},
 					handle(Rest, State, EvHandler, EvHandlerState1);
+				{fragment, _, _, FragPayload}
+						when FragSize + byte_size(FragPayload) > MaxFrameSize ->
+					closing({error, badsize}, State0, EvHandler, EvHandlerState0);
 				{fragment, fin, _, _} ->
-					State = State1#ws_state{frag_state=undefined},
+					State = State1#ws_state{frag_state=undefined, frag_size=0},
+					handle(Rest, State, EvHandler, EvHandlerState1);
+				{fragment, nofin, _, FragPayload} ->
+					State = State1#ws_state{frag_size=FragSize + byte_size(FragPayload)},
 					handle(Rest, State, EvHandler, EvHandlerState1);
 				_ ->
 					handle(Rest, State1, EvHandler, EvHandlerState1)
@@ -309,7 +333,8 @@ closing(Reason, State=#ws_state{reply_to=ReplyTo}, EvHandler, EvHandlerState) ->
 		owner_down -> 1001;
 		shutdown -> 1001;
 		{error, badframe} -> 1002;
-		{error, badencoding} -> 1007
+		{error, badencoding} -> 1007;
+		{error, badsize} -> 1009
 	end,
 	send({close, Code, <<>>}, State, ReplyTo, EvHandler, EvHandlerState).
 

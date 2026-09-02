@@ -293,6 +293,7 @@
 	flow => pos_integer(),
 	invalid_request_headers => raise | ignore,
 	keepalive => timeout(),
+	max_frame_size => pos_integer() | infinity,
 	protocols => [{binary(), module()}],
 	reply_to => pid(),
 	silence_pings => boolean(),
