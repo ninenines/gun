@@ -184,6 +184,9 @@ handle(Data, State=#ws_state{reply_to=ReplyTo, stream_ref=StreamRef, buffer=Buff
 	end,
 	Data2 = << Buffer/binary, Data/binary >>,
 	case cow_ws:parse_header(Data2, Extensions, FragState) of
+		%% A server MUST NOT mask frames it sends to the client. (RFC6455 5.1)
+		{_, _, _, _, MaskKey, _} when MaskKey =/= undefined ->
+			closing({error, badframe}, State, EvHandler, EvHandlerState1);
 		{Type, FragState2, Rsv, Len, MaskKey, Rest} ->
 			EvHandlerState = EvHandler:ws_recv_frame_header(#{
 				stream_ref => StreamRef,

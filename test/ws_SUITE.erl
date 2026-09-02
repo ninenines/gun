@@ -18,6 +18,7 @@
 
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
+-import(gun_test, [init_origin/3]).
 
 %% ct.
 
@@ -31,6 +32,7 @@ groups() ->
 		http11_request_error,
 		http11_keepalive,
 		http11_keepalive_default_silence_pings,
+		reject_masked_frame_from_server,
 		unix_socket_hostname
 	],
 	[
@@ -139,6 +141,45 @@ http11_request_error(Config) ->
 	{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef1),
 	StreamRef2 = gun:get(ConnPid, "/"),
 	{error, {connection_error, {badstate, _}}} = gun:await(ConnPid, StreamRef2),
+	gun:close(ConnPid).
+
+reject_masked_frame_from_server(_) ->
+	doc("A client must close the connection upon receiving a masked "
+		"frame from the server, rather than accepting and unmasking "
+		"it, since only clients are allowed to mask frames. (RFC6455 5.1)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, ReqData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			Lines = binary:split(ReqData, <<"\r\n">>, [global]),
+			[KeyLine] = [L || <<"sec-websocket-key: ", _/bits>> = L <- Lines],
+			<<"sec-websocket-key: ", Key/bits>> = KeyLine,
+			Accept = cow_ws:encode_key(Key),
+			ok = ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"connection: upgrade\r\n"
+				"upgrade: websocket\r\n"
+				"sec-websocket-accept: ", Accept, "\r\n"
+				"\r\n"
+			]),
+			ok = ClientTransport:send(ClientSocket,
+				cow_ws:masked_frame({text, <<"hello">>}, #{})),
+			{ok, CloseData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			%% Client close: masked, opcode 8, 2-byte payload (status 1002).
+			<<1:1, 0:3, 8:4, 1:1, 2:7, _:32, _:16, _/bits>> = CloseData,
+			ok = ClientTransport:close(ClientSocket)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{protocols => [http]}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+	{upgrade, _, _} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_ws, ConnPid, StreamRef, _} ->
+			error(unexpected_ws_frame);
+		{gun_down, ConnPid, ws, _, _} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end,
 	gun:close(ConnPid).
 
 reject_upgrade(Config) ->
