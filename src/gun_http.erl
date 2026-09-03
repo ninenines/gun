@@ -158,22 +158,24 @@ handle(Data, State=#http_state{opts=Opts, in=head, buffer=Buffer,
 		_ ->
 			EvHandlerState0
 	end,
-	Data2 = << Buffer/binary, Data/binary >>,
-	case binary:match(Data2, <<"\r\n\r\n">>) of
+	case match_header_section_end(Data, Buffer) of
+		match ->
+			handle_head(<<Buffer/binary, Data/binary>>,
+				State#http_state{buffer= <<>>},
+				CookieStore, EvHandler, EvHandlerState);
 		nomatch ->
 			MaxSize = maps:get(max_header_block_size, Opts, 100000),
-			case byte_size(Data2) > MaxSize of
+			case byte_size(Buffer) + byte_size(Data) > MaxSize of
 				true ->
 					Reason = {connection_error, limit_reached,
 						"The response header block is too large."},
 					gun:reply(ReplyTo, {gun_error, self(), Reason}),
 					{{error, Reason}, CookieStore, EvHandlerState};
 				false ->
-					{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState}
-			end;
-		{_, _} ->
-			handle_head(Data2, State#http_state{buffer= <<>>},
-				CookieStore, EvHandler, EvHandlerState)
+					{{state, State#http_state{
+						buffer= <<Buffer/binary, Data/binary>>}},
+						CookieStore, EvHandlerState}
+			end
 	end;
 %% Everything sent to the socket until it closes is part of the response body.
 handle(Data, State=#http_state{in=body_close}, CookieStore, _, EvHandlerState) ->
@@ -251,21 +253,9 @@ handle(Data, State=#http_state{opts=Opts, in=body_trailer,
 		buffer=Buffer, connection=Conn,
 		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
 		CookieStore, EvHandler, EvHandlerState0) ->
-	Data2 = << Buffer/binary, Data/binary >>,
-	case binary:match(Data2, <<"\r\n\r\n">>) of
-		nomatch ->
-			MaxSize = maps:get(max_trailer_block_size, Opts, 10000),
-			case byte_size(Data2) > MaxSize of
-				true ->
-					Reason = {connection_error, limit_reached,
-						"The response trailer block is too large."},
-					gun:reply(ReplyTo, {gun_error, self(), Reason}),
-					{{error, Reason}, CookieStore, EvHandlerState0};
-				false ->
-					{{state, State#http_state{buffer=Data2}}, CookieStore, EvHandlerState0}
-			end;
-		{_, _} ->
-			{Trailers, Rest} = cow_http:parse_headers(Data2),
+	case match_header_section_end(Data, Buffer) of
+		match ->
+			{Trailers, Rest} = cow_http:parse_headers(<<Buffer/binary, Data/binary>>),
 			%% @todo We probably want to pass this to gun_content_handler?
 			RealStreamRef = stream_ref(State, StreamRef),
 			gun:reply(ReplyTo, {gun_trailers, self(), RealStreamRef, Trailers}),
@@ -281,6 +271,19 @@ handle(Data, State=#http_state{opts=Opts, in=body_trailer,
 						CookieStore, EvHandler, EvHandlerState);
 				close ->
 					{[{state, end_stream(State)}, close], CookieStore, EvHandlerState}
+			end;
+		nomatch ->
+			MaxSize = maps:get(max_trailer_block_size, Opts, 10000),
+			case byte_size(Buffer) + byte_size(Data) > MaxSize of
+				true ->
+					Reason = {connection_error, limit_reached,
+						"The response trailer block is too large."},
+					gun:reply(ReplyTo, {gun_error, self(), Reason}),
+					{{error, Reason}, CookieStore, EvHandlerState0};
+				false ->
+					{{state, State#http_state{
+						buffer= <<Buffer/binary, Data/binary>>}},
+						CookieStore, EvHandlerState0}
 			end
 	end;
 %% We know the length of the rest of the body.
@@ -321,6 +324,21 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 					end_keepalive_stream(Rest, State1, CookieStore, EvHandler, EvHandlerState);
 				close -> {[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
 			end
+	end.
+
+match_header_section_end(<<"\n\r\n",_/bits>>, Buffer)
+		when binary_part(Buffer, byte_size(Buffer) - 1, 1) =:= <<"\r">> ->
+	match;
+match_header_section_end(<<"\r\n",_/bits>>, Buffer)
+		when binary_part(Buffer, byte_size(Buffer) - 2, 2) =:= <<"\r\n">> ->
+	match;
+match_header_section_end(<<"\n",_/bits>>, Buffer)
+		when binary_part(Buffer, byte_size(Buffer) - 3, 3) =:= <<"\r\n\r">> ->
+	match;
+match_header_section_end(Data, _) ->
+	case binary:match(Data, <<"\r\n\r\n">>) of
+		{_, _} -> match;
+		nomatch -> nomatch
 	end.
 
 handle_head(Data, State=#http_state{opts=Opts,
