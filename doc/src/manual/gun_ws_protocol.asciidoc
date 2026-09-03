@@ -9,6 +9,10 @@ gun_ws_protocol - Websocket subprotocols
 The `gun_ws_protocol` module provides the callback interface
 and types for implementing Websocket subprotocols.
 
+Note that the implemented callbacks must not raise
+exceptions as they would crash the Gun connection
+process.
+
 == Callbacks
 
 Websocket subprotocols implement the following interface.
