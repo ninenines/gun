@@ -34,6 +34,7 @@ Requests:
 * link:man:gun:headers(3)[gun:headers(3)] - Initiate the given request
 * link:man:gun:request(3)[gun:request(3)] - Perform the given request
 * link:man:gun:data(3)[gun:data(3)] - Stream the body of a request
+* link:man:gun:trailers(3)[gun:trailers(3)] - Send the request trailers
 
 Proxies:
 

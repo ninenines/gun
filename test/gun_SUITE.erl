@@ -187,6 +187,73 @@ ignore_empty_data_fin_http2(_) ->
 	>> = Data,
 	gun:close(Pid).
 
+trailers_http(_) ->
+	doc("Trailers can be sent in HTTP/1.1."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	Ref = gun:post(Pid, "/", []),
+	gun:data(Pid, Ref, nofin, "hello"),
+	gun:trailers(Pid, Ref, [{<<"x-checksum">>, <<"abc123">>}]),
+	Data = receive_all_from(OriginPid, 500),
+	Lines = binary:split(Data, <<"\r\n">>, [global]),
+	%% Final chunk terminator, trailer, end (reversed).
+	[<<>>, <<>>, <<"x-checksum: abc123">>, <<"0">> | _] = lists:reverse(Lines),
+	gun:close(Pid).
+
+trailers_http_stream_not_found(_) ->
+	doc("Sending trailers on a non-existing HTTP/1.1 stream results in a gun_error."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http),
+	{ok, Pid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	FakeRef = make_ref(),
+	gun:trailers(Pid, FakeRef, [{<<"x-checksum">>, <<"abc123">>}]),
+	receive
+		{gun_error, Pid, _, _} -> ok
+	after 1000 ->
+		error(timeout)
+	end,
+	gun:close(Pid).
+
+trailers_http2(_) ->
+	doc("Trailers are sent as a HEADERS frame with END_STREAM in HTTP/2."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	Ref = gun:post(Pid, "/", []),
+	gun:data(Pid, Ref, nofin, "hello"),
+	gun:trailers(Pid, Ref, [{<<"x-checksum">>, <<"abc123">>}]),
+	Data = receive_all_from(OriginPid, 500),
+	<<
+		%% HEADERS frame (request).
+		Len1:24, 1, _:40, _:Len1/unit:8,
+		%% DATA frame (nofin).
+		5:24, 0, _:7, 0:1, _:32, "hello",
+		%% HEADERS frame (trailers, END_STREAM).
+		Len2:24, 1, _:7, 1:1, _:32, _:Len2/unit:8
+	>> = Data,
+	gun:close(Pid).
+
+trailers_http2_without_data(_) ->
+	doc("Trailers can be sent without prior data in HTTP/2."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2),
+	{ok, Pid} = gun:open("localhost", OriginPort, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(Pid),
+	handshake_completed = receive_from(OriginPid),
+	Ref = gun:post(Pid, "/", []),
+	gun:trailers(Pid, Ref, [{<<"x-checksum">>, <<"abc123">>}]),
+	Data = receive_all_from(OriginPid, 500),
+	<<
+		%% HEADERS frame (request).
+		Len1:24, 1, _:40, _:Len1/unit:8,
+		%% HEADERS frame (trailers, END_STREAM).
+		Len2:24, 1, _:7, 1:1, _:32, _:Len2/unit:8
+	>> = Data,
+	gun:close(Pid).
+
 info(_) ->
 	doc("Get info from the Gun connection."),
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
