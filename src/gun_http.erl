@@ -512,7 +512,8 @@ handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connec
 	%% We always reset in_state even if not chunked.
 	if
 		IsFin =:= fin, Conn2 =:= close ->
-			{close, CookieStore, EvHandlerState3};
+			{[{state, end_stream(State#http_state{connection=Conn2})}, close],
+				CookieStore, EvHandlerState3};
 		IsFin =:= fin ->
 			end_keepalive_stream(Rest, State#http_state{in=In,
 				in_state={0, 0}, connection=Conn2,
