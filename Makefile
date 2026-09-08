@@ -2,7 +2,7 @@
 
 PROJECT = gun
 PROJECT_DESCRIPTION = HTTP/1.1, HTTP/2 and Websocket client for Erlang/OTP.
-PROJECT_VERSION = 2.5.0
+PROJECT_VERSION = 2.6.0
 
 # Options.
 
@@ -15,7 +15,7 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = public_key ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib 2.19.0
+dep_cowlib = git https://github.com/ninenines/cowlib 2.20.0
 
 ifeq ($(GUN_QUICER),1)
 DEPS += quicer
@@ -43,8 +43,8 @@ define HEX_TARBALL_EXTRA_METADATA
 #{
 	licenses => [<<"ISC">>],
 	links => #{
-		<<"Function reference">> => <<"https://ninenines.eu/docs/en/gun/2.5/manual/">>,
-		<<"User guide">> => <<"https://ninenines.eu/docs/en/gun/2.5/guide/">>,
+		<<"Function reference">> => <<"https://ninenines.eu/docs/en/gun/2.6/manual/">>,
+		<<"User guide">> => <<"https://ninenines.eu/docs/en/gun/2.6/guide/">>,
 		<<"GitHub">> => <<"https://github.com/ninenines/gun">>,
 		<<"Sponsor">> => <<"https://github.com/sponsors/essen">>
 	}

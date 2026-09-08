@@ -1,0 +1,52 @@
+[appendix]
+== Migrating from Gun 2.5 to 2.6
+
+Gun 2.6 fixes a number of security vulnerabilities.
+It also has a few new options.
+
+Gun 2.6 updates Cowlib to 2.20.0. Both applications
+must be updated as they both contain security fixes.
+
+Gun 2.6 requires Erlang/OTP 27.0 or greater.
+
+=== Features added
+
+* Support for Erlang/OTP versions below 27.0 was dropped.
+  Gun will now only support Erlang/OTP versions that
+  receive security patches.
+
+* Add a `max_headers` HTTP/1.1 option.
+
+* Add a `max_cookies` and `max_cookies_per_domain`
+  option to `gun_cookies_list`. Cookies get evicted
+  when the limit is reached.
+
+* Add a `max_frame_size` Websocket option.
+
+* Defense-in-depth: Gun now includes additional
+  checks when the `invalid_request_headers` is
+  enabled (this is the default). Amongst others,
+  the NUL character is now rejected.
+
+* Gun processes now have labels.
+
+* Update Cowlib to 2.20.0.
+
+=== Bugs fixed
+
+* HPACK: only index fields known to be safe; never
+  index other fields. This may result in larger
+  HTTP/2 messages.
+
+* HPACK: fix name-only indexing.
+
+* Receipt of masked Websocket frames from the server
+  now results in the connection being closed.
+
+* HTTP/1.1 scanning of long response headers was
+  improved.
+
+* Parsing of numbers in protocol components was
+  made stricter. The limit in the number of digits
+  was increased from 17 to 20 to accomodate
+  peculiar implementations.
