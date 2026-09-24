@@ -374,13 +374,29 @@ cancel(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
 	{ResCommands, EvHandlerState} = commands(Commands, State, EvHandler, EvHandlerState1),
 	{ResCommands, EvHandlerState}.
 
+%% The inner protocol is unset until a TLS handshake completes.
+timeout(State=#tunnel_state{protocol=undefined}, {response_timeout, _}, _) ->
+	{state, State};
+timeout(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0},
+		{response_timeout, StreamRef0}, TRef) ->
+	StreamRef = maybe_dereference(State, StreamRef0),
+	timeout_result(State, Proto:timeout(ProtoState0, {response_timeout, StreamRef}, TRef));
 timeout(State=#tunnel_state{protocol=Proto, protocol_state=ProtoState0}, Msg, TRef) ->
-	case Proto:timeout(ProtoState0, Msg, TRef) of
-		{state, ProtoState} ->
-			{state, State#tunnel_state{protocol_state=ProtoState}};
-		Other ->
-			Other
-	end.
+	timeout_result(State, Proto:timeout(ProtoState0, Msg, TRef)).
+
+timeout_result(State, {state, ProtoState}) ->
+	{state, State#tunnel_state{protocol_state=ProtoState}};
+%% commands/5 closes a TLS proxy before returning an error. This
+%% path does not go through commands/5. An exit of a linked proxy
+%% would take the connection down, so close/1 unlinks it first.
+timeout_result(#tunnel_state{socket=Socket, transport=Transport}, Error={error, _}) ->
+	case Transport of
+		gun_tls_proxy -> gun_tls_proxy:close(Socket);
+		_ -> ok
+	end,
+	Error;
+timeout_result(_State, Other) ->
+	Other.
 
 stream_info(#tunnel_state{transport=Transport0, stream_ref=TunnelStreamRef, reply_to=ReplyTo,
 		tunnel_protocol=TunnelProtocol,

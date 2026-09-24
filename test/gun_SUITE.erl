@@ -112,6 +112,237 @@ do_timeout(Opt, Timeout) ->
 	{_, init, _} = receive_event(ConnPid),
 	gun:close(ConnPid).
 
+response_timeout_http(_) ->
+	doc("The response_timeout option must close the connection and "
+		"error the pending stream when the server accepts the request "
+		"but never sends a response."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, _, _) ->
+		timer:sleep(5000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [{http, #{response_timeout => 200}}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	MRef = monitor(process, ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, timeout, _}}}
+		= gun:await(ConnPid, StreamRef, 2000),
+	receive
+		{'DOWN', MRef, process, ConnPid, _} -> ok
+	after 2000 ->
+		error(connection_did_not_close)
+	end.
+
+response_timeout_http2(_) ->
+	doc("The response_timeout option must reset the stream when the "
+		"server accepts the request but never sends a response."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, _, _) ->
+		timer:sleep(5000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [{http2, #{response_timeout => 200}}],
+		retry => 0
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {stream_error, {stream_error, cancel,
+		'The response timeout has expired.'}}}
+		= gun:await(ConnPid, StreamRef, 2000),
+	gun:close(ConnPid).
+
+response_timeout_cancel_no_disconnect(_) ->
+	doc("Cancelling a pipelined stream must cancel its response_timeout "
+		"timer so that a still-active stream on the same connection is "
+		"not disconnected when the cancelled stream's timeout elapses."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
+		_ = recv_two_requests(Socket, Transport, <<>>),
+		ok = Transport:send(Socket, "HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n"),
+		receive after 5000 -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [{http, #{response_timeout => 200}}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	MRef = monitor(process, ConnPid),
+	StreamRef1 = gun:get(ConnPid, "/"),
+	StreamRef2 = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1, 2000),
+	ok = gun:cancel(ConnPid, StreamRef2),
+	%% Wait past the response_timeout that would have fired for the
+	%% cancelled stream: the connection must remain up and unaffected.
+	receive
+		{'DOWN', MRef, process, ConnPid, Reason} ->
+			error({unexpected_down, Reason})
+	after 1000 ->
+		ok
+	end,
+	true = is_process_alive(ConnPid),
+	demonitor(MRef, [flush]),
+	gun:close(ConnPid).
+
+recv_two_requests(Socket, Transport, Acc) ->
+	case length(binary:matches(Acc, <<"\r\n\r\n">>)) >= 2 of
+		true ->
+			Acc;
+		false ->
+			{ok, Data} = Transport:recv(Socket, 0, 5000),
+			recv_two_requests(Socket, Transport, <<Acc/binary, Data/binary>>)
+	end.
+
+response_timeout_http2_late_response(_) ->
+	doc("A response that arrives after response_timeout must not kill "
+		"the connection, and a later request must still succeed."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		{ok, StreamID} = recv_http2_headers(Socket, Transport),
+		timer:sleep(400),
+		{Block1, Encode} = cow_hpack:encode([
+			{<<":status">>, <<"200">>},
+			{<<"content-length">>, <<"0">>}
+		]),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID, fin, Block1)),
+		respond_next_http2_headers(Socket, Transport, Encode)
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [{http2, #{response_timeout => 200}}],
+		retry => 0
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef1 = gun:get(ConnPid, "/slow"),
+	{error, {stream_error, {stream_error, cancel,
+		'The response timeout has expired.'}}}
+		= gun:await(ConnPid, StreamRef1, 2000),
+	true = is_process_alive(ConnPid),
+	StreamRef2 = gun:get(ConnPid, "/ok"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2, 2000),
+	gun:close(ConnPid).
+
+recv_http2_headers(Socket, Transport) ->
+	{ok, <<Len:24, Type:8, _:8, StreamID:32>>} = Transport:recv(Socket, 9, 5000),
+	{ok, _} = Transport:recv(Socket, Len, 5000),
+	case Type of
+		1 -> {ok, StreamID};
+		_ -> recv_http2_headers(Socket, Transport)
+	end.
+
+respond_next_http2_headers(Socket, Transport, Encode) ->
+	{ok, StreamID} = recv_http2_headers(Socket, Transport),
+	{Block, _} = cow_hpack:encode([
+		{<<":status">>, <<"200">>},
+		{<<"content-length">>, <<"0">>}
+	], Encode),
+	ok = Transport:send(Socket, cow_http2:headers(StreamID, fin, Block)).
+
+response_timeout_cancel_connect(_) ->
+	doc("Cancelling a CONNECT request must cancel its response_timeout. "
+		"A later 2xx from the proxy closes the connection instead of "
+		"switching protocol, because the following bytes are the tunnel."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, _, _) ->
+		timer:sleep(5000)
+	end),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp, 200, [], 200),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{http, #{response_timeout => 5000}}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	MRef = monitor(process, ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [http]
+	}),
+	ok = gun:cancel(ConnPid, StreamRef),
+	receive
+		{'DOWN', MRef, process, ConnPid, _} ->
+			ok
+	after 2000 ->
+		error(connection_stayed_up)
+	end.
+
+response_timeout_stopped_by_inform(_) ->
+	doc("An informational response stops response_timeout. Finishing "
+		"the body afterwards must not start it again."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
+		{ok, _} = Transport:recv(Socket, 0, 5000),
+		ok = Transport:send(Socket, "HTTP/1.1 100 Continue\r\n\r\n"),
+		{ok, _} = Transport:recv(Socket, 0, 5000),
+		timer:sleep(500),
+		ok = Transport:send(Socket,
+			"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [{http, #{response_timeout => 300}}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:post(ConnPid, "/", [
+		{<<"expect">>, <<"100-continue">>}
+	]),
+	{inform, 100, _} = gun:await(ConnPid, StreamRef),
+	gun:data(ConnPid, StreamRef, fin, <<"hello">>),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef, 2000),
+	gun:close(ConnPid).
+
+response_timeout_waits_for_body(_) ->
+	doc("response_timeout must not fire while the request body "
+		"has not been sent yet."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
+		{ok, _} = Transport:recv(Socket, 0, 5000),
+		receive after 5000 -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [{http, #{response_timeout => 200}}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	MRef = monitor(process, ConnPid),
+	StreamRef = gun:post(ConnPid, "/", [
+		{<<"content-type">>, <<"text/plain">>}
+	]),
+	receive
+		{'DOWN', MRef, process, ConnPid, Reason} ->
+			error({unexpected_down, Reason})
+	after 400 ->
+		ok
+	end,
+	true = is_process_alive(ConnPid),
+	gun:data(ConnPid, StreamRef, fin, <<"hi">>),
+	{error, {connection_error, {connection_error, timeout, _}}}
+		= gun:await(ConnPid, StreamRef, 2000),
+	demonitor(MRef, [flush]),
+	gun:close(ConnPid).
+
+response_timeout_http2_via_http(_) ->
+	doc("response_timeout on HTTP/2 reached through an HTTP/1.1 proxy "
+		"must reset the tunneled stream."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, _, _) ->
+		timer:sleep(5000)
+	end),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	Tunnel = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [{http2, #{response_timeout => 200}}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{up, http2} = gun:await(ConnPid, Tunnel),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/", #{}, #{tunnel => Tunnel}),
+	{error, {stream_error, {stream_error, cancel,
+		'The response timeout has expired.'}}}
+		= gun:await(ConnPid, StreamRef, 2000),
+	true = is_process_alive(ConnPid),
+	gun:close(ConnPid).
+
 ignore_empty_data_http(_) ->
 	doc("When gun:data/4 is called with nofin and empty data, it must be ignored."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),

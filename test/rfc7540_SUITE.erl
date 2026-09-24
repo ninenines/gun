@@ -870,6 +870,78 @@ connect_handshake_timeout(_) ->
 		= gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+connect_response_timeout_no_wrong_stream_reset(_) ->
+	doc("The response_timeout of a stream inside a CONNECT tunnel must "
+		"reset only that stream, and must not be confused with a stream "
+		"of the outer connection reusing the same numeric identifier. "
+		"(RFC7540 8.3)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, _, _) ->
+		timer:sleep(5000)
+	end),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, [
+		#proxy_stream{id=1, status=200},
+		#proxy_stream{id=3, status=299}
+	]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(ProxyPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [{http2, #{response_timeout => 200}}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	handshake_completed = receive_from(OriginPid),
+	{up, http2} = gun:await(ConnPid, StreamRef),
+	%% This request goes through the tunnel and is stream id 1 there,
+	%% the same numeric id as the outer connection's CONNECT stream.
+	%% The origin never answers it.
+	TunneledStreamRef = gun:get(ConnPid, "/", #{}, #{tunnel => StreamRef}),
+	%% This request is made directly on the outer connection and
+	%% becomes stream id 3 there. It must be unaffected by the
+	%% tunneled stream's response_timeout.
+	ProxyStreamRef = gun:get(ConnPid, "/"),
+	{error, {stream_error, {stream_error, cancel,
+		'The response timeout has expired.'}}}
+		= gun:await(ConnPid, TunneledStreamRef, 2000),
+	{response, fin, 299, _} = gun:await(ConnPid, ProxyStreamRef, 2000),
+	gun:close(ConnPid).
+
+connect_response_timeout_http(_) ->
+	doc("An HTTP/1.1 response_timeout inside a CONNECT tunnel must fail "
+		"the tunneled stream and leave the outer connection up."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
+		{ok, _} = Transport:recv(Socket, 0, 5000),
+		receive after 5000 -> ok end
+	end),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, [
+		#proxy_stream{id=1, status=200},
+		#proxy_stream{id=3, status=299}
+	]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http2],
+		retry => 0
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(ProxyPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [{http, #{response_timeout => 200}}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	{up, http} = gun:await(ConnPid, StreamRef),
+	TunneledStreamRef = gun:get(ConnPid, "/slow", [], #{tunnel => StreamRef}),
+	ProxyStreamRef = gun:get(ConnPid, "/"),
+	{error, {stream_error, {stream_error, cancel,
+		'The response timeout has expired.'}}}
+		= gun:await(ConnPid, TunneledStreamRef, 2000),
+	{response, fin, 299, _} = gun:await(ConnPid, ProxyStreamRef, 2000),
+	true = is_process_alive(ConnPid),
+	gun:close(ConnPid).
+
 connect_http_via_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through both "
