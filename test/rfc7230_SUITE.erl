@@ -26,6 +26,85 @@ all() ->
 
 %% Tests.
 
+content_length_duplicate_error(_) ->
+	doc("Multiple differing content-length values must be rejected "
+		"with a protocol error connection error. (RFC9112 6.3)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: 4\r\n"
+				"content-length: 40\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+content_length_equivalent_duplicate_error(_) ->
+	doc("Multiple differing content-length values must be rejected "
+		"with a protocol error connection error. (RFC9112 6.3)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: 0\r\n"
+				"content-length: 00\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+content_length_duplicate_same_value(_) ->
+	doc("Identical repeated content-length values must be tolerated. (RFC9112 6.3)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: 4\r\n"
+				"content-length: 4\r\n"
+				"\r\n"
+				"data"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"data">>} = gun:await_body(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+content_length_unparseable_error(_) ->
+	doc("An unparseable content-length value must be rejected "
+		"with a protocol error connection error. (RFC9112 6.3)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: abc\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 host_default_port_http(_) ->
 	doc("The default port for http should not be sent in the host header. (RFC7230 2.7.1)"),
 	do_host_port(tcp, 80, <<>>).
