@@ -1820,7 +1820,7 @@ handle_common(cast, {set_owner, CurrentOwner, NewOwner}, _,
 handle_common(cast, {set_owner, CurrentOwner, _}, _, #state{owner=CurrentOwner}) ->
 	reply(CurrentOwner, {gun_error, self(), {badstate,
 		"The owner of the connection cannot be changed when the connection is shutting down."}}),
-	keep_state_and_state;
+	keep_state_and_data;
 handle_common(cast, shutdown, StateName, State=#state{
 		status=Status, socket=Socket, transport=Transport, protocol=Protocol}) ->
 	case {Socket, Protocol} of

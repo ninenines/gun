@@ -806,6 +806,34 @@ set_owner(_) ->
 	#{owner := Self} = gun:info(ConnPid),
 	gun:close(ConnPid).
 
+set_owner_after_shutdown_no_crash(_) ->
+	doc("set_owner during shutdown must reply with an error "
+		"instead of crashing the connection."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, _, _) -> timer:sleep(5000) end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		http_opts => #{closing_timeout => 5000}
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/"),
+	MRef = monitor(process, ConnPid),
+	ok = gun:shutdown(ConnPid),
+	gun:set_owner(ConnPid, self()),
+	receive
+		{gun_error, ConnPid, {badstate, _}} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end,
+	receive
+		{'DOWN', MRef, process, ConnPid, Reason} ->
+			error({unexpected_crash, Reason})
+	after 500 ->
+		ok
+	end,
+	demonitor(MRef, [flush]),
+	gun:close(ConnPid).
+
 shutdown_reason(_) ->
 	doc("The last connection failure must be propagated."),
 	do_shutdown_reason().
