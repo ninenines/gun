@@ -80,7 +80,10 @@
 	handler_state :: undefined | gun_content_handler:state(),
 
 	%% CONNECT tunnel.
-	tunnel :: undefined | #tunnel{}
+	tunnel :: undefined | #tunnel{},
+
+	%% Set for a stream created by PUSH_PROMISE.
+	remote = false :: boolean()
 }).
 
 -record(user_ping, {
@@ -155,6 +158,8 @@ do_check_options([{keepalive, infinity}|Opts]) ->
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
 do_check_options([{keepalive_tolerance, K}|Opts]) when is_integer(K), K >= 0 ->
+	do_check_options(Opts);
+do_check_options([{max_reserved_streams, M}|Opts]) when is_integer(M), M >= 0 ->
 	do_check_options(Opts);
 do_check_options([{notify_settings_changed, B}|Opts]) when is_boolean(B) ->
 	do_check_options(Opts);
@@ -782,7 +787,7 @@ rst_stream_frame(State0, StreamID, Reason, EvHandler, EvHandlerState0) ->
 
 %% Pushed streams receive the same initial flow value as the parent stream.
 push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
-		status=Status, http2_machine=HTTP2Machine0},
+		status=Status, http2_machine=HTTP2Machine0, opts=Opts},
 		StreamID, PromisedStreamID, Headers, #{
 			method := PromisedMethod, scheme := PromisedScheme,
 			authority := PromisedAuthority, path := PromisedPath},
@@ -795,14 +800,23 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 	} = get_stream_by_id(State, StreamID),
 	Scheme = scheme(State),
 	%% We cancel the push_promise immediately when we are shutting
-	%% down or when the scheme/authority doesn't match the request's.
+	%% down, when the scheme/authority doesn't match the request's,
+	%% or when max_reserved_streams reserved streams are already open.
+	%% Pushes are not bounded by max_concurrent_streams. 0 rejects
+	%% every push.
 	%% @todo We may wish to extend valid authorities to those that
 	%%       are covered by the server's TLS certificate.
+	MaxReservedStreams = maps:get(max_reserved_streams, Opts, 100),
 	OKOrError = case Status of
 		connected ->
-			case {Scheme, iolist_to_binary(Authority)} of
-				{PromisedScheme, PromisedAuthority} -> ok;
-				_ -> protocol_error
+			case count_reserved_streams(State) >= MaxReservedStreams of
+				true ->
+					refused_stream;
+				false ->
+					case {Scheme, iolist_to_binary(Authority)} of
+						{PromisedScheme, PromisedAuthority} -> ok;
+						_ -> protocol_error
+					end
 			end;
 		_ ->
 			cancel
@@ -831,7 +845,8 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 			NewStream = #stream{
 				id=PromisedStreamID, ref=PromisedStreamRef,
 				reply_to=ReplyTo, flow=InitialFlow,
-				authority=PromisedAuthority, path=PromisedPath
+				authority=PromisedAuthority, path=PromisedPath,
+				remote=true
 			},
 			{{state, create_stream(State, NewStream)}, EvHandlerState};
 		%% Invalid push_promise gets canceled immediately.
@@ -1692,6 +1707,14 @@ stream_ref(#http2_state{base_stream_ref=BaseStreamRef}, StreamRef) ->
 
 get_stream_by_id(#http2_state{streams=Streams}, StreamID) ->
 	maps:get(StreamID, Streams).
+
+%% Streams Gun stored for an accepted PUSH_PROMISE. Parity is not a
+%% signal: an odd promised id is a protocol error, and id 0 is even.
+count_reserved_streams(#http2_state{streams=Streams}) ->
+	maps:fold(fun
+		(_, #stream{remote=true}, Acc) -> Acc + 1;
+		(_, _, Acc) -> Acc
+	end, 0, Streams).
 
 get_stream_by_ref(#http2_state{streams=Streams, stream_refs=Refs}, StreamRef) ->
 	case maps:get(StreamRef, Refs, error) of
