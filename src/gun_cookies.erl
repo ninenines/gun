@@ -86,15 +86,14 @@
 add_cookie_header(_, _, _, Headers, Store=undefined) ->
 	{Headers, Store};
 add_cookie_header(Scheme, Authority, PathWithQs, Headers0, Store0) ->
-	#{
-		host := Host,
-		path := Path
-	} = uri_string:parse([Scheme, <<"://">>, Authority, PathWithQs]),
-	URIMap = uri_string:normalize(#{
-		scheme => Scheme,
-		host => iolist_to_binary(Host),
-		path => iolist_to_binary(Path)
-	}, [return_map]),
+	case request_target(Scheme, Authority, PathWithQs) of
+		error ->
+			{Headers0, Store0};
+		{ok, URIMap} ->
+			add_cookie_header1(URIMap, Headers0, Store0)
+	end.
+
+add_cookie_header1(URIMap, Headers0, Store0) ->
 	{ok, Cookies0, Store} = query(Store0, URIMap),
 	Headers = case Cookies0 of
 		[] ->
@@ -105,6 +104,27 @@ add_cookie_header(Scheme, Authority, PathWithQs, Headers0, Store0) ->
 			Headers0 ++ [{<<"cookie">>, cow_cookie:cookie(Cookies)}]
 	end,
 	{Headers, Store}.
+
+%% A path that is not a valid URI must not take the connection down.
+%% The caller simply sends or stores no cookies for that target.
+request_target(Scheme, Authority, PathWithQs) ->
+	try uri_string:parse([Scheme, <<"://">>, Authority, PathWithQs]) of
+		#{host := Host, path := Path} ->
+			case uri_string:normalize(#{
+				scheme => Scheme,
+				host => iolist_to_binary(Host),
+				path => iolist_to_binary(Path)
+			}, [return_map]) of
+				URIMap when is_map(URIMap) ->
+					{ok, URIMap};
+				_ ->
+					error
+			end;
+		_ ->
+			error
+	catch _:_ ->
+		error
+	end.
 
 -spec domain_match(binary(), binary()) -> boolean().
 domain_match(String, String) ->
@@ -378,12 +398,14 @@ set_cookie_header(_, _, _, Status, _, Store, #{cookie_ignore_informational := tr
 		when Status >= 100, Status =< 199 ->
 	Store;
 set_cookie_header(Scheme, Authority, PathWithQs, _, Headers, Store0, _) ->
-	#{host := Host, path := Path} = uri_string:parse([Scheme, <<"://">>, Authority, PathWithQs]),
-	URIMap = uri_string:normalize(#{
-		scheme => Scheme,
-		host => iolist_to_binary(Host),
-		path => iolist_to_binary(Path)
-	}, [return_map]),
+	case request_target(Scheme, Authority, PathWithQs) of
+		error ->
+			Store0;
+		{ok, URIMap} ->
+			set_cookie_header1(URIMap, Headers, Store0)
+	end.
+
+set_cookie_header1(URIMap, Headers, Store0) ->
 	SetCookies = [SC || {<<"set-cookie">>, SC} <- Headers],
 	lists:foldl(fun(SC, Store1) ->
 		case cow_cookie:parse_set_cookie(SC) of

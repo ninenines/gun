@@ -1351,20 +1351,30 @@ tls_handshake(internal, {tls_handshake,
 %% the handshake succeeded and whether we need to switch to a different protocol.
 tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, Protocols, ReplyTo}},
 		State0=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
-	NewProtocol0 = gun_protocols:negotiated(Negotiated, Protocols),
-	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
-	NewProtocol1 = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
-	NewProtocol = case NewProtocol1 of
-		{NewProtocolName, NewProtocolOpts} -> {NewProtocolName, NewProtocolOpts#{tunnel_transport => tls}};
-		NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
-	end,
-	Protocol = gun_protocols:handler(NewProtocol),
-	reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
-	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-		socket => Socket,
-		protocol => Protocol:name()
-	}, EvHandlerState0),
-	commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}], State0#state{event_handler_state=EvHandlerState});
+	case gun_protocols:negotiated(Negotiated, Protocols) of
+		{error, Reason0} ->
+			Reason = {connection_error, protocol_error, Reason0},
+			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+				error => Reason0
+			}, EvHandlerState0),
+			reply(ReplyTo, {gun_error, self(), Reason}),
+			commands({error, Reason}, State0#state{event_handler_state=EvHandlerState});
+		{ok, NewProtocol0} ->
+			StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
+			NewProtocol1 = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
+			NewProtocol = case NewProtocol1 of
+				{NewProtocolName, NewProtocolOpts} -> {NewProtocolName, NewProtocolOpts#{tunnel_transport => tls}};
+				NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
+			end,
+			Protocol = gun_protocols:handler(NewProtocol),
+			reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
+			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+				socket => Socket,
+				protocol => Protocol:name()
+			}, EvHandlerState0),
+			commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}],
+				State0#state{event_handler_state=EvHandlerState})
+	end;
 tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeEvent, _, _}},
 		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
@@ -1404,14 +1414,28 @@ normal_tls_handshake(Socket, State=#state{
 					}, EvHandlerState1),
 					{error, Reason, State#state{event_handler_state=EvHandlerState}};
 				NegotiatedProtocol ->
-					NewProtocol = gun_protocols:negotiated(NegotiatedProtocol, Protocols),
-					Protocol = gun_protocols:handler(NewProtocol),
-					EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
-						socket => TLSSocket,
-						protocol => Protocol:name()
-					}, EvHandlerState1),
-					{ok, TLSSocket, NewProtocol,
-						State#state{event_handler_state=EvHandlerState}}
+					case gun_protocols:negotiated(NegotiatedProtocol, Protocols) of
+						{error, Reason0} ->
+							%% negotiated/2 failed after ssl:connect. This
+							%% socket is not in State yet.
+							case ssl:close(TLSSocket) of
+								ok -> ok;
+								{error, _} -> ok
+							end,
+							EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+								error => Reason0
+							}, EvHandlerState1),
+							{error, {connection_error, protocol_error, Reason0},
+								State#state{event_handler_state=EvHandlerState}};
+						{ok, NewProtocol} ->
+							Protocol = gun_protocols:handler(NewProtocol),
+							EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
+								socket => TLSSocket,
+								protocol => Protocol:name()
+							}, EvHandlerState1),
+							{ok, TLSSocket, NewProtocol,
+								State#state{event_handler_state=EvHandlerState}}
+					end
 			end;
 		{error, Reason} ->
 			EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{

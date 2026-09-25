@@ -31,12 +31,14 @@
 init(ReplyTo, StreamRef, _, Headers, _) ->
 	case lists:keyfind(<<"content-type">>, 1, Headers) of
 		{_, ContentType} ->
-			case cow_http_hd:parse_content_type(ContentType) of
+			try cow_http_hd:parse_content_type(ContentType) of
 				{<<"text">>, <<"event-stream">>, _Ignored} ->
 					{ok, #state{reply_to=ReplyTo, stream_ref=StreamRef,
 						sse_state=cow_sse:init()}};
 				_ ->
 					disable
+			catch _:_ ->
+				disable
 			end;
 		_ ->
 			disable
