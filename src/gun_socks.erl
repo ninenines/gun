@@ -23,7 +23,7 @@
 -export([handle/5]).
 -export([closing/4]).
 -export([close/4]).
-%% @todo down
+-export([down/1]).
 
 -record(socks_state, {
 	ref :: undefined | gun:stream_ref(),
@@ -166,10 +166,8 @@ handle(<<5, 0, 0, Rest0/bits>>, #socks_state{ref=StreamRef, reply_to=ReplyTo, op
 		_ ->
 			[NewProtocol0] = maps:get(protocols, Opts, [http]),
 			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, StreamRef),
-			Protocol = gun_protocols:handler(NewProtocol),
-			gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
 			[{origin, <<"http">>, NewHost, NewPort, socks5},
-				{switch_protocol, NewProtocol, ReplyTo, <<>>}]
+				{switch_protocol, NewProtocol, ReplyTo, <<>>, tunnel_up}]
 	end;
 handle(<<5, Error, _/bits>>, #socks_state{version=5, status=connect}) ->
 	Reason = case Error of
@@ -203,5 +201,19 @@ send_socks5_connect(#socks_state{socket=Socket, transport=Transport, opts=Opts})
 closing(_, _, _, EvHandlerState) ->
 	{close, EvHandlerState}.
 
-close(_, _, _, EvHandlerState) ->
+%% An undefined ref is the connection itself. Retry may still
+%% establish the tunnel, so do not fail gun:await(ConnPid, undefined).
+close(_Reason, #socks_state{ref=undefined}, _, EvHandlerState) ->
+	EvHandlerState;
+close(Reason, #socks_state{ref=Ref, reply_to=ReplyTo}, _, EvHandlerState) ->
+	gun:reply(ReplyTo, {gun_error, self(), Ref, close_reason(Reason)}),
 	EvHandlerState.
+
+close_reason(closed) -> closed;
+close_reason(Reason) -> {closed, Reason}.
+
+%% Outer SOCKS has no stream ref. A tunneled handshake does.
+down(#socks_state{ref=undefined}) ->
+	[];
+down(#socks_state{ref=Ref}) ->
+	[Ref].

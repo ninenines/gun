@@ -371,7 +371,7 @@ handle_head(Data, State=#http_state{opts=Opts,
 %% response. The HTTP/1.1 specification does not disallow it: servers that
 %% respond positively to a CONNECT request are supposed to implement it.
 handle_connect(Rest, State=#http_state{
-		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
+		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|_]},
 		CookieStore, EvHandler, EvHandlerState0, Status, Headers) ->
 	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
@@ -393,7 +393,8 @@ handle_connect(Rest, State=#http_state{
 	%% We expect there to be no additional data after the CONNECT response.
 	%% @todo That's probably wrong.
 	<<>> = Rest,
-	_ = end_stream(State#http_state{streams=[Stream|Tail]}),
+	%% Keep this stream until the next protocol is up. A failed handshake
+	%% or init disconnects and close/4 reports the stream to gun:await.
 	NewHost = maps:get(host, Destination),
 	NewPort = maps:get(port, Destination),
 	case Destination of
@@ -412,11 +413,9 @@ handle_connect(Rest, State=#http_state{
 		_ ->
 			[NewProtocol0] = maps:get(protocols, Destination, [http]),
 			NewProtocol = gun_protocols:add_stream_ref(NewProtocol0, RealStreamRef),
-			Protocol = gun_protocols:handler(NewProtocol),
-			gun:reply(ReplyTo, {gun_tunnel_up, self(), RealStreamRef, Protocol:name()}),
 			{[
 				{origin, <<"http">>, NewHost, NewPort, connect},
-				{switch_protocol, NewProtocol, ReplyTo, <<>>}
+				{switch_protocol, NewProtocol, ReplyTo, <<>>, tunnel_up}
 			], CookieStore, EvHandlerState}
 	end.
 

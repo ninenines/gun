@@ -121,17 +121,16 @@ init(ReplyTo, OriginSocket, OriginTransport, Opts=#{stream_ref := StreamRef, tun
 						stream_ref => StreamRef,
 						protocol => Proto:name()
 					}, EvHandlerState0),
-					%% When the tunnel protocol is HTTP/1.1 or SOCKS
-					%% the gun_tunnel_up message was already sent.
-					_ = case TunnelProtocol of
-						http -> ok;
-						socks -> ok;
-						_ -> gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()})
-					end,
+					%% HTTP/1.1 and SOCKS no longer announce the tunnel
+					%% before this init. Always announce it here, after
+					%% the inner protocol has started.
+					gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()}),
 					{tunnel, State#tunnel_state{socket=OriginSocket, transport=OriginTransport,
 						protocol=Proto, protocol_state=ProtoState},
 						EvHandlerState};
 				Error={error, _} ->
+					%% The caller is waiting on this ref for gun_tunnel_up.
+					gun:reply(ReplyTo, {gun_error, self(), StreamRef, {closed, Error}}),
 					Error
 			end;
 		%% We can't initialize the protocol until the TLS handshake has completed.
@@ -506,6 +505,12 @@ commands([Origin={origin, Scheme, Host, Port, Type}|Tail],
 		origin_port => Port
 	}, EvHandlerState0),
 	commands(Tail, State#tunnel_state{protocol_origin=Origin}, EvHandler, EvHandlerState);
+%% Connection-level switches carry tunnel_up. The announcement for a
+%% nested protocol is made by init/6 after that protocol starts.
+commands([{switch_protocol, NewProtocol, ReplyTo, Buffer, _}|Tail],
+		State, EvHandler, EvHandlerState) ->
+	commands([{switch_protocol, NewProtocol, ReplyTo, Buffer}|Tail],
+		State, EvHandler, EvHandlerState);
 commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}|Tail],
 		State=#tunnel_state{socket=Socket, transport=Transport, opts=Opts,
 		protocol_origin=undefined},
