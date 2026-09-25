@@ -354,7 +354,8 @@ match_header_section_end(Data, _) ->
 	end.
 
 handle_head(Data, State=#http_state{opts=Opts,
-		streams=[#stream{ref=StreamRef, reply_to=ReplyTo, authority=Authority, path=Path}|_]},
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo, method=Method,
+			authority=Authority, path=Path}|_]},
 		CookieStore0, EvHandler, EvHandlerState) ->
 	try cow_http:parse_status_line(Data) of
 		{Version, Status, _, Rest0} ->
@@ -368,15 +369,27 @@ handle_head(Data, State=#http_state{opts=Opts,
 							gun:reply(ReplyTo, {gun_error, self(), Reason}),
 							{{error, Reason}, CookieStore0, EvHandlerState};
 						false ->
-							CookieStore = gun_cookies:set_cookie_header(scheme(State),
-								Authority, Path, Status, Headers, CookieStore0, Opts),
 							case StreamRef of
 								{connect, _, _} when Status >= 200, Status < 300 ->
+									CookieStore = gun_cookies:set_cookie_header(scheme(State),
+										Authority, Path, Status, Headers, CookieStore0, Opts),
 									handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
 								_ when Status >= 100, Status =< 199 ->
+									CookieStore = gun_cookies:set_cookie_header(scheme(State),
+										Authority, Path, Status, Headers, CookieStore0, Opts),
 									handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
 								_ ->
-									handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
+									case response_io_from_headers(Method, Version, Status, Headers) of
+										{error, Human} ->
+											Reason = {connection_error, protocol_error, Human},
+											gun:reply(ReplyTo, {gun_error, self(), Reason}),
+											{{error, Reason}, CookieStore0, EvHandlerState};
+										In ->
+											CookieStore = gun_cookies:set_cookie_header(scheme(State),
+												Authority, Path, Status, Headers, CookieStore0, Opts),
+											handle_response1(Rest, State, CookieStore, EvHandler,
+												EvHandlerState, Version, Status, Headers, In)
+									end
 							end
 					end
 			catch _:_ ->
@@ -494,10 +507,9 @@ is_expected_upgrade_response(Headers, #stream{upgrade=Requested}) ->
 		false
 	end.
 
-handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connection=Conn,
-		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo, method=Method, is_alive=IsAlive}|Tail]},
-		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers) ->
-	In = response_io_from_headers(Method, Version, Status, Headers),
+handle_response1(Rest, State=#http_state{version=ClientVersion, opts=Opts, connection=Conn,
+		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo, is_alive=IsAlive}|Tail]},
+		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers, In) ->
 	IsFin = case In of head -> fin; _ -> nofin end,
 	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo Figure out whether the event should trigger if the stream was cancelled.
@@ -1039,14 +1051,22 @@ response_io_from_headers(_, Version, _Status, Headers) ->
 				[<<"identity">>] -> body_close
 			end;
 		_ ->
-			case lists:keyfind(<<"content-length">>, 1, Headers) of
-				{_, <<"0">>} ->
-					head;
-				{_, Length} ->
-					{body, cow_http_hd:parse_content_length(Length)};
-				_ ->
-					body_close
-			end
+			response_io_from_content_length(Headers)
+	end.
+
+response_io_from_content_length(Headers) ->
+	case lists:usort([Value || {<<"content-length">>, Value} <- Headers]) of
+		[] ->
+			body_close;
+		[Value] ->
+			try cow_http_hd:parse_content_length(Value) of
+				0 -> head;
+				Len -> {body, Len}
+			catch _:_ ->
+				{error, "The content-length header is invalid."}
+			end;
+		_ ->
+			{error, "The content-length header is invalid."}
 	end.
 
 %% Streams.
