@@ -260,22 +260,29 @@ handle(Data, State=#http_state{opts=Opts, in=body_trailer,
 		CookieStore, EvHandler, EvHandlerState0) ->
 	case match_header_section_end(Data, Buffer) of
 		match ->
-			{Trailers, Rest} = cow_http:parse_headers(<<Buffer/binary, Data/binary>>),
-			%% @todo We probably want to pass this to gun_content_handler?
-			RealStreamRef = stream_ref(State, StreamRef),
-			gun:reply(ReplyTo, {gun_trailers, self(), RealStreamRef, Trailers}),
-			ResponseEvent = #{
-				stream_ref => RealStreamRef,
-				reply_to => ReplyTo
-			},
-			EvHandlerState1 = EvHandler:response_trailers(ResponseEvent#{headers => Trailers}, EvHandlerState0),
-			EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
-			case Conn of
-				keepalive ->
-					end_keepalive_stream(Rest, State#http_state{buffer= <<>>},
-						CookieStore, EvHandler, EvHandlerState);
-				close ->
-					{[{state, end_stream(State)}, close], CookieStore, EvHandlerState}
+			try cow_http:parse_headers(<<Buffer/binary, Data/binary>>) of
+				{Trailers, Rest} ->
+					%% @todo We probably want to pass this to gun_content_handler?
+					RealStreamRef = stream_ref(State, StreamRef),
+					gun:reply(ReplyTo, {gun_trailers, self(), RealStreamRef, Trailers}),
+					ResponseEvent = #{
+						stream_ref => RealStreamRef,
+						reply_to => ReplyTo
+					},
+					EvHandlerState1 = EvHandler:response_trailers(ResponseEvent#{headers => Trailers}, EvHandlerState0),
+					EvHandlerState = EvHandler:response_end(ResponseEvent, EvHandlerState1),
+					case Conn of
+						keepalive ->
+							end_keepalive_stream(Rest, State#http_state{buffer= <<>>},
+								CookieStore, EvHandler, EvHandlerState);
+						close ->
+							{[{state, end_stream(State)}, close], CookieStore, EvHandlerState}
+					end
+			catch _:_ ->
+				Reason = {connection_error, protocol_error,
+					"The response trailers are invalid."},
+				gun:reply(ReplyTo, {gun_error, self(), Reason}),
+				{{error, Reason}, CookieStore, EvHandlerState0}
 			end;
 		nomatch ->
 			MaxSize = maps:get(max_trailer_block_size, Opts, 10000),
@@ -349,26 +356,40 @@ match_header_section_end(Data, _) ->
 handle_head(Data, State=#http_state{opts=Opts,
 		streams=[#stream{ref=StreamRef, reply_to=ReplyTo, authority=Authority, path=Path}|_]},
 		CookieStore0, EvHandler, EvHandlerState) ->
-	{Version, Status, _, Rest0} = cow_http:parse_status_line(Data),
-	{Headers, Rest} = cow_http:parse_headers(Rest0),
-	MaxHeaders = maps:get(max_headers, Opts, 100),
-	case length(Headers) > MaxHeaders of
-		true ->
-			Reason = {connection_error, limit_reached,
-				"The number of headers is larger than configuration allows. (RFC9110 5.4)"},
-			gun:reply(ReplyTo, {gun_error, self(), Reason}),
-			{{error, Reason}, CookieStore0, EvHandlerState};
-		false ->
-			CookieStore = gun_cookies:set_cookie_header(scheme(State),
-				Authority, Path, Status, Headers, CookieStore0, Opts),
-			case StreamRef of
-				{connect, _, _} when Status >= 200, Status < 300 ->
-					handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
-				_ when Status >= 100, Status =< 199 ->
-					handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
-				_ ->
-					handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
+	try cow_http:parse_status_line(Data) of
+		{Version, Status, _, Rest0} ->
+			try cow_http:parse_headers(Rest0) of
+				{Headers, Rest} ->
+					MaxHeaders = maps:get(max_headers, Opts, 100),
+					case length(Headers) > MaxHeaders of
+						true ->
+							Reason = {connection_error, limit_reached,
+								"The number of headers is larger than configuration allows. (RFC9110 5.4)"},
+							gun:reply(ReplyTo, {gun_error, self(), Reason}),
+							{{error, Reason}, CookieStore0, EvHandlerState};
+						false ->
+							CookieStore = gun_cookies:set_cookie_header(scheme(State),
+								Authority, Path, Status, Headers, CookieStore0, Opts),
+							case StreamRef of
+								{connect, _, _} when Status >= 200, Status < 300 ->
+									handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
+								_ when Status >= 100, Status =< 199 ->
+									handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
+								_ ->
+									handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
+							end
+					end
+			catch _:_ ->
+				Reason = {connection_error, protocol_error,
+					"The response headers are invalid."},
+				gun:reply(ReplyTo, {gun_error, self(), Reason}),
+				{{error, Reason}, CookieStore0, EvHandlerState}
 			end
+	catch _:_ ->
+		Reason = {connection_error, protocol_error,
+			"The response status line is invalid."},
+		gun:reply(ReplyTo, {gun_error, self(), Reason}),
+		{{error, Reason}, CookieStore0, EvHandlerState}
 	end.
 
 %% We handle HTTP/1.0 responses to CONNECT requests the same as HTTP/1.1.
