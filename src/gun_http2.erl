@@ -417,11 +417,29 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
 	case get_stream_by_id(State0, StreamID) of
 		Stream=#stream{tunnel=undefined, handler_state=Handlers0} ->
-			{ok, Dec, Handlers} = gun_content_handler:handle(IsFin, Data, Handlers0),
-			{StateOrError, EvHandlerState} = data_frame1(State0,
-				StreamID, IsFin, Data, EvHandler, EvHandlerState0,
-				Stream#stream{handler_state=Handlers}, Dec),
-			{StateOrError, CookieStore0, EvHandlerState};
+			case gun_content_handler:handle(IsFin, Data, Handlers0) of
+				{ok, Dec, Handlers} ->
+					{StateOrError, EvHandlerState} = data_frame1(State0,
+						StreamID, IsFin, Data, EvHandler, EvHandlerState0,
+						Stream#stream{handler_state=Handlers}, Dec),
+					{StateOrError, CookieStore0, EvHandlerState};
+				{ok, Dec, Handlers, cancel} ->
+					%% Reset before the rest of this read is parsed.
+					%% A cast would run only after a later END_STREAM
+					%% had already removed the stream.
+					{StateOrError, EvHandlerState} = data_frame1(State0,
+						StreamID, IsFin, Data, EvHandler, EvHandlerState0,
+						Stream#stream{handler_state=Handlers}, Dec),
+					case StateOrError of
+						{state, State} ->
+							#stream{ref=StreamRef, reply_to=ReplyTo} = Stream,
+							{Commands, EvHandlerState1} = cancel(State, StreamRef,
+								ReplyTo, EvHandler, EvHandlerState),
+							{Commands, CookieStore0, EvHandlerState1};
+						Error ->
+							{Error, CookieStore0, EvHandlerState}
+					end
+			end;
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 %			%% @todo What about IsFin?
 			{StateOrError, EvHandlerState1} = data_frame1(State0,

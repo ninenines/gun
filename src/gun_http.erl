@@ -559,15 +559,28 @@ send_data(<<>>, State, nofin) ->
 %% @todo What if we receive data when the HEAD method was used?
 send_data(Data, State=#http_state{streams=[Stream=#stream{
 		flow=Flow0, is_alive=true, handler_state=Handlers0}|Tail]}, IsFin) ->
-	{ok, Dec, Handlers} = gun_content_handler:handle(IsFin, Data, Handlers0),
+	{Handlers, Dec, Cancel} = case gun_content_handler:handle(IsFin, Data, Handlers0) of
+		{ok, Dec0, Handlers0_} ->
+			{Handlers0_, Dec0, false};
+		{ok, Dec0, Handlers0_, cancel} ->
+			{Handlers0_, Dec0, true}
+	end,
 	Flow = case Flow0 of
 		infinity -> infinity;
 		_ -> Flow0 - Dec
 	end,
-	[
-		{state, State#http_state{streams=[Stream#stream{flow=Flow, handler_state=Handlers}|Tail]}},
-		{active, Flow > 0}
-	];
+	State1 = State#http_state{streams=[Stream#stream{flow=Flow,
+		handler_state=Handlers}|Tail]},
+	%% The unread remainder of an HTTP/1 body cannot be skipped.
+	%% Pausing the socket here would leave the connection up and
+	%% every later response stuck behind that body. Close instead.
+	%% fin already ends the stream, so there is nothing to skip.
+	case Cancel andalso IsFin =:= nofin of
+		true ->
+			[{state, State1}, close];
+		false ->
+			[{state, State1}, {active, Flow > 0}]
+	end;
 send_data(_, State, _) ->
 	[{state, State}, {active, true}].
 
