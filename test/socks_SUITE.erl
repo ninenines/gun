@@ -145,6 +145,126 @@ do_auth_method({username_password, _, _}) -> username_password.
 
 %% Tests.
 
+unoffered_auth_method_no_crash(_) ->
+	doc("A proxy selecting an auth method that was never offered "
+		"must not crash the connection."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, Socket} = gen_tcp:accept(ListenSocket, 5000),
+		%% Only "no auth" was offered. The proxy selects username/password.
+		{ok, <<5, 1, 0>>} = gen_tcp:recv(Socket, 0, 5000),
+		ok = gen_tcp:send(Socket, <<5, 2>>),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{socks, #{
+			auth => [none],
+			host => "localhost",
+			port => 1234,
+			transport => tcp,
+			protocols => [http]
+		}}]
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	Reason = receive
+		{gun_down, ConnPid, socks, Reason0, _} -> Reason0
+	after 5000 ->
+		error(timeout)
+	end,
+	{error, {socks5, {auth_method_not_offered, username_password}}} = Reason,
+	gun:close(ConnPid).
+
+auth_method_downgrade_rejected(_) ->
+	doc("A proxy selecting no authentication when only username/password "
+		"was offered must be rejected."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, Socket} = gen_tcp:accept(ListenSocket, 5000),
+		%% Only username/password was offered. The proxy selects no auth.
+		{ok, <<5, 1, 2>>} = gen_tcp:recv(Socket, 0, 5000),
+		ok = gen_tcp:send(Socket, <<5, 0>>),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{socks, #{
+			auth => [{username_password, <<"user">>, <<"password">>}],
+			host => "localhost",
+			port => 1234,
+			transport => tcp,
+			protocols => [http]
+		}}]
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	Reason = receive
+		{gun_down, ConnPid, socks, Reason0, _} -> Reason0
+	after 5000 ->
+		error(timeout)
+	end,
+	{error, {socks5, {auth_method_not_offered, none}}} = Reason,
+	gun:close(ConnPid).
+
+unknown_auth_method_no_crash(_) ->
+	doc("A proxy selecting an auth method that was never offered "
+		"must not crash the connection. (RFC1928 3)"),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, Socket} = gen_tcp:accept(ListenSocket, 5000),
+		%% Only "no auth" was offered. The proxy selects GSSAPI.
+		{ok, <<5, 1, 0>>} = gen_tcp:recv(Socket, 0, 5000),
+		ok = gen_tcp:send(Socket, <<5, 1>>),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{socks, #{
+			auth => [none],
+			host => "localhost",
+			port => 1234,
+			transport => tcp,
+			protocols => [http]
+		}}]
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	Reason = receive
+		{gun_down, ConnPid, socks, Reason0, _} -> Reason0
+	after 5000 ->
+		error(timeout)
+	end,
+	{error, {socks5, {auth_method_not_offered, 1}}} = Reason,
+	gun:close(ConnPid).
+
+no_acceptable_auth_method(_) ->
+	doc("A proxy reporting that no offered auth method is acceptable "
+		"must not crash the connection. (RFC1928 3)"),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, Socket} = gen_tcp:accept(ListenSocket, 5000),
+		{ok, <<5, 1, 0>>} = gen_tcp:recv(Socket, 0, 5000),
+		%% X'FF': none of the methods listed by the client are acceptable.
+		ok = gen_tcp:send(Socket, <<5, 255>>),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{socks, #{
+			auth => [none],
+			host => "localhost",
+			port => 1234,
+			transport => tcp,
+			protocols => [http]
+		}}]
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	Reason = receive
+		{gun_down, ConnPid, socks, Reason0, _} -> Reason0
+	after 5000 ->
+		error(timeout)
+	end,
+	{error, {socks5, no_acceptable_auth_method}} = Reason,
+	gun:close(ConnPid).
+
 socks5_tcp_http_none(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
 	do_socks5(<<"http">>, tcp, http, tcp, none).
