@@ -41,6 +41,8 @@ do_proto_opts() ->
 	Routes = [
 		{"/", hello_h, []},
 		{"/delay", delayed_hello_h, 3000},
+		{"/empty", empty_h, []},
+		{"/push", push_h, []},
 		{"/ws", ws_echo_h, []}
 	],
 	#{
@@ -374,6 +376,44 @@ reconnect_h2(Config) ->
 	end || {async, StreamRef} <- Streams2].
 
 %% @todo reconnect_ws
+
+push_promise_no_crash(Config) ->
+	doc("Confirm a server-pushed HTTP/2 stream does not crash "
+		"the pooled connection or change its stream counter."),
+	Port = config(port, Config),
+	Authority = ["localhost:", integer_to_binary(Port)],
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{protocols => [http2]},
+		scope => ?FUNCTION_NAME,
+		size => 1
+	}),
+	gun_pool:await_up(ManagerPid),
+	{async, PoolRef={ConnPid, _}} = gun_pool:get("/push",
+		#{<<"host">> => Authority},
+		#{scope => ?FUNCTION_NAME}),
+	{push, PromisedRef1, <<"GET">>, _, _} = gun_pool:await(PoolRef),
+	{push, PromisedRef2, <<"GET">>, _, _} = gun_pool:await(PoolRef),
+	{response, nofin, 200, _} = gun_pool:await(PoolRef),
+	{ok, <<"Hello world!">>} = gun_pool:await_body(PoolRef),
+	ok = do_await_pushed({ConnPid, PromisedRef1}),
+	ok = do_await_pushed({ConnPid, PromisedRef2}),
+	{operational, #{table := Tid, conns := Conns}} = gun_pool:info(ManagerPid),
+	{up, http2, _} = maps:get(ConnPid, Conns),
+	[{_, 0}] = ets:lookup(Tid, ConnPid),
+	{async, NextRef} = gun_pool:get("/",
+		#{<<"host">> => Authority},
+		#{scope => ?FUNCTION_NAME}),
+	{response, nofin, 200, _} = gun_pool:await(NextRef),
+	{ok, <<"Hello world!">>} = gun_pool:await_body(NextRef).
+
+do_await_pushed(PoolRef) ->
+	case gun_pool:await(PoolRef) of
+		{response, fin, 200, _} ->
+			ok;
+		{response, nofin, 200, _} ->
+			{ok, _} = gun_pool:await_body(PoolRef),
+			ok
+	end.
 
 stop_pool(Config) ->
 	doc("Confirm the pool can be stopped."),
