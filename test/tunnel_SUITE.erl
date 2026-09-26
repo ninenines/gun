@@ -17,6 +17,7 @@
 -compile(nowarn_export_all).
 
 -import(ct_helper, [doc/1]).
+-import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
 all() ->
@@ -1114,3 +1115,78 @@ do_type(socks5) -> {tcp, socks};
 do_type(socks5tls) -> {tls, socks};
 do_type(raw) -> {tcp, raw};
 do_type(rawtls) -> {tls, raw}.
+
+%% Other tests.
+
+earlier_tunnel_ref_no_crash(_) ->
+	doc("A request that names an earlier HTTP/1.1 tunnel, while a "
+		"later tunnel is the current HTTP/2 connection, is rejected. "
+		"That ref lists only the intermediaries, so the inner ref is "
+		"empty and must not be sent. An exact-depth ping still names "
+		"the current connection."),
+	{ok, _, OriginPort} = do_origin_start(h2c),
+	{ok, _, Proxy1Port} = do_proxy_start(http),
+	{ok, _, Proxy2Port} = do_proxy_start(http),
+	{ok, ConnPid} = gun:open("localhost", Proxy1Port, #{}),
+	{ok, http} = gun:await_up(ConnPid),
+	Tunnel1 = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => Proxy2Port,
+		protocols => [http]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel1),
+	{up, http} = gun:await(ConnPid, Tunnel1),
+	Tunnel2 = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [http2]
+	}, [], #{tunnel => Tunnel1}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel2),
+	{up, http2} = gun:await(ConnPid, Tunnel2),
+	Bad = gun:get(ConnPid, "/earlier", [], #{tunnel => Tunnel1}),
+	{error, {stream_error, {badstate, _}}} = gun:await(ConnPid, Bad),
+	PingRef = gun:ping(ConnPid, #{tunnel => Tunnel2}),
+	{notify, ping_ack, PingRef} = gun:await(ConnPid, undefined),
+	Good = gun:get(ConnPid, "/proxied", [], #{tunnel => Tunnel2}),
+	{response, nofin, 200, _} = gun:await(ConnPid, Good),
+	gun:close(ConnPid).
+
+stream_ref_without_tunnel_option_no_crash(_) ->
+	doc("Once an HTTP/1.1 CONNECT tunnel occupies the connection, "
+		"a request whose stream_ref is not nested is rejected and "
+		"is not sent. A later request that uses the tunnel option "
+		"still completes."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http, fun(Parent, _, Socket, Transport) ->
+		{ok, Data} = Transport:recv(Socket, 0, 5000),
+		Parent ! {self(), Data},
+		ok = Transport:send(Socket, [
+			"HTTP/1.1 200 OK\r\n"
+			"content-length: 0\r\n"
+			"\r\n"
+		]),
+		receive after infinity -> ok end
+	end),
+	{ok, _, ProxyPort} = do_proxy_start(http),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{}),
+	{ok, http} = gun:await_up(ConnPid),
+	Tunnel = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tcp
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{up, http} = gun:await(ConnPid, Tunnel),
+	handshake_completed = receive_from(OriginPid),
+	Bare = gun:get(ConnPid, "/bare"),
+	{error, {stream_error, {badstate, _}}} = gun:await(ConnPid, Bare),
+	%% Headers only: this is the POST that would leave out = body_chunked
+	%% if it were sent.
+	Post = gun:post(ConnPid, "/post", []),
+	{error, {stream_error, {badstate, _}}} = gun:await(ConnPid, Post),
+	Good = gun:get(ConnPid, "/tunneled", [], #{tunnel => Tunnel}),
+	{response, fin, 200, _} = gun:await(ConnPid, Good),
+	Data = receive_from(OriginPid),
+	nomatch = binary:match(Data, <<"/bare">>),
+	nomatch = binary:match(Data, <<"/post">>),
+	{_, _} = binary:match(Data, <<"/tunneled">>),
+	gun:close(ConnPid).

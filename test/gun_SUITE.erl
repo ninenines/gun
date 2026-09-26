@@ -914,6 +914,7 @@ stream_info_http2(_) ->
 	}),
 	{ok, http2} = gun:await_up(Pid),
 	handshake_completed = receive_from(OriginPid),
+	{ok, undefined} = gun:stream_info(Pid, undefined),
 	{ok, undefined} = gun:stream_info(Pid, make_ref()),
 	StreamRef = gun:get(Pid, "/"),
 	Self = self(),
