@@ -143,7 +143,17 @@ protocol_changed(Event, State) ->
 origin_changed(Event, State) ->
 	propagate(Event, State, ?FUNCTION_NAME).
 
-cancel(Event, State) ->
+%% HTTP/2 and HTTP/3 cancel retires the stream, so the counter drops
+%% here. HTTP/1.1 only silences it: the response still occupies the
+%% connection, and request_end/response_end drop the counter once.
+cancel(Event=#{stream_ref := StreamRef}, State0=#{table := Tid}) ->
+	State = case State0 of
+		#{StreamRef := _} when map_get(protocol, Event) =/= http ->
+			_ = ets:update_counter(Tid, self(), -1),
+			maps:remove(StreamRef, State0);
+		_ ->
+			State0
+	end,
 	propagate(Event, State, ?FUNCTION_NAME).
 
 disconnect(Event, State=#{table := Tid}) ->

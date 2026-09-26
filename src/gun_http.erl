@@ -935,7 +935,8 @@ cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 				stream_ref => stream_ref(State, StreamRef),
 				reply_to => ReplyTo,
 				endpoint => local,
-				reason => cancel
+				reason => cancel,
+				protocol => http
 			}, EvHandlerState0),
 			{{state, State}, EvHandlerState};
 		false ->

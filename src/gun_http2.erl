@@ -773,7 +773,8 @@ rst_stream_frame(State0, StreamID, Reason, EvHandler, EvHandlerState0) ->
 				stream_ref => stream_ref(State, StreamRef),
 				reply_to => ReplyTo,
 				endpoint => remote,
-				reason => Reason
+				reason => Reason,
+				protocol => http2
 			}, EvHandlerState0),
 			{{state, State}, EvHandlerState};
 		error ->
@@ -1460,7 +1461,8 @@ cancel(State=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP
 						stream_ref => stream_ref(State, StreamRef),
 						reply_to => ReplyTo,
 						endpoint => local,
-						reason => cancel
+						reason => cancel,
+						protocol => http2
 					}, EvHandlerState0),
 					{{state, delete_stream(State#http2_state{http2_machine=HTTP2Machine},
 						StreamID)}, EvHandlerState};
