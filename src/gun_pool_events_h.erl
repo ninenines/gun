@@ -79,7 +79,11 @@ request_end(Event=#{stream_ref := StreamRef}, State0=#{table := Tid}) ->
 			_ = ets:update_counter(Tid, self(), -1),
 			maps:remove(StreamRef, State0);
 		#{StreamRef := {nofin, IsFin}} ->
-			State0#{StreamRef => {fin, IsFin}}
+			State0#{StreamRef => {fin, IsFin}};
+		%% No counter update. A server push never passes request_start,
+		%% and a repeat of this event must not decrement twice.
+		_ ->
+			State0
 	end,
 	propagate(Event, State, ?FUNCTION_NAME).
 
@@ -107,7 +111,11 @@ response_end(Event=#{stream_ref := StreamRef}, State0=#{table := Tid}) ->
 			_ = ets:update_counter(Tid, self(), -1),
 			maps:remove(StreamRef, State0);
 		#{StreamRef := {IsFin, nofin}} ->
-			State0#{StreamRef => {IsFin, fin}}
+			State0#{StreamRef => {IsFin, fin}};
+		%% No counter update. A server push never passes request_start,
+		%% and a repeat of this event must not decrement twice.
+		_ ->
+			State0
 	end,
 	propagate(Event, State, ?FUNCTION_NAME).
 

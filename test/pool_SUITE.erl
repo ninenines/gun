@@ -49,6 +49,35 @@ do_proto_opts() ->
 
 %% Tests.
 
+push_promise_no_crash(_) ->
+	doc("A server-pushed stream never goes through request_start, "
+		"so response_end and request_end must leave the pool's "
+		"stream counter unchanged."),
+	Tid = ets:new(?FUNCTION_NAME, [public, set]),
+	true = ets:insert(Tid, {self(), 2}),
+	StreamRef = make_ref(),
+	State0 = #{table => Tid, event_handler => {gun_default_event_h, undefined}},
+	Event = #{stream_ref => StreamRef, reply_to => self()},
+	State1 = gun_pool_events_h:response_end(Event, State0),
+	State2 = gun_pool_events_h:request_end(Event, State1),
+	[{_, 2}] = ets:lookup(Tid, self()),
+	false = maps:is_key(StreamRef, State2),
+	%% A stream that did pass request_start is still counted, in either order.
+	EarlyResp = make_ref(),
+	EarlyRespEvent = #{stream_ref => EarlyResp, reply_to => self()},
+	State3 = gun_pool_events_h:request_start(EarlyRespEvent, State2),
+	[{_, 3}] = ets:lookup(Tid, self()),
+	State4 = gun_pool_events_h:response_end(EarlyRespEvent, State3),
+	State5 = gun_pool_events_h:request_end(EarlyRespEvent, State4),
+	[{_, 2}] = ets:lookup(Tid, self()),
+	EarlyReq = make_ref(),
+	EarlyReqEvent = #{stream_ref => EarlyReq, reply_to => self()},
+	State6 = gun_pool_events_h:request_start(EarlyReqEvent, State5),
+	State7 = gun_pool_events_h:request_end(EarlyReqEvent, State6),
+	_ = gun_pool_events_h:response_end(EarlyReqEvent, State7),
+	[{_, 2}] = ets:lookup(Tid, self()),
+	true = ets:delete(Tid).
+
 hello_pool_h1(Config) ->
 	doc("Confirm the pool can be used for HTTP/1.1 connections."),
 	Port = config(port, Config),
