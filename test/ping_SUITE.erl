@@ -43,6 +43,105 @@ h1_user_ping(Config0) ->
 		error(timeout)
 	end.
 
+h1_user_ping_tunneled(_) ->
+	doc("Pinging an HTTP/1.1 stream inside a CONNECT tunnel must not "
+		"crash the connection. The ping is unsupported."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
+		{ok, _} = Transport:recv(Socket, 0, 5000),
+		ok = Transport:send(Socket, [
+			"HTTP/1.1 200 OK\r\n"
+			"content-length: 0\r\n"
+			"\r\n"
+		]),
+		receive after infinity -> ok end
+	end),
+	{ok, ProxyPid, ProxyPort} = tunnel_SUITE:do_proxy_start(h2c),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{protocols => [http2], retry => 0}),
+	{ok, http2} = gun:await_up(ConnPid),
+	tunnel_SUITE:do_handshake_completed(http2, ProxyPid),
+	Tunnel = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tcp,
+		protocols => [http]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	handshake_completed = receive_from(OriginPid),
+	{up, http} = gun:await(ConnPid, Tunnel),
+	StreamRef = gun:get(ConnPid, "/", [], #{tunnel => Tunnel}),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	PingRef = gun:ping(ConnPid, #{tunnel => StreamRef}),
+	receive
+		{gun_down, ConnPid, http2, {error, {ping_unsupported_by_protocol, PingRef}}, _} ->
+			ok
+	after 2000 ->
+		error(timeout)
+	end.
+
+raw_user_ping_tunneled(_) ->
+	doc("Pinging a raw stream inside a CONNECT tunnel must not crash "
+		"with undef. The ping is unsupported."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, raw, fun(_, _, Socket, _Transport) ->
+		receive after infinity -> Socket end
+	end),
+	{ok, ProxyPid, ProxyPort} = tunnel_SUITE:do_proxy_start(h2c),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{protocols => [http2], retry => 0}),
+	{ok, http2} = gun:await_up(ConnPid),
+	tunnel_SUITE:do_handshake_completed(http2, ProxyPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tcp,
+		protocols => [raw]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	handshake_completed = receive_from(OriginPid),
+	{up, raw} = gun:await(ConnPid, StreamRef),
+	PingRef = gun:ping(ConnPid, #{tunnel => StreamRef}),
+	receive
+		{gun_down, ConnPid, http2, {error, {ping_unsupported_by_protocol, PingRef}}, _} ->
+			ok
+	after 2000 ->
+		error(timeout)
+	end.
+
+ws_user_ping_tunneled(_) ->
+	doc("Pinging a Websocket stream inside a CONNECT tunnel must not "
+		"crash the connection. The ping is not implemented."),
+	Name = ?FUNCTION_NAME,
+	{ok, _} = cowboy:start_clear(Name, [], #{
+		env => #{dispatch => cowboy_router:compile([{'_', [{"/", ws_echo_h, []}]}])}
+	}),
+	try
+		OriginPort = ranch:get_port(Name),
+		{ok, ProxyPid, ProxyPort} = tunnel_SUITE:do_proxy_start(h2c),
+		{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+			protocols => [http2],
+			retry => 0
+		}),
+		{ok, http2} = gun:await_up(ConnPid),
+		tunnel_SUITE:do_handshake_completed(http2, ProxyPid),
+		Tunnel = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => OriginPort,
+			transport => tcp,
+			protocols => [http]
+		}),
+		{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+		{up, http} = gun:await(ConnPid, Tunnel),
+		StreamRef = gun:ws_upgrade(ConnPid, "/", [], #{tunnel => Tunnel}),
+		{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, StreamRef),
+		PingRef = gun:ping(ConnPid, #{tunnel => StreamRef}),
+		receive
+			{gun_down, ConnPid, http2, {error, {ping_not_implemented, PingRef}}, _} ->
+				ok
+		after 2000 ->
+			error(timeout)
+		end
+	after
+		cowboy:stop_listener(Name)
+	end.
+
 h2_user_ping(_) ->
 	doc("The PING frame may be used to easily test an HTTP/2 connection."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun (_, _, Socket, Transport) ->

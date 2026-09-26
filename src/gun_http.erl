@@ -647,7 +647,8 @@ keepalive(#http_state{socket=Socket, transport=Transport, out=head}, _, EvHandle
 keepalive(_State, _, EvHandlerState) ->
 	{[], EvHandlerState}.
 
-ping(_State, undefined, _ReplyTo, PingRef) ->
+%% A tunneled ping dereferences to a stream ref, not undefined.
+ping(_State, _StreamRef, _ReplyTo, PingRef) ->
 	{error, {ping_unsupported_by_protocol, PingRef}}.
 
 headers(State, StreamRef, ReplyTo, _, _, _, _, _, _, CookieStore, _, EvHandlerState)

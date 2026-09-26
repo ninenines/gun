@@ -348,7 +348,8 @@ close(_, _, _, EvHandlerState) ->
 keepalive(State=#ws_state{reply_to=ReplyTo}, EvHandler, EvHandlerState0) ->
 	send(ping, State, ReplyTo, EvHandler, EvHandlerState0).
 
-ping(_State, undefined, _ReplyTo, PingRef) ->
+%% A tunneled ping dereferences to a stream ref, not undefined.
+ping(_State, _StreamRef, _ReplyTo, PingRef) ->
 	{error, {ping_not_implemented, PingRef}}.
 
 %% Send one frame.
