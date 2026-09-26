@@ -514,15 +514,25 @@ commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}|Tail],
 	%% This should only apply to Websocket for the time being.
 	case Proto:init(ReplyTo, Socket, Transport, ProtoOpts) of
 		{ok, connected_ws_only, ProtoState} ->
-			#{stream_ref := StreamRef} = ProtoOpts,
+			#{stream_ref := StreamRef, headers := Headers} = ProtoOpts,
+			gun:reply(ReplyTo, {gun_upgrade, self(), StreamRef,
+				[<<"websocket">>], Headers}),
 			EvHandlerState = EvHandler:protocol_changed(#{
 				stream_ref => StreamRef,
 				protocol => Proto:name()
 			}, EvHandlerState0),
 			commands(Tail, State#tunnel_state{protocol=Proto, protocol_state=ProtoState},
 				EvHandler, EvHandlerState);
-		Error={error, _} ->
-			{Error, EvHandlerState0}
+		Error={error, Reason} ->
+			%% The 101 was already accepted. Tell the Websocket stream,
+			%% then let the outer HTTP/2 stream be reset.
+			case ProtoOpts of
+				#{stream_ref := FailedRef} ->
+					gun:reply(ReplyTo, {gun_error, self(), FailedRef, Reason});
+				_ ->
+					ok
+			end,
+			commands([Error], State, EvHandler, EvHandlerState0)
 	end;
 commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}|Tail],
 		State=#tunnel_state{transport=Transport, stream_ref=TunnelStreamRef,

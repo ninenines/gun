@@ -39,6 +39,117 @@ all() ->
 %% raw        | Raw      | TCP
 %% rawtls     | Raw      | TLS
 
+ws_handler_bad_return_tunneled(_) ->
+	doc("A Websocket handler init/4 that does not return {ok, State} "
+		"inside an HTTP/2 CONNECT tunnel reports the error on the "
+		"Websocket stream and resets that CONNECT stream. The outer "
+		"connection stays up."),
+	Name = ?FUNCTION_NAME,
+	{ok, _} = cowboy:start_clear(Name, [], #{
+		env => #{dispatch => cowboy_router:compile([{'_', [{"/", ws_greet_h, []}]}])}
+	}),
+	try
+		OriginPort = ranch:get_port(Name),
+		{ok, ProxyPid, ProxyPort} = do_proxy_start(h2c),
+		{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+			protocols => [http2],
+			retry => 0
+		}),
+		{ok, http2} = gun:await_up(ConnPid),
+		do_handshake_completed(http2, ProxyPid),
+		ConnRef = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => OriginPort,
+			protocols => [http]
+		}),
+		{response, fin, 200, _} = gun:await(ConnPid, ConnRef),
+		{up, http} = gun:await(ConnPid, ConnRef),
+		WsRef = gun:ws_upgrade(ConnPid, "/", [], #{
+			tunnel => ConnRef,
+			default_protocol => bad_return_ws_handler
+		}),
+		MRef = monitor(process, ConnPid),
+		{error, {stream_error, {ws_handler_init_failed, bad_return_ws_handler, bad}}} =
+			gun:await(ConnPid, WsRef),
+		%% The handler failure must not be a badmatch or a badkey in
+		%% the HTTP/2 machine. A later socket close from the proxy is
+		%% a normal shutdown.
+		receive
+			{'DOWN', MRef, process, ConnPid, {shutdown, closed}} ->
+				ok;
+			{'DOWN', MRef, process, ConnPid, Reason} ->
+				error({unexpected, Reason})
+		after 500 ->
+			gun:close(ConnPid)
+		end
+	after
+		cowboy:stop_listener(Name)
+	end.
+
+ws_handler_bad_return_h2_keeps_connection(_) ->
+	doc("A Websocket handler init/4 that does not return {ok, State} "
+		"on an HTTP/2 websocket CONNECT resets that stream. The "
+		"connection stays up and a later upgrade can succeed."),
+	do_ws_handler_bad_return(http2, fun(ConnPid, Ref) ->
+		{error, {stream_error, {stream_error, cancel, _}}} = gun:await(ConnPid, Ref),
+		true = is_process_alive(ConnPid),
+		Ref2 = gun:ws_upgrade(ConnPid, "/", []),
+		{upgrade, [<<"websocket">>], _} = gun:await(ConnPid, Ref2)
+	end).
+
+ws_handler_bad_return_h1_no_upgrade(_) ->
+	doc("A Websocket handler init/4 that does not return {ok, State} "
+		"on HTTP/1.1 must not announce gun_upgrade, and must not "
+		"crash the connection with a badmatch."),
+	do_ws_handler_bad_return(http, fun(ConnPid, Ref) ->
+		MRef = monitor(process, ConnPid),
+		{error, {stream_error, {closed, {error,
+			{ws_handler_init_failed, bad_return_ws_handler, bad}}}}} =
+			gun:await(ConnPid, Ref),
+		receive
+			{'DOWN', MRef, process, ConnPid, {shutdown, {error,
+					{ws_handler_init_failed, bad_return_ws_handler, bad}}}} ->
+				ok;
+			{'DOWN', MRef, process, ConnPid, Reason} ->
+				error({unexpected, Reason})
+		after 2000 ->
+			error(still_up)
+		end
+	end).
+
+do_ws_handler_bad_return(Protocol, Check) ->
+	Name = {?FUNCTION_NAME, Protocol},
+	Routes = [{"/", ws_echo_h, []}],
+	{ok, _} = cowboy:start_clear(Name, [], #{
+		enable_connect_protocol => true,
+		env => #{dispatch => cowboy_router:compile([{'_', Routes}])}
+	}),
+	try
+		Port = ranch:get_port(Name),
+		Opts = case Protocol of
+			http2 -> #{http2_opts => #{notify_settings_changed => true}};
+			http -> #{}
+		end,
+		{ok, ConnPid} = gun:open("localhost", Port, Opts#{
+			protocols => [Protocol],
+			retry => 0
+		}),
+		{ok, Protocol} = gun:await_up(ConnPid),
+		case Protocol of
+			http2 ->
+				{notify, settings_changed, #{enable_connect_protocol := true}} =
+					gun:await(ConnPid, undefined);
+			http ->
+				ok
+		end,
+		Ref = gun:ws_upgrade(ConnPid, "/", [], #{
+			default_protocol => bad_return_ws_handler
+		}),
+		Check(ConnPid, Ref)
+	after
+		cowboy:stop_listener(Name)
+	end.
+
 http_http_http(_) ->
 	do_tunnel(?FUNCTION_NAME).
 
