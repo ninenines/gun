@@ -17,6 +17,7 @@
 -compile(nowarn_export_all).
 
 -import(ct_helper, [doc/1]).
+-import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
 all() ->
@@ -38,6 +39,46 @@ all() ->
 %% socks5tls  | SOCKS5   | TLS
 %% raw        | Raw      | TCP
 %% rawtls     | Raw      | TLS
+
+stream_ref_without_tunnel_option_no_crash(_) ->
+	doc("Once an HTTP/1.1 CONNECT tunnel occupies the connection, "
+		"a request whose stream_ref is not nested is rejected and "
+		"is not sent. A later request that uses the tunnel option "
+		"still completes."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http, fun(Parent, _, Socket, Transport) ->
+		{ok, Data} = Transport:recv(Socket, 0, 5000),
+		Parent ! {self(), Data},
+		ok = Transport:send(Socket, [
+			"HTTP/1.1 200 OK\r\n"
+			"content-length: 0\r\n"
+			"\r\n"
+		]),
+		receive after infinity -> ok end
+	end),
+	{ok, _, ProxyPort} = do_proxy_start(http),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{}),
+	{ok, http} = gun:await_up(ConnPid),
+	Tunnel = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		transport => tcp
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{up, http} = gun:await(ConnPid, Tunnel),
+	handshake_completed = receive_from(OriginPid),
+	Bare = gun:get(ConnPid, "/bare"),
+	{error, {stream_error, {badstate, _}}} = gun:await(ConnPid, Bare),
+	%% Headers only: this is the POST that would leave out = body_chunked
+	%% if it were sent.
+	Post = gun:post(ConnPid, "/post", []),
+	{error, {stream_error, {badstate, _}}} = gun:await(ConnPid, Post),
+	Good = gun:get(ConnPid, "/tunneled", [], #{tunnel => Tunnel}),
+	{response, fin, 200, _} = gun:await(ConnPid, Good),
+	Data = receive_from(OriginPid),
+	nomatch = binary:match(Data, <<"/bare">>),
+	nomatch = binary:match(Data, <<"/post">>),
+	{_, _} = binary:match(Data, <<"/tunneled">>),
+	gun:close(ConnPid).
 
 http_http_http(_) ->
 	do_tunnel(?FUNCTION_NAME).
