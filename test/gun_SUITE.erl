@@ -263,6 +263,48 @@ response_timeout_cancel_connect(_) ->
 		error(connection_stayed_up)
 	end.
 
+cancel_connect_silences_stream(_) ->
+	doc("A cancelled CONNECT stays silent when the proxy accepts it. "
+		"The connection still closes because the following bytes are the tunnel."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, _, _) ->
+		timer:sleep(5000)
+	end),
+	{ok, _, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp, 200, [], 200),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{http, #{response_timeout => infinity}}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [http]
+	}),
+	ok = gun:cancel(ConnPid, StreamRef),
+	{error, {down, _}} = gun:await(ConnPid, StreamRef, 2000).
+
+cancel_ws_upgrade_silences_stream(_) ->
+	doc("A cancelled Websocket upgrade stays silent when the server "
+		"switches protocols. The connection still closes."),
+	{ok, _, OriginPort} = init_origin(tcp, http, fun(_, _, Socket, Transport) ->
+		{ok, _} = Transport:recv(Socket, 0, 5000),
+		timer:sleep(200),
+		Transport:send(Socket, [
+			"HTTP/1.1 101 Switching Protocols\r\n"
+			"connection: upgrade\r\n"
+			"upgrade: websocket\r\n"
+			"\r\n"
+		])
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [{http, #{response_timeout => infinity}}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:ws_upgrade(ConnPid, "/", []),
+	ok = gun:cancel(ConnPid, StreamRef),
+	{error, {down, _}} = gun:await(ConnPid, StreamRef, 2000).
+
 response_timeout_stopped_by_inform(_) ->
 	doc("An informational response stops response_timeout. Finishing "
 		"the body afterwards must not start it again."),

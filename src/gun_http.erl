@@ -390,9 +390,9 @@ handle_connect(Rest, State=#http_state{
 		#stream{is_alive=false} ->
 			%% The proxy accepted CONNECT, so the following bytes are
 			%% the tunnel, not an HTTP response. Do not switch protocol.
+			%% The cancelled stream stays silent; gun_down carries this error.
 			Reason = {connection_error, protocol_error,
 				"The CONNECT request was cancelled."},
-			gun:reply(ReplyTo, {gun_error, self(), RealStreamRef, Reason}),
 			{{error, Reason}, CookieStore, EvHandlerState0};
 		_ ->
 			handle_connect_alive(Rest, State, Stream, Tail, Destination,
@@ -458,9 +458,9 @@ handle_inform(Rest, State=#http_state{
 		{'HTTP/1.1', 101, #websocket{}} when Stream#stream.is_alive =:= false ->
 			%% The server already switched. Parsing the bytes as HTTP
 			%% would be wrong, and the caller cancelled the upgrade.
+			%% The cancelled stream stays silent; gun_down carries this error.
 			Reason = {connection_error, protocol_error,
 				"The upgrade request was cancelled."},
-			gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), Reason}),
 			{{error, Reason}, CookieStore, EvHandlerState};
 		{'HTTP/1.1', 101, #websocket{}} ->
 			{ws_handshake(Rest, State, StreamRef, Headers), CookieStore, EvHandlerState};
