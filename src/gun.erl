@@ -1446,6 +1446,10 @@ connected_protocol_init(internal, {connected, Retries, Socket, NewProtocol},
 			end
 	end.
 
+%% A response_timeout can already be queued when switching to a
+%% protocol that does not read socket data yet, such as SOCKS.
+connected_no_input(info, {timeout, TRef, Name}, State) ->
+	handle_common_connected(info, {timeout, TRef, Name}, ?FUNCTION_NAME, State);
 connected_no_input(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 

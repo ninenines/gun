@@ -23,6 +23,7 @@
 -export([handle/5]).
 -export([closing/4]).
 -export([close/4]).
+-export([timeout/3]).
 %% @todo down
 
 -record(socks_state, {
@@ -205,3 +206,7 @@ closing(_, _, _, EvHandlerState) ->
 
 close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
+
+%% A response_timeout from the previous protocol may already be queued.
+timeout(State, {response_timeout, _}, _) ->
+	{state, State}.
