@@ -195,7 +195,7 @@ recv_two_requests(Socket, Transport, Acc) ->
 response_timeout_http2_late_response(_) ->
 	doc("A response that arrives after response_timeout must not kill "
 		"the connection, and a later request must still succeed."),
-	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(Parent, _, Socket, Transport) ->
 		{ok, StreamID} = recv_http2_headers(Socket, Transport),
 		timer:sleep(400),
 		{Block1, Encode} = cow_hpack:encode([
@@ -203,6 +203,7 @@ response_timeout_http2_late_response(_) ->
 			{<<"content-length">>, <<"0">>}
 		]),
 		ok = Transport:send(Socket, cow_http2:headers(StreamID, fin, Block1)),
+		Parent ! {self(), late_response_sent},
 		respond_next_http2_headers(Socket, Transport, Encode)
 	end),
 	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
@@ -216,6 +217,10 @@ response_timeout_http2_late_response(_) ->
 		'The response timeout has expired.'}}}
 		= gun:await(ConnPid, StreamRef1, 2000),
 	true = is_process_alive(ConnPid),
+	%% The origin is still inside the sleep when the timeout fires.
+	%% Wait until the late response has been sent before opening the
+	%% next stream, or that stream's own timer expires as well.
+	late_response_sent = receive_from(OriginPid),
 	StreamRef2 = gun:get(ConnPid, "/ok"),
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2, 2000),
 	gun:close(ConnPid).
