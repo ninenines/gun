@@ -112,8 +112,12 @@ select_extensions(Headers, Extensions0, Opts) ->
 		false ->
 			#{};
 		{_, ExtHd} ->
-			ParsedExtHd = cow_http_hd:parse_sec_websocket_extensions(ExtHd),
-			validate_extensions(ParsedExtHd, Extensions0, Opts, #{})
+			try cow_http_hd:parse_sec_websocket_extensions(ExtHd) of
+				ParsedExtHd ->
+					validate_extensions(ParsedExtHd, Extensions0, Opts, #{})
+			catch _:_ ->
+				close
+			end
 	end.
 
 validate_extensions([], _, _, Acc) ->

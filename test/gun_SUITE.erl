@@ -83,6 +83,12 @@ atom_hostname(_) ->
 	[<<"host: localhost:", _/bits>>] = [L || <<"host: ", _/bits>> = L <- Lines],
 	gun:close(Pid).
 
+alpn_negotiation_failed_no_crash(_) ->
+	doc("A peer selecting an ALPN protocol that was never advertised "
+		"must not crash the caller. (RFC 7301)"),
+	{error, {alpn_negotiation_failed, <<"h2c">>}} =
+		gun_protocols:negotiated({ok, <<"h2c">>}, [http2, http]).
+
 connect_timeout(_) ->
 	doc("Ensure an integer value for connect_timeout is accepted."),
 	do_timeout(connect_timeout, 1000).

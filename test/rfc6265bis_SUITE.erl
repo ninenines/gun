@@ -112,6 +112,31 @@ do_informational_set_cookie(Config, Boolean) ->
 	gun:close(ConnPid),
 	Res.
 
+malformed_path_add_cookie_header_no_crash(_) ->
+	doc("A request path that cannot be parsed as a URI must not crash "
+		"the caller when building the Cookie header for a request."),
+	Store0 = gun_cookies_list:init(),
+	{[], Store0} = gun_cookies:add_cookie_header(<<"http">>,
+		<<"example.com">>, <<"/a b">>, [], Store0).
+
+malformed_percent_cookie_no_crash(_) ->
+	doc("A path whose percent-encoding is invalid must not crash "
+		"cookie handling."),
+	Store0 = gun_cookies_list:init(),
+	Store1 = gun_cookies:set_cookie_header(<<"http">>, <<"example.com">>, <<"/">>,
+		200, [{<<"set-cookie">>, <<"a=b">>}], Store0, #{}),
+	{[], Store1} = gun_cookies:add_cookie_header(<<"http">>,
+		<<"example.com">>, <<"/%zz">>, [], Store1),
+	Store1 = gun_cookies:set_cookie_header(<<"http">>, <<"example.com">>, <<"/%zz">>,
+		200, [{<<"set-cookie">>, <<"c=d">>}], Store1, #{}).
+
+malformed_path_set_cookie_header_no_crash(_) ->
+	doc("A request path that cannot be parsed as a URI must not crash "
+		"the caller when recording cookies from a response."),
+	Store0 = gun_cookies_list:init(),
+	Store0 = gun_cookies:set_cookie_header(<<"http">>, <<"example.com">>, <<"/a b">>,
+		200, [{<<"set-cookie">>, <<"a=b">>}], Store0, #{}).
+
 set_cookie_connect_tcp(Config) ->
 	doc("Cookies may also be set in responses going through CONNECT tunnels."),
 	Transport = config(transport, Config),

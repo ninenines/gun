@@ -95,6 +95,161 @@ max_headers(_) ->
 	{error, _} = gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+malformed_connection_header(_) ->
+	doc("A malformed Connection response header must not crash the connection."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"connection: @invalid\r\n"
+				"content-length: 0\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+malformed_transfer_encoding_header(_) ->
+	doc("A malformed Transfer-Encoding response header must not crash "
+		"the connection, and must instead be treated as a protocol error."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"transfer-encoding: gzip\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+malformed_content_length_header(_) ->
+	doc("A malformed Content-Length response header must not crash "
+		"the connection, and must instead be treated as a protocol error."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: abc\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+malformed_content_length_does_not_store_cookie(_) ->
+	doc("A protocol error must not store Set-Cookie for the retry."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http,
+		fun(Parent, ListenSocket, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ok = ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"set-cookie: a=b\r\n"
+				"content-length: abc\r\n"
+				"\r\n"
+			),
+			{ok, RetrySocket} = gen_tcp:accept(ListenSocket, 5000),
+			{ok, RetryReq} = gen_tcp:recv(RetrySocket, 0, 2000),
+			Parent ! {self(), RetryReq},
+			ok = gen_tcp:send(RetrySocket,
+				"HTTP/1.1 204 No Content\r\n"
+				"content-length: 0\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		retry => 1,
+		cookie_store => gun_cookies_list:init()
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:get(ConnPid, "/next"),
+	RetryReq = receive
+		{OriginPid, Data} when is_binary(Data) ->
+			Data
+	after 5000 ->
+		error(timeout)
+	end,
+	false = lists:any(fun(Line) ->
+		case Line of
+			<<"cookie:", _/bits>> -> true;
+			<<"Cookie:", _/bits>> -> true;
+			_ -> false
+		end
+	end, binary:split(RetryReq, <<"\r\n">>, [global])),
+	gun:close(ConnPid).
+
+iodata_request_content_length(_) ->
+	doc("A content-length request header given as an iolist is accepted."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http,
+		fun(Parent, _, ClientSocket, ClientTransport) ->
+			{ok, Data} = ClientTransport:recv(ClientSocket, 0, 1000),
+			Parent ! {self(), Data}
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:headers(ConnPid, "POST", "/", [
+		{<<"content-length">>, "5"}
+	]),
+	Data = receive
+		{OriginPid, Bin} when is_binary(Bin) ->
+			Bin
+	after 5000 ->
+		error(timeout)
+	end,
+	{_, _} = binary:match(Data, <<"content-length: 5">>),
+	gun:close(ConnPid).
+
+conflicting_content_length_header(_) ->
+	doc("Differing content-length response values are a protocol error."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"content-length: 0\r\n"
+				"content-length: 5\r\n"
+				"\r\n"
+				"hello"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+malformed_request_content_length_no_crash(_) ->
+	doc("An application-supplied content-length request header that "
+		"cannot be parsed must not crash the connection."),
+	{ok, _, OriginPort} = init_origin(tcp, http),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:headers(ConnPid, "POST", "/", [
+		{<<"content-length">>, <<"not-a-number">>}
+	]),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 transfer_encoding_overrides_content_length(_) ->
 	doc("When both transfer-encoding and content-length are provided, "
 		"content-length must be ignored. (RFC7230 3.3.3)"),

@@ -342,7 +342,8 @@ match_header_section_end(Data, _) ->
 	end.
 
 handle_head(Data, State=#http_state{opts=Opts,
-		streams=[#stream{ref=StreamRef, reply_to=ReplyTo, authority=Authority, path=Path}|_]},
+		streams=[#stream{ref=StreamRef, reply_to=ReplyTo, method=Method,
+			authority=Authority, path=Path}|_]},
 		CookieStore0, EvHandler, EvHandlerState) ->
 	{Version, Status, _, Rest0} = cow_http:parse_status_line(Data),
 	{Headers, Rest} = cow_http:parse_headers(Rest0),
@@ -351,18 +352,32 @@ handle_head(Data, State=#http_state{opts=Opts,
 		true ->
 			Reason = {connection_error, limit_reached,
 				"The number of headers is larger than configuration allows. (RFC9110 5.4)"},
-			gun:reply(ReplyTo, {gun_error, self(), Reason}),
+			reply_http_error(State, ReplyTo, StreamRef, Reason),
 			{{error, Reason}, CookieStore0, EvHandlerState};
 		false ->
-			CookieStore = gun_cookies:set_cookie_header(scheme(State),
-				Authority, Path, Status, Headers, CookieStore0, Opts),
 			case StreamRef of
 				{connect, _, _} when Status >= 200, Status < 300 ->
+					CookieStore = gun_cookies:set_cookie_header(scheme(State),
+						Authority, Path, Status, Headers, CookieStore0, Opts),
 					handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
 				_ when Status >= 100, Status =< 199 ->
+					CookieStore = gun_cookies:set_cookie_header(scheme(State),
+						Authority, Path, Status, Headers, CookieStore0, Opts),
 					handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
 				_ ->
-					handle_response(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers)
+					%% Reject the response before storing Set-Cookie.
+					%% A protocol error must not survive into the retry.
+					case response_io_from_headers(Method, Version, Status, Headers) of
+						{error, Human} ->
+							Reason = {connection_error, protocol_error, Human},
+							reply_http_error(State, ReplyTo, StreamRef, Reason),
+							{{error, Reason}, CookieStore0, EvHandlerState};
+						In ->
+							CookieStore = gun_cookies:set_cookie_header(scheme(State),
+								Authority, Path, Status, Headers, CookieStore0, Opts),
+							handle_response1(Rest, State, CookieStore, EvHandler,
+								EvHandlerState, Version, Status, Headers, In)
+					end
 			end
 	end.
 
@@ -468,10 +483,9 @@ is_expected_upgrade_response(Headers, #stream{upgrade=Requested}) ->
 		false
 	end.
 
-handle_response(Rest, State=#http_state{version=ClientVersion, opts=Opts, connection=Conn,
-		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo, method=Method, is_alive=IsAlive}|Tail]},
-		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers) ->
-	In = response_io_from_headers(Method, Version, Status, Headers),
+handle_response1(Rest, State=#http_state{version=ClientVersion, opts=Opts, connection=Conn,
+		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo, is_alive=IsAlive}|Tail]},
+		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers, In) ->
 	IsFin = case In of head -> fin; _ -> nofin end,
 	RealStreamRef = stream_ref(State, StreamRef),
 	%% @todo Figure out whether the event should trigger if the stream was cancelled.
@@ -666,6 +680,8 @@ headers(State=#http_state{opts=Opts, out=head},
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
 				ReplyTo, Method, Authority, Path, Upgrade, InitialFlow)};
+		ignored ->
+			[];
 		Error={error, _} ->
 			Error
 	end,
@@ -687,6 +703,10 @@ request(State=#http_state{opts=Opts, out=head}, StreamRef, ReplyTo,
 			InitialFlow = initial_flow(InitialFlow0, Opts),
 			{state, new_stream(State#http_state{connection=Conn, out=Out}, StreamRef,
 				ReplyTo, Method, Authority, Path, Upgrade, InitialFlow)};
+		ignored ->
+			%% The request was rejected before it was written. A tunnel
+			%% stays up; only that stream was notified.
+			[];
 		Error={error, _} ->
 			Error
 	end,
@@ -706,53 +726,65 @@ send_request(State=#http_state{socket=Socket, transport=Transport, version=Versi
 	%% We use Headers2 because this is the smallest list.
 	Conn = conn_from_headers(Version, Headers2),
 	Upgrade = upgrade_from_headers(Headers2),
-	Out = case Body of
+	case case Body of
 		undefined when Function =:= ws_upgrade -> head;
 		undefined -> request_io_from_headers(Headers2);
 		_ -> head
-	end,
-	{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
-		false ->
-			Authority0 = host_header(Transport:name(), Host, Port),
-			{Authority0, [{<<"host">>, Authority0}|Headers2]};
-		{_, Authority1} ->
-			{Authority1, Headers2}
-	end,
-	Headers4 = transform_header_names(State, Headers3),
-	Headers5 = case {Body, Out} of
-		{undefined, body_chunked} when Version =:= 'HTTP/1.0' -> Headers4;
-		{undefined, body_chunked} -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers4];
-		{undefined, _} -> Headers4;
-		_ -> [{<<"content-length">>, integer_to_binary(iolist_size(Body))}|Headers4]
-	end,
-	{Headers, CookieStore} = gun_cookies:add_cookie_header(
-		scheme(State), Authority, Path, Headers5, CookieStore0),
-	RealStreamRef = stream_ref(State, StreamRef),
-	RequestEvent = #{
-		stream_ref => RealStreamRef,
-		reply_to => ReplyTo,
-		function => Function,
-		method => Method,
-		authority => Authority,
-		path => Path,
-		headers => Headers
-	},
-	EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
-	SendResult = Transport:send(Socket, [
-		cow_http:request(Method, Path, Version, Headers),
-		[Body || Body =/= undefined]]),
-	EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
-	EvHandlerState = case Out of
-		head ->
-			RequestEndEvent = #{
+	end of
+		{error, Human} ->
+			Reason = {connection_error, protocol_error, Human},
+			case reply_http_error(State, ReplyTo, StreamRef, Reason) of
+				connection ->
+					{{error, Reason}, undefined, Conn, Upgrade, undefined,
+						CookieStore0, EvHandlerState0};
+				stream ->
+					{ignored, undefined, Conn, Upgrade, undefined,
+						CookieStore0, EvHandlerState0}
+			end;
+		Out ->
+			{Authority, Headers3} = case lists:keyfind(<<"host">>, 1, Headers2) of
+				false ->
+					Authority0 = host_header(Transport:name(), Host, Port),
+					{Authority0, [{<<"host">>, Authority0}|Headers2]};
+				{_, Authority1} ->
+					{Authority1, Headers2}
+			end,
+			Headers4 = transform_header_names(State, Headers3),
+			Headers5 = case {Body, Out} of
+				{undefined, body_chunked} when Version =:= 'HTTP/1.0' -> Headers4;
+				{undefined, body_chunked} -> [{<<"transfer-encoding">>, <<"chunked">>}|Headers4];
+				{undefined, _} -> Headers4;
+				_ -> [{<<"content-length">>, integer_to_binary(iolist_size(Body))}|Headers4]
+			end,
+			{Headers, CookieStore} = gun_cookies:add_cookie_header(
+				scheme(State), Authority, Path, Headers5, CookieStore0),
+			RealStreamRef = stream_ref(State, StreamRef),
+			RequestEvent = #{
 				stream_ref => RealStreamRef,
-				reply_to => ReplyTo
+				reply_to => ReplyTo,
+				function => Function,
+				method => Method,
+				authority => Authority,
+				path => Path,
+				headers => Headers
 			},
-			EvHandler:request_end(RequestEndEvent, EvHandlerState2);
-		_ ->
-			EvHandlerState2
-	end,
-	{SendResult, Authority, Conn, Upgrade, Out, CookieStore, EvHandlerState}.
+			EvHandlerState1 = EvHandler:request_start(RequestEvent, EvHandlerState0),
+			SendResult = Transport:send(Socket, [
+				cow_http:request(Method, Path, Version, Headers),
+				[Body || Body =/= undefined]]),
+			EvHandlerState2 = EvHandler:request_headers(RequestEvent, EvHandlerState1),
+			EvHandlerState = case Out of
+				head ->
+					RequestEndEvent = #{
+						stream_ref => RealStreamRef,
+						reply_to => ReplyTo
+					},
+					EvHandler:request_end(RequestEndEvent, EvHandlerState2);
+				_ ->
+					EvHandlerState2
+			end,
+			{SendResult, Authority, Conn, Upgrade, Out, CookieStore, EvHandlerState}
+	end.
 
 upgrade_from_headers(Headers) ->
 	try
@@ -975,6 +1007,16 @@ error_stream_not_found(State, StreamRef, ReplyTo) ->
 		"The stream cannot be found."}}),
 	ok.
 
+%% Outside a tunnel this HTTP/1.1 connection is the Gun connection, so
+%% the error is connection-scoped and the caller disconnects. Inside a
+%% tunnel the outer connection stays up.
+reply_http_error(#http_state{base_stream_ref=undefined}, ReplyTo, _StreamRef, Reason) ->
+	gun:reply(ReplyTo, {gun_error, self(), Reason}),
+	connection;
+reply_http_error(State, ReplyTo, StreamRef, Reason) ->
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef), Reason}),
+	stream.
+
 %% Headers information retrieval.
 
 conn_from_headers(Version, Headers) ->
@@ -985,7 +1027,11 @@ conn_from_headers(Version, Headers) ->
 			keepalive;
 		{_, ConnHd0} ->
 			ConnHd = iolist_to_binary(ConnHd0),
-			conn_from_header(cow_http_hd:parse_connection(ConnHd))
+			try cow_http_hd:parse_connection(ConnHd) of
+				Conn -> conn_from_header(Conn)
+			catch _:_ ->
+				close
+			end
 	end.
 
 conn_from_header([]) -> close;
@@ -996,30 +1042,55 @@ conn_from_header([_|Tail]) -> conn_from_header(Tail).
 request_io_from_headers(Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, Length} ->
-			{body, cow_http_hd:parse_content_length(Length)};
+			try
+				{body, cow_http_hd:parse_content_length(iolist_to_binary(Length))}
+			catch _:_ ->
+				{error, "The content-length header is invalid."}
+			end;
 		_ ->
 			body_chunked
 	end.
 
+%% RFC9112 6.3 step 1: HEAD, 204 and 304 end at the empty line
+%% regardless of content-length or transfer-encoding.
 response_io_from_headers(<<"HEAD">>, _, _, _) ->
 	head;
-response_io_from_headers(_, _, Status, _) when (Status =:= 204) or (Status =:= 304) ->
+response_io_from_headers(_, _, Status, _) when Status =:= 204; Status =:= 304 ->
 	head;
 response_io_from_headers(_, Version, _Status, Headers) ->
+	response_framing(Version, Headers).
+
+response_framing(Version, Headers) ->
 	case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
 		{_, TE} when Version =:= 'HTTP/1.1' ->
-			case cow_http_hd:parse_transfer_encoding(TE) of
+			try cow_http_hd:parse_transfer_encoding(iolist_to_binary(TE)) of
 				[<<"chunked">>] -> body_chunked;
-				[<<"identity">>] -> body_close
+				[<<"identity">>] -> body_close;
+				_ -> {error, "The transfer-encoding header is invalid."}
+			catch _:_ ->
+				{error, "The transfer-encoding header is invalid."}
 			end;
 		_ ->
-			case lists:keyfind(<<"content-length">>, 1, Headers) of
-				{_, <<"0">>} ->
-					head;
-				{_, Length} ->
-					{body, cow_http_hd:parse_content_length(Length)};
-				_ ->
-					body_close
+			content_length_framing(Headers)
+	end.
+
+%% Repeated content-length values are one length when they agree.
+%% Differing values are a protocol error. (RFC9112 6.1)
+content_length_framing(Headers) ->
+	Values = [iolist_to_binary(Value) || {<<"content-length">>, Value} <- Headers],
+	case Values of
+		[] ->
+			body_close;
+		_ ->
+			try [cow_http_hd:parse_content_length(Value) || Value <- Values] of
+				Lengths ->
+					case lists:usort(Lengths) of
+						[0] -> head;
+						[Length] -> {body, Length};
+						_ -> {error, "The content-length header is invalid."}
+					end
+			catch _:_ ->
+				{error, "The content-length header is invalid."}
 			end
 	end.
 
@@ -1108,6 +1179,8 @@ ws_upgrade(State=#http_state{out=head}, StreamRef, ReplyTo,
 				#websocket{ref=StreamRef, reply_to=ReplyTo, key=Key,
 					extensions=GunExtensions, opts=WsOpts},
 				ReplyTo, <<"GET">>, Authority, Path, [], InitialFlow)};
+		ignored ->
+			[];
 		Error={error, _} ->
 			Error
 	end,
