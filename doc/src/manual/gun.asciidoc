@@ -157,6 +157,7 @@ http_opts() :: #{
     max_headers                 => non_neg_integer(),
     max_header_block_size       => non_neg_integer(),
     max_trailer_block_size      => non_neg_integer(),
+    response_timeout            => timeout(),
     transform_header_name       => fun((binary()) -> binary()),
     version                     => 'HTTP/1.1' | 'HTTP/1.0'
 }
@@ -217,6 +218,21 @@ too much data in memory when receiving HTTP response
 headers. When the buffer exceeds this limit Gun closes
 the connection with a `limit_reached` connection error.
 
+response_timeout (infinity)::
+
+Time in milliseconds to wait for the server to begin
+responding to a request. The timer starts when the request
+has been fully sent, including the body, and stops when the
+first response headers are received, including an informational
+response, or when the stream is cancelled. `infinity` disables
+the timer.
+
+HTTP/1.1 responses arrive in order. When the timer fires
+Gun closes the connection, because a missing response
+blocks every stream behind it. Cancelling a stream stops
+its timer, so a request the caller no longer needs cannot
+disconnect the connection.
+
 transform_header_name - see below::
 
 A function that will be applied to all header names before they
@@ -240,6 +256,7 @@ http2_opts() :: #{
     keepalive                   => timeout(),
     keepalive_tolerance         => non_neg_integer(),
     notify_settings_changed     => boolean(),
+    response_timeout            => timeout(),
 
     %% HTTP/2 state machine configuration.
     connection_window_margin_size  => 0..16#7fffffff,
@@ -301,6 +318,20 @@ notify_settings_changed (false)::
 
 Whether Gun should send a link:man:gun_notify(3)[gun_notify(3)] message
 to the user when settings are changed by the server.
+
+response_timeout (infinity)::
+
+Time in milliseconds to wait for the server to begin
+responding to a request. The timer starts when the request
+has been fully sent, including the body, and stops when the
+first response headers are received, including an informational
+response, or when the stream is reset or cancelled.
+`infinity` disables the timer. Server pushes are not timed.
+
+When the timer fires Gun resets that stream. Inside a CONNECT
+tunnel the timer is routed to the stream that armed it, so an
+outer stream that happens to reuse the same stream id is left
+alone.
 
 === opts()
 

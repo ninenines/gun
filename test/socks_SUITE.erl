@@ -145,6 +145,46 @@ do_auth_method({username_password, _, _}) -> username_password.
 
 %% Tests.
 
+socks_ignores_stale_response_timeout(_) ->
+	doc("A response_timeout queued before SOCKS is current must not "
+		"crash the connection or be reported as an unexpected event."),
+	{ok, Listen} = gen_tcp:listen(0, [binary, {active, false}, inet]),
+	{ok, {_, Port}} = inet:sockname(Listen),
+	spawn_link(fun() ->
+		{ok, Socket} = gen_tcp:accept(Listen, 5000),
+		_ = gen_tcp:recv(Socket, 0, 5000),
+		receive after infinity -> ok end
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		protocols => [{socks, #{host => "localhost", port => 1}}],
+		retry => 0
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	Handler = socks_stale_response_timeout,
+	ok = logger:add_handler(Handler, ?MODULE, #{level => error, config => self()}),
+	MRef = monitor(process, ConnPid),
+	try
+		ConnPid ! {timeout, make_ref(), {response_timeout, make_ref()}},
+		receive
+			{'DOWN', MRef, process, ConnPid, Reason} ->
+				error({crashed, Reason});
+			{stale_log, error, {"Unexpected event" ++ _, _}} ->
+				error(unexpected_event)
+		after 300 ->
+			ok
+		end,
+		true = is_process_alive(ConnPid)
+	after
+		_ = logger:remove_handler(Handler),
+		gun:close(ConnPid)
+	end.
+
+log(#{level := Level, msg := Msg}, #{config := Pid}) ->
+	Pid ! {stale_log, Level, Msg},
+	ok;
+log(_, _) ->
+	ok.
+
 socks5_tcp_http_none(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
 	do_socks5(<<"http">>, tcp, http, tcp, none).

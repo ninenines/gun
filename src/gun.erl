@@ -222,6 +222,7 @@
 	max_headers => non_neg_integer(),
 	max_header_block_size => non_neg_integer(),
 	max_trailer_block_size => non_neg_integer(),
+	response_timeout => timeout(),
 	transform_header_name => fun((binary()) -> binary()),
 	version => 'HTTP/1.1' | 'HTTP/1.0',
 
@@ -239,6 +240,7 @@
 	keepalive => timeout(),
 	keepalive_tolerance => non_neg_integer(),
 	notify_settings_changed => boolean(),
+	response_timeout => timeout(),
 
 	%% Options copied from cow_http2_machine.
 	connection_window_margin_size => 0..16#7fffffff,
@@ -1444,6 +1446,10 @@ connected_protocol_init(internal, {connected, Retries, Socket, NewProtocol},
 			end
 	end.
 
+%% A response_timeout can already be queued when switching to a
+%% protocol that does not read socket data yet, such as SOCKS.
+connected_no_input(info, {timeout, TRef, Name}, State) ->
+	handle_common_connected(info, {timeout, TRef, Name}, ?FUNCTION_NAME, State);
 connected_no_input(Type, Event, State) ->
 	handle_common_connected_no_input(Type, Event, ?FUNCTION_NAME, State).
 

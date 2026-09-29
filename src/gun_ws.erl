@@ -27,6 +27,7 @@
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
+-export([timeout/3]).
 -export([keepalive/3]).
 -export([ping/4]).
 -export([ws_send/6]).
@@ -344,6 +345,10 @@ closing(#ws_state{opts=Opts}) ->
 
 close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
+
+%% A response_timeout queued before the 101 may arrive after the switch.
+timeout(State, _, _) ->
+	{state, State}.
 
 keepalive(State=#ws_state{reply_to=ReplyTo}, EvHandler, EvHandlerState0) ->
 	send(ping, State, ReplyTo, EvHandler, EvHandlerState0).

@@ -23,6 +23,7 @@
 -export([update_flow/4]).
 -export([closing/4]).
 -export([close/4]).
+-export([timeout/3]).
 -export([data/7]).
 -export([down/1]).
 
@@ -83,6 +84,11 @@ closing(_, _, _, EvHandlerState) ->
 
 close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
+
+%% The previous protocol may have queued a response_timeout that
+%% cancel_timer could not recall before the switch.
+timeout(State, _, _) ->
+	{state, State}.
 
 %% @todo Initiate closing on IsFin=fin.
 data(#raw_state{ref=StreamRef, socket=Socket, transport=Transport}, StreamRef,

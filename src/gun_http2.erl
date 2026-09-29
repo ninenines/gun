@@ -80,7 +80,12 @@
 	handler_state :: undefined | gun_content_handler:state(),
 
 	%% CONNECT tunnel.
-	tunnel :: undefined | #tunnel{}
+	tunnel :: undefined | #tunnel{},
+
+	%% undefined: the request is not fully sent yet.
+	%% reference(): waiting for the first response headers.
+	%% received: headers were seen, or the stream was removed.
+	response_timer = undefined :: undefined | reference() | received
 }).
 
 -record(user_ping, {
@@ -157,6 +162,10 @@ do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 do_check_options([{keepalive_tolerance, K}|Opts]) when is_integer(K), K >= 0 ->
 	do_check_options(Opts);
 do_check_options([{notify_settings_changed, B}|Opts]) when is_boolean(B) ->
+	do_check_options(Opts);
+do_check_options([{response_timeout, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{response_timeout, T}|Opts]) when is_integer(T), T > 0 ->
 	do_check_options(Opts);
 do_check_options([Opt={Name, _}|Opts]) ->
 	%% We blindly accept all cow_http2_machine options.
@@ -535,10 +544,10 @@ continue_stream_ref(#http2_state{socket=#{handle_continue_stream_ref := Continue
 continue_stream_ref(State, StreamRef) ->
 	stream_ref(State, StreamRef).
 
-headers_frame(State0=#http2_state{opts=Opts},
+headers_frame(State1=#http2_state{opts=Opts},
 		StreamID, IsFin, Headers, #{status := Status}, _BodyLen,
 		CookieStore0, EvHandler, EvHandlerState0) ->
-	Stream = get_stream_by_id(State0, StreamID),
+	{Stream, State0} = cancel_response_timer(State1, get_stream_by_id(State1, StreamID)),
 	#stream{
 		authority=Authority,
 		path=Path,
@@ -1159,7 +1168,8 @@ request1(State0=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 						stream_ref => RealStreamRef,
 						reply_to => ReplyTo
 					},
-					{{state, State}, CookieStore, EvHandler:request_end(RequestEndEvent, EvHandlerState)};
+					{{state, arm_response_timer(State, StreamID)}, CookieStore,
+						EvHandler:request_end(RequestEndEvent, EvHandlerState)};
 				nofin ->
 					{StateOrError, EvHandlerStateRet} = maybe_send_data(
 						State, StreamID, fin, Body, EvHandler, EvHandlerState),
@@ -1310,18 +1320,19 @@ send_data(State0, [{StreamID, IsFin, SendData}|Tail], EvHandler, EvHandlerState0
 send_data(State0, StreamID, IsFin, [Data], EvHandler, EvHandlerState0) ->
 	case send_data_frame(State0, StreamID, IsFin, Data) of
 		{state, State} ->
-			EvHandlerState = case IsFin of
+			{State1, EvHandlerState} = case IsFin of
 				nofin ->
-					EvHandlerState0;
+					{State, EvHandlerState0};
 				fin ->
 					#stream{ref=StreamRef, reply_to=ReplyTo} = get_stream_by_id(State, StreamID),
 					RequestEndEvent = #{
 						stream_ref => stream_ref(State, StreamRef),
 						reply_to => ReplyTo
 					},
-					EvHandler:request_end(RequestEndEvent, EvHandlerState0)
+					{arm_response_timer(State, StreamID),
+						EvHandler:request_end(RequestEndEvent, EvHandlerState0)}
 			end,
-			{{state, maybe_delete_stream(State, StreamID, local, IsFin)}, EvHandlerState};
+			{{state, maybe_delete_stream(State1, StreamID, local, IsFin)}, EvHandlerState};
 		Error={error, _Reason} ->
 			{Error, EvHandlerState0}
 	end;
@@ -1494,6 +1505,14 @@ timeout(State=#http2_state{http2_machine=HTTP2Machine0}, {cow_http2_machine, und
 		{error, Error={connection_error, _, _}, _HTTP2Machine} ->
 			connection_error(State, Error)
 	end;
+%% A timer that already fired cannot be recalled by cancel_timer/1.
+%% Ignore it unless this stream is still waiting on that same timer.
+%%
+%% gun.erl does not strip base_stream_ref before delivering the timer,
+%% unlike request and cancel. Remove it here, then either reset the
+%% local stream or forward what remains into the tunnel.
+timeout(State, {response_timeout, StreamRef0}, TRef) ->
+	response_timeout(State, response_timeout_ref(State, StreamRef0), TRef);
 %% Timeouts occurring in tunnels.
 timeout(State, {cow_http2_machine, RealStreamRef, Name}, TRef) ->
 	{StreamRef, SubStreamRef} = if
@@ -1682,6 +1701,76 @@ error_stream_not_found(State, StreamRef, ReplyTo) ->
 
 %% Streams.
 
+response_timeout(State=#http2_state{http2_machine=HTTP2Machine0}, StreamRef, TRef)
+		when is_reference(StreamRef) ->
+	case get_stream_by_ref(State, StreamRef) of
+		#stream{id=StreamID, response_timer=TRef} ->
+			reset_response_timeout(State#http2_state{http2_machine=HTTP2Machine0},
+				StreamID);
+		_ ->
+			{state, State}
+	end;
+response_timeout(State=#http2_state{http2_machine=HTTP2Machine},
+		StreamRef=[Outer|_], TRef) when is_reference(Outer) ->
+	case get_stream_by_ref(State, Outer) of
+		Stream=#stream{id=StreamID, tunnel=Tunnel=#tunnel{
+				protocol=Proto, protocol_state=ProtoState0}}
+				when Proto =/= undefined ->
+			case Proto:timeout(ProtoState0, {response_timeout, StreamRef}, TRef) of
+				{state, ProtoState} ->
+					{state, store_stream(State, Stream#stream{
+						tunnel=Tunnel#tunnel{protocol_state=ProtoState}})};
+				%% The tunneled HTTP/1.1 connection has to die. RST_STREAM
+				%% has no timeout code; cancel is the client giving up.
+				{error, {connection_error, timeout, _}} ->
+					reset_response_timeout(State, StreamID);
+				{error, {connection_error, Reason, Human}} ->
+					case cow_http2_machine:reset_stream(StreamID, HTTP2Machine) of
+						{ok, HTTP2Machine1} ->
+							reset_stream(State#http2_state{http2_machine=HTTP2Machine1},
+								StreamID, {stream_error, Reason, Human});
+						{error, not_found} ->
+							reset_stream(State, StreamID, {stream_error, Reason, Human})
+					end;
+				Error ->
+					Error
+			end;
+		_ ->
+			{state, State}
+	end;
+response_timeout(State, _, _) ->
+	{state, State}.
+
+response_timeout_ref(#http2_state{base_stream_ref=undefined}, StreamRef) ->
+	StreamRef;
+response_timeout_ref(#http2_state{base_stream_ref=Base}, [Base|Tail])
+		when is_reference(Base) ->
+	case Tail of
+		[Ref] -> Ref;
+		_ -> Tail
+	end;
+response_timeout_ref(#http2_state{base_stream_ref=Base}, StreamRef)
+		when is_list(Base), is_list(StreamRef), length(StreamRef) >= length(Base) ->
+	case lists:split(length(Base), StreamRef) of
+		{Base, [Ref]} -> Ref;
+		{Base, Tail} -> Tail;
+		_ -> StreamRef
+	end;
+response_timeout_ref(_, StreamRef) ->
+	StreamRef.
+
+%% Close the stream in the HTTP/2 machine as well as in Gun. A late
+%% HEADERS or DATA frame is then a lingering frame, not a lookup of a
+%% stream Gun has already deleted.
+reset_response_timeout(State=#http2_state{http2_machine=HTTP2Machine0}, StreamID) ->
+	Error = {stream_error, cancel, 'The response timeout has expired.'},
+	case cow_http2_machine:reset_stream(StreamID, HTTP2Machine0) of
+		{ok, HTTP2Machine} ->
+			reset_stream(State#http2_state{http2_machine=HTTP2Machine}, StreamID, Error);
+		{error, not_found} ->
+			reset_stream(State, StreamID, Error)
+	end.
+
 stream_ref(#http2_state{base_stream_ref=undefined}, StreamRef) ->
 	StreamRef;
 stream_ref(#http2_state{base_stream_ref=BaseStreamRef}, StreamRef)
@@ -1699,8 +1788,38 @@ get_stream_by_ref(#http2_state{streams=Streams, stream_refs=Refs}, StreamRef) ->
 		StreamID -> maps:get(StreamID, Streams)
 	end.
 
+arm_stream_timer(State=#http2_state{opts=Opts}, Stream0=#stream{id=StreamID, ref=StreamRef}) ->
+	case maps:get(response_timeout, Opts, infinity) of
+		infinity ->
+			Stream0;
+		_ when StreamID rem 2 =:= 0 ->
+			Stream0;
+		Timeout ->
+			%% The full stream_ref keeps a tunneled stream from being
+			%% confused with an outer stream that reused the same id.
+			TRef = erlang:start_timer(Timeout, self(),
+				{response_timeout, stream_ref(State, StreamRef)}),
+			Stream0#stream{response_timer=TRef}
+	end.
+
+arm_response_timer(State, StreamID) ->
+	case get_stream_by_id(State, StreamID) of
+		#stream{response_timer=undefined} = Stream ->
+			store_stream(State, arm_stream_timer(State, Stream));
+		_ ->
+			State
+	end.
+
 create_stream(State=#http2_state{streams=Streams, stream_refs=Refs},
-		Stream=#stream{id=StreamID, ref=StreamRef}) ->
+		Stream0=#stream{id=StreamID, ref=StreamRef}) ->
+	%% CONNECT and Websocket are complete when the headers are sent.
+	%% A normal request waits until its last DATA frame is written.
+	Stream = case Stream0 of
+		#stream{tunnel=Tunnel} when Tunnel =/= undefined ->
+			arm_stream_timer(State, Stream0);
+		_ ->
+			Stream0
+	end,
 	State#http2_state{
 		streams=Streams#{StreamID => Stream},
 		stream_refs=Refs#{StreamRef => StreamID}
@@ -1711,7 +1830,8 @@ store_stream(State=#http2_state{streams=Streams}, Stream=#stream{id=StreamID}) -
 
 take_stream(State=#http2_state{streams=Streams0, stream_refs=Refs}, StreamID) ->
 	case maps:take(StreamID, Streams0) of
-		{Stream=#stream{ref=StreamRef}, Streams} ->
+		{Stream=#stream{ref=StreamRef, response_timer=ResponseTimer}, Streams} ->
+			_ = cancel_timer(ResponseTimer),
 			{Stream, State#http2_state{
 				streams=Streams,
 				stream_refs=maps:remove(StreamRef, Refs)
@@ -1735,9 +1855,29 @@ maybe_delete_stream(State=#http2_state{http2_machine=HTTP2Machine}, StreamID, re
 maybe_delete_stream(State, _, _, _) ->
 	State.
 
-delete_stream(State=#http2_state{streams=Streams, stream_refs=Refs}, StreamID) ->
-	#{StreamID := #stream{ref=StreamRef}} = Streams,
-	State#http2_state{
-		streams=maps:remove(StreamID, Streams),
-		stream_refs=maps:remove(StreamRef, Refs)
-	}.
+delete_stream(State, StreamID) ->
+	{_, NewState} = take_stream(State, StreamID),
+	NewState.
+
+cancel_response_timer(State, Stream0=#stream{response_timer=ResponseTimer}) ->
+	_ = cancel_timer(ResponseTimer),
+	Stream = Stream0#stream{response_timer=received},
+	{Stream, store_stream(State, Stream)}.
+
+cancel_timer(undefined) ->
+	ok;
+cancel_timer(received) ->
+	ok;
+cancel_timer(Timer) ->
+	%% See gun_http:cancel_timer/1. A queued timeout must not be
+	%% delivered after switch_protocol.
+	case erlang:cancel_timer(Timer) of
+		false ->
+			receive
+				{timeout, Timer, {response_timeout, _}} -> ok
+			after 0 ->
+				ok
+			end;
+		_ ->
+			ok
+	end.

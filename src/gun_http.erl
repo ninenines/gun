@@ -32,6 +32,7 @@
 -export([data/7]).
 -export([connect/10]).
 -export([cancel/5]).
+-export([timeout/3]).
 -export([stream_info/2]).
 -export([down/1]).
 -export([ws_upgrade/11]).
@@ -67,7 +68,12 @@
 	upgrade = [] :: [binary()],
 
 	is_alive :: boolean(),
-	handler_state :: undefined | gun_content_handler:state()
+	handler_state :: undefined | gun_content_handler:state(),
+
+	%% undefined: the request is not fully sent yet.
+	%% reference(): waiting for the first response headers.
+	%% received: headers were seen, or the stream was cancelled.
+	response_timer = undefined :: undefined | reference() | received
 }).
 
 -record(http_state, {
@@ -115,6 +121,10 @@ do_check_options([{max_headers, M}|Opts]) when is_integer(M), M > 0 ->
 do_check_options([{max_header_block_size, M}|Opts]) when is_integer(M), M > 0 ->
 	do_check_options(Opts);
 do_check_options([{max_trailer_block_size, M}|Opts]) when is_integer(M), M > 0 ->
+	do_check_options(Opts);
+do_check_options([{response_timeout, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{response_timeout, T}|Opts]) when is_integer(T), T > 0 ->
 	do_check_options(Opts);
 do_check_options([{transform_header_name, F}|Opts]) when is_function(F) ->
 	do_check_options(Opts);
@@ -341,9 +351,11 @@ match_header_section_end(Data, _) ->
 		nomatch -> nomatch
 	end.
 
-handle_head(Data, State=#http_state{opts=Opts,
-		streams=[#stream{ref=StreamRef, reply_to=ReplyTo, authority=Authority, path=Path}|_]},
+handle_head(Data, State0=#http_state{opts=Opts,
+		streams=[Stream0=#stream{ref=StreamRef, reply_to=ReplyTo,
+			authority=Authority, path=Path}|Tail]},
 		CookieStore0, EvHandler, EvHandlerState) ->
+	State = cancel_response_timer(State0, Stream0, Tail),
 	{Version, Status, _, Rest0} = cow_http:parse_status_line(Data),
 	{Headers, Rest} = cow_http:parse_headers(Rest0),
 	MaxHeaders = maps:get(max_headers, Opts, 100),
@@ -374,12 +386,24 @@ handle_connect(Rest, State=#http_state{
 		streams=[Stream=#stream{ref={_, StreamRef, Destination}, reply_to=ReplyTo}|Tail]},
 		CookieStore, EvHandler, EvHandlerState0, Status, Headers) ->
 	RealStreamRef = stream_ref(State, StreamRef),
-	%% @todo If the stream is cancelled we probably shouldn't finish the CONNECT setup.
-	_ = case Stream of
-		#stream{is_alive=false} -> ok;
-		_ -> gun:reply(ReplyTo, {gun_response, self(), RealStreamRef, fin, Status, Headers})
-	end,
-	%% @todo Figure out whether the event should trigger if the stream was cancelled.
+	case Stream of
+		#stream{is_alive=false} ->
+			%% The proxy accepted CONNECT, so the following bytes are
+			%% the tunnel, not an HTTP response. Do not switch protocol.
+			%% The cancelled stream stays silent; gun_down carries this error.
+			Reason = {connection_error, protocol_error,
+				"The CONNECT request was cancelled."},
+			{{error, Reason}, CookieStore, EvHandlerState0};
+		_ ->
+			handle_connect_alive(Rest, State, Stream, Tail, Destination,
+				CookieStore, EvHandler, EvHandlerState0, Status, Headers,
+				RealStreamRef, ReplyTo)
+	end.
+
+handle_connect_alive(Rest, State, Stream, Tail, Destination,
+		CookieStore, EvHandler, EvHandlerState0, Status, Headers,
+		RealStreamRef, ReplyTo) ->
+	gun:reply(ReplyTo, {gun_response, self(), RealStreamRef, fin, Status, Headers}),
 	EvHandlerState1 = EvHandler:response_headers(#{
 		stream_ref => RealStreamRef,
 		reply_to => ReplyTo,
@@ -431,6 +455,13 @@ handle_inform(Rest, State=#http_state{
 		headers => Headers
 	}, EvHandlerState0),
 	case {Version, Status, StreamRef} of
+		{'HTTP/1.1', 101, #websocket{}} when Stream#stream.is_alive =:= false ->
+			%% The server already switched. Parsing the bytes as HTTP
+			%% would be wrong, and the caller cancelled the upgrade.
+			%% The cancelled stream stays silent; gun_down carries this error.
+			Reason = {connection_error, protocol_error,
+				"The upgrade request was cancelled."},
+			{{error, Reason}, CookieStore, EvHandlerState};
 		{'HTTP/1.1', 101, #websocket{}} ->
 			{ws_handshake(Rest, State, StreamRef, Headers), CookieStore, EvHandlerState};
 		%% Any other 101 response results in us switching to the raw protocol,
@@ -827,7 +858,8 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 							},
 							EvHandlerState = EvHandler:request_end(RequestEndEvent,
 								EvHandlerState0),
-							{{state, State#http_state{out=head}}, EvHandlerState};
+							{{state, arm_response_timer(State#http_state{out=head})},
+								EvHandlerState};
 						Error={error, _} ->
 							{Error, EvHandlerState0}
 					end;
@@ -845,9 +877,17 @@ data(State=#http_state{socket=Socket, transport=Transport, version=Version,
 								reply_to => ReplyTo
 							},
 							EvHandlerState = EvHandler:request_end(RequestEndEvent, EvHandlerState0),
-							{{state, State#http_state{out=head}}, EvHandlerState};
+							{{state, arm_response_timer(State#http_state{out=head})},
+								EvHandlerState};
 						ok when Length2 > 0, IsFin =:= nofin ->
 							{{state, State#http_state{out={body, Length2}}}, EvHandlerState0};
+						Error={error, _} ->
+							{Error, EvHandlerState0}
+					end;
+				body_chunked when IsFin =:= fin -> %% HTTP/1.0
+					case Transport:send(Socket, Data) of
+						ok ->
+							{{state, arm_response_timer(State)}, EvHandlerState0};
 						Error={error, _} ->
 							{Error, EvHandlerState0}
 					end;
@@ -941,6 +981,30 @@ cancel(State0, StreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 		false ->
 			error_stream_not_found(State0, StreamRef, ReplyTo),
 			{[], EvHandlerState0}
+	end.
+
+%% HTTP/1.1 responses arrive in the order requests were sent, so a
+%% missing response cannot be skipped. On a direct connection that
+%% means closing it. Inside a tunnel the socket belongs to the outer
+%% connection: tell each stream and let that layer reset the tunnel.
+timeout(State=#http_state{base_stream_ref=Base, streams=Streams},
+		{response_timeout, StreamRef}, TRef) ->
+	case response_timer_stream(State, Streams, StreamRef, TRef) of
+		false ->
+			{state, State};
+		#stream{reply_to=ReplyTo} when Base =:= undefined ->
+			_ = [cancel_timer(Timer) || #stream{response_timer=Timer} <- Streams],
+			Reason = {connection_error, timeout,
+				"The response timeout has expired."},
+			gun:reply(ReplyTo, {gun_error, self(), Reason}),
+			{error, Reason};
+		#stream{} ->
+			Reason = {stream_error, cancel,
+				'The response timeout has expired.'},
+			_ = [cancel_timer(Timer) || #stream{response_timer=Timer} <- Streams],
+			close_streams(State, Streams, Reason),
+			{error, {connection_error, timeout,
+				"The response timeout has expired."}}
 	end.
 
 stream_info(#http_state{streams=Streams}, StreamRef) ->
@@ -1037,24 +1101,96 @@ stream_ref({connect, StreamRef, _}) -> StreamRef;
 stream_ref(#websocket{ref=StreamRef}) -> StreamRef;
 stream_ref(StreamRef) -> StreamRef.
 
-new_stream(State=#http_state{streams=Streams}, StreamRef, ReplyTo,
+new_stream(State=#http_state{opts=Opts, out=Out, streams=Streams}, StreamRef, ReplyTo,
 		Method, Authority, Path, Upgrade, InitialFlow) ->
+	%% A body still to be sent means the request is not finished.
+	%% The timer starts when the last byte is written.
+	ResponseTimer = case Out of
+		head -> start_response_timer(State, StreamRef, Opts);
+		_ -> undefined
+	end,
 	State#http_state{streams=Streams
 		++ [#stream{ref=StreamRef, reply_to=ReplyTo, flow=InitialFlow,
 			method=iolist_to_binary(Method), authority=Authority,
-			path=iolist_to_binary(Path), is_alive=true, upgrade=Upgrade}]}.
+			path=iolist_to_binary(Path), is_alive=true, upgrade=Upgrade,
+			response_timer=ResponseTimer}]}.
 
 is_stream(#http_state{streams=Streams}, StreamRef) ->
-	lists:keymember(StreamRef, #stream.ref, Streams).
+	lists:any(fun(#stream{ref=Ref}) ->
+		stream_ref(Ref) =:= StreamRef
+	end, Streams).
 
 cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
-	Streams2 = [case Ref of
-		StreamRef ->
-			Tuple#stream{is_alive=false};
-		_ ->
+	Streams2 = [case stream_ref(Ref) =:= StreamRef of
+		true ->
+			_ = cancel_timer(Tuple#stream.response_timer),
+			Tuple#stream{is_alive=false, response_timer=received};
+		false ->
 			Tuple
 	end || Tuple = #stream{ref=Ref} <- Streams],
 	State#http_state{streams=Streams2}.
+
+start_response_timer(State, StreamRef, Opts) ->
+	case maps:get(response_timeout, Opts, infinity) of
+		infinity ->
+			undefined;
+		Timeout ->
+			erlang:start_timer(Timeout, self(),
+				{response_timeout, stream_ref(State, StreamRef)})
+	end.
+
+arm_response_timer(State=#http_state{opts=Opts, streams=Streams}) ->
+	case Streams of
+		[] ->
+			State;
+		_ ->
+			Stream = lists:last(Streams),
+			case Stream of
+				#stream{response_timer=undefined, ref=Ref} ->
+					Timer = start_response_timer(State, Ref, Opts),
+					State#http_state{streams=lists:droplast(Streams)
+						++ [Stream#stream{response_timer=Timer}]};
+				_ ->
+					State
+			end
+	end.
+
+cancel_response_timer(State, Stream=#stream{response_timer=Timer}, Tail) ->
+	_ = cancel_timer(Timer),
+	State#http_state{streams=[Stream#stream{response_timer=received}|Tail]}.
+
+cancel_timer(undefined) ->
+	ok;
+cancel_timer(received) ->
+	ok;
+cancel_timer(Timer) ->
+	%% cancel_timer cannot pull back a message already in the mailbox.
+	%% Drop it here so a protocol switch does not deliver it to a
+	%% module that has no timeout/3.
+	case erlang:cancel_timer(Timer) of
+		false ->
+			receive
+				{timeout, Timer, {response_timeout, _}} -> ok
+			after 0 ->
+				ok
+			end;
+		_ ->
+			ok
+	end.
+
+%% The timer carries the ref users see. Match both that ref and the
+%% ref stored on the stream (CONNECT and Websocket wrap it). A timer
+%% that was already cancelled does not match TRef.
+response_timer_stream(_, [], _, _) ->
+	false;
+response_timer_stream(State, [Stream=#stream{ref=Ref, response_timer=TRef}|Tail],
+		StreamRef, TRef) ->
+	case stream_ref(Ref) =:= StreamRef orelse stream_ref(State, Ref) =:= StreamRef of
+		true -> Stream;
+		false -> response_timer_stream(State, Tail, StreamRef, TRef)
+	end;
+response_timer_stream(State, [_|Tail], StreamRef, TRef) ->
+	response_timer_stream(State, Tail, StreamRef, TRef).
 
 end_stream(State=#http_state{streams=[_|Tail]}) ->
 	State#http_state{in=head, streams=Tail}.
