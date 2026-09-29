@@ -39,6 +39,110 @@ all() ->
 %% raw        | Raw      | TCP
 %% rawtls     | Raw      | TLS
 
+switch_protocol_error_no_crash(_) ->
+	doc("If the transport fails while Gun is switching to the tunneled "
+		"protocol, Gun must disconnect instead of crashing."),
+	{ok, _, ProxyPort} = gun_test:init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ok = ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 Connection Established\r\n"
+				"\r\n"
+			),
+			%% RST so the HTTP/2 preface write fails inside Protocol:init/4.
+			ok = inet:setopts(ClientSocket, [{linger, {true, 0}}]),
+			ok = ClientTransport:close(ClientSocket)
+		end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost", port => 1234,
+		transport => tcp, protocols => [http2]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	{error, {stream_error, {closed, {error, _}}}} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http, {error, _}, [StreamRef]} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end.
+
+switch_protocol_http2_timers_after_retry(_) ->
+	doc("HTTP/2 preface timers started before a failed init must be "
+		"cancelled. Otherwise they crash the connection after it retries."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, First} = gen_tcp:accept(ListenSocket, 5000),
+		{ok, _} = gen_tcp:recv(First, 0, 1000),
+		ok = gen_tcp:send(First,
+			"HTTP/1.1 200 Connection Established\r\n"
+			"\r\n"),
+		ok = inet:setopts(First, [{linger, {true, 0}}]),
+		ok = gen_tcp:close(First),
+		{ok, Second} = gen_tcp:accept(ListenSocket, 5000),
+		timer:sleep(2000),
+		gen_tcp:close(Second)
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http],
+		retry => 1,
+		retry_timeout => 5000
+	}),
+	MRef = monitor(process, ConnPid),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost", port => 1234,
+		transport => tcp,
+		protocols => [{http2, #{preface_timeout => 100, settings_timeout => 100}}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	{error, {stream_error, {closed, {error, _}}}} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http, {error, _}, _} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end,
+	{ok, http} = gun:await_up(ConnPid),
+	receive
+		{'DOWN', MRef, process, ConnPid, Reason} ->
+			error({crash, Reason})
+	after 500 ->
+		gun:close(ConnPid)
+	end.
+
+connect_tls_handshake_error(_) ->
+	doc("A TLS handshake failure after CONNECT must be reported on the "
+		"CONNECT stream. gun:await must not see the tunnel as up."),
+	{ok, _, ProxyPort} = gun_test:init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ok = ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 Connection Established\r\n"
+				"\r\n"
+			),
+			timer:sleep(2000)
+		end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:connect(ConnPid, #{
+		host => "localhost", port => 1234,
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
+		tls_handshake_timeout => 1000,
+		protocols => [http]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	{error, {stream_error, _}} = gun:await(ConnPid, StreamRef).
+
 http_http_http(_) ->
 	do_tunnel(?FUNCTION_NAME).
 

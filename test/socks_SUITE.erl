@@ -145,6 +145,92 @@ do_auth_method({username_password, _, _}) -> username_password.
 
 %% Tests.
 
+switch_protocol_error_no_crash(_) ->
+	doc("If the next protocol fails to initialize after a successful "
+		"SOCKS5 handshake, Gun must disconnect instead of crashing."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+		{ok, _} = gen_tcp:recv(ClientSocket, 0, 1000),
+		ok = gen_tcp:send(ClientSocket, <<5, 0>>),
+		{ok, _} = gen_tcp:recv(ClientSocket, 0, 1000),
+		ok = gen_tcp:send(ClientSocket, <<5, 0, 0, 1, 0, 0, 0, 0, 0:16>>),
+		ok = inet:setopts(ClientSocket, [{linger, {true, 0}}]),
+		ok = gen_tcp:close(ClientSocket)
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{socks, #{
+			host => "localhost",
+			port => 1234,
+			protocols => [http2]
+		}}],
+		retry => 0
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	{error, {down, _}} = gun:await(ConnPid, undefined),
+	receive
+		{gun_down, ConnPid, socks, {error, _}, []} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end.
+
+socks_connect_error_no_hang(_) ->
+	doc("A SOCKS5 connect failure must be reported to gun:await."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+		{ok, _} = gen_tcp:recv(ClientSocket, 0, 1000),
+		ok = gen_tcp:send(ClientSocket, <<5, 0>>),
+		{ok, _} = gen_tcp:recv(ClientSocket, 0, 1000),
+		%% Connection refused.
+		ok = gen_tcp:send(ClientSocket, <<5, 5, 0, 1, 0, 0, 0, 0, 0:16>>)
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{socks, #{
+			host => "localhost",
+			port => 1234,
+			protocols => [http]
+		}}],
+		retry => 0
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	{error, {down, _}} = gun:await(ConnPid, undefined).
+
+socks_retry_after_connect_refused(_) ->
+	doc("A refused SOCKS5 connect is retried. gun:await must see the "
+		"tunnel come up, not the first failure."),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, ProxyPort}} = inet:sockname(ListenSocket),
+	spawn_link(fun() ->
+		{ok, First} = gen_tcp:accept(ListenSocket, 5000),
+		{ok, _} = gen_tcp:recv(First, 0, 1000),
+		ok = gen_tcp:send(First, <<5, 0>>),
+		{ok, _} = gen_tcp:recv(First, 0, 1000),
+		ok = gen_tcp:send(First, <<5, 5, 0, 1, 0, 0, 0, 0, 0:16>>),
+		gen_tcp:close(First),
+		{ok, Second} = gen_tcp:accept(ListenSocket, 5000),
+		{ok, _} = gen_tcp:recv(Second, 0, 1000),
+		ok = gen_tcp:send(Second, <<5, 0>>),
+		{ok, _} = gen_tcp:recv(Second, 0, 1000),
+		ok = gen_tcp:send(Second, <<5, 0, 0, 1, 0, 0, 0, 0, 0:16>>),
+		timer:sleep(2000),
+		gen_tcp:close(Second)
+	end),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [{socks, #{
+			host => "localhost",
+			port => 1234,
+			protocols => [http]
+		}}],
+		retry => 1
+	}),
+	{ok, socks} = gun:await_up(ConnPid),
+	{up, http} = gun:await(ConnPid, undefined),
+	gun:close(ConnPid).
+
 socks5_tcp_http_none(_) ->
 	doc("Use Socks5 over TCP and without authentication to connect to an HTTP server."),
 	do_socks5(<<"http">>, tcp, http, tcp, none).

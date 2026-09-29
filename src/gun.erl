@@ -1323,11 +1323,9 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
 				{NewProtocolName, NewProtocolOpts} -> {NewProtocolName, NewProtocolOpts#{tunnel_transport => tls}};
 				NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
 			end,
-			Protocol = gun_protocols:handler(NewProtocol),
-			reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
 			commands([
 				{switch_transport, gun_tls, TLSSocket},
-				{switch_protocol, NewProtocol, ReplyTo, <<>>}
+				{switch_protocol, NewProtocol, ReplyTo, <<>>, tunnel_up}
 			], State);
 		{error, Reason, State} ->
 			commands({error, Reason}, State)
@@ -1359,12 +1357,12 @@ tls_handshake(info, {gun_tls_proxy, Socket, {ok, Negotiated}, {HandshakeEvent, P
 		NewProtocolName -> {NewProtocolName, #{tunnel_transport => tls}}
 	end,
 	Protocol = gun_protocols:handler(NewProtocol),
-	reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Protocol:name()}),
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
 		socket => Socket,
 		protocol => Protocol:name()
 	}, EvHandlerState0),
-	commands([{switch_protocol, NewProtocol, ReplyTo, <<>>}], State0#state{event_handler_state=EvHandlerState});
+	commands([{switch_protocol, NewProtocol, ReplyTo, <<>>, tunnel_up}],
+		State0#state{event_handler_state=EvHandlerState});
 tls_handshake(info, {gun_tls_proxy, Socket, Error = {error, Reason}, {HandshakeEvent, _, _}},
 		State=#state{socket=Socket, event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	EvHandlerState = EvHandler:tls_handshake_end(HandshakeEvent#{
@@ -1919,7 +1917,9 @@ commands([{switch_transport, Transport, Socket}|Tail], State0=#state{
 		Disconnect ->
 			Disconnect
 	end;
-commands([{switch_protocol, NewProtocol, ReplyTo, Buffer}], State0=#state{
+commands([{switch_protocol, NewProtocol, ReplyTo, Buffer}], State) ->
+	commands([{switch_protocol, NewProtocol, ReplyTo, Buffer, no_tunnel_up}], State);
+commands([{switch_protocol, NewProtocol, ReplyTo, Buffer, NotifyTunnelUp}], State0=#state{
 		opts=Opts, socket=Socket, transport=Transport, messages={OK, _, _},
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
 	{Protocol, ProtoOpts0} = gun_protocols:handler_and_opts(NewProtocol, Opts),
@@ -1927,32 +1927,46 @@ commands([{switch_protocol, NewProtocol, ReplyTo, Buffer}], State0=#state{
 		#{tunnel_transport := _} -> ProtoOpts0;
 		_ -> ProtoOpts0#{tunnel_transport => tcp}
 	end,
-	%% @todo Handle error result from Protocol:init/4
-	{ok, StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),
-	ProtocolChangedEvent = case ProtoOpts of
-		#{stream_ref := StreamRef} ->
-			#{stream_ref => StreamRef, protocol => Protocol:name()};
-		_ ->
-			#{protocol => Protocol:name()}
-	end,
-	EvHandlerState = EvHandler:protocol_changed(ProtocolChangedEvent, EvHandlerState0),
-	%% We cancel the existing keepalive and, depending on the protocol,
-	%% we enable keepalive again, effectively resetting the timer.
-	State1 = State0#state{protocol=Protocol, protocol_state=ProtoState,
-		event_handler_state=EvHandlerState},
-	case active(State1) of
-		{ok, State2} ->
-			State = keepalive_cancel(State2),
-			Actions = case Buffer of
-				<<>> -> [];
-				_ -> [{next_event, info, {OK, Socket, Buffer}}]
+	%% init/4 fails when the new protocol cannot use the socket, for
+	%% example when its preface write finds the peer already gone.
+	%% Disconnect. A badmatch here would take the whole connection down.
+	case Protocol:init(ReplyTo, Socket, Transport, ProtoOpts) of
+		{ok, StateName, ProtoState} ->
+			case NotifyTunnelUp of
+				tunnel_up ->
+					TunnelRef = maps:get(stream_ref, ProtoOpts, undefined),
+					reply(ReplyTo, {gun_tunnel_up, self(), TunnelRef, Protocol:name()});
+				no_tunnel_up ->
+					ok
 			end,
-			case Protocol:has_keepalive() of
-				true -> {next_state, StateName, keepalive_timeout(State), Actions};
-				false -> {next_state, StateName, State, Actions}
+			ProtocolChangedEvent = case ProtoOpts of
+				#{stream_ref := StreamRef} ->
+					#{stream_ref => StreamRef, protocol => Protocol:name()};
+				_ ->
+					#{protocol => Protocol:name()}
+			end,
+			EvHandlerState = EvHandler:protocol_changed(ProtocolChangedEvent, EvHandlerState0),
+			%% We cancel the existing keepalive and, depending on the protocol,
+			%% we enable keepalive again, effectively resetting the timer.
+			State1 = State0#state{protocol=Protocol, protocol_state=ProtoState,
+				event_handler_state=EvHandlerState},
+			case active(State1) of
+				{ok, State2} ->
+					State = keepalive_cancel(State2),
+					Actions = case Buffer of
+						<<>> -> [];
+						_ -> [{next_event, info, {OK, Socket, Buffer}}]
+					end,
+					case Protocol:has_keepalive() of
+						true -> {next_state, StateName, keepalive_timeout(State), Actions};
+						false -> {next_state, StateName, State, Actions}
+					end;
+				Disconnect ->
+					Disconnect
 			end;
-		Disconnect ->
-			Disconnect
+		Error={error, _} ->
+			%% close/4 of the current protocol wakes gun:await.
+			disconnect(State0, Error)
 	end;
 %% Perform a TLS handshake.
 commands([TLSHandshake={tls_handshake, _, _, _}], State) ->

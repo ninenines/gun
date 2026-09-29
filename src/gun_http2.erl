@@ -208,9 +208,11 @@ init(ReplyTo, Socket, Transport, Opts0) ->
 				opts=Opts, base_stream_ref=BaseStreamRef, tunnel_transport=TunnelTransport,
 				content_handlers=Handlers, http2_machine=HTTP2Machine}};
 		Error0={error, R} when R =:= closed; R =:= einval ->
-			%% Check whether we have a TLS alert and in that case,
-			%% return it. We must do this here because Protocol:init
-			%% failure doesn't go through disconnect.
+			%% The machine already started its preface and settings timers.
+			%% The connection process survives this failure and would crash
+			%% when those timers fire.
+			ok = cow_http2_machine:terminate(HTTP2Machine),
+			%% Prefer a TLS alert over a plain closed/einval when one is queued.
 			case Transport:setopts(Socket, [{active, once}]) of
 				Error={error, {tls_alert, _}} ->
 					Error;
@@ -218,6 +220,7 @@ init(ReplyTo, Socket, Transport, Opts0) ->
 					Error0
 			end;
 		Error={error, _Reason} ->
+			ok = cow_http2_machine:terminate(HTTP2Machine),
 			Error
 	end.
 
