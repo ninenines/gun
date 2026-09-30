@@ -1,0 +1,76 @@
+= gun:trailers(3)
+
+== Name
+
+gun:trailers - Send the request trailers
+
+== Description
+
+[source,erlang]
+----
+trailers(ConnPid, StreamRef, Trailers) -> ok
+
+ConnPid   :: pid()
+StreamRef :: gun:stream_ref()
+Trailers  :: gun:req_headers()
+----
+
+Send the request trailers.
+
+This function can be used with
+link:man:gun:data(3)[gun:data(3)] to send trailing
+headers after streaming a body. Sending trailers
+concludes the stream, so all calls to gun:data(3) must
+use the `nofin` flag.
+
+This function can only be used if the original request
+had headers indicating that a body would be streamed.
+
+== Arguments
+
+ConnPid::
+
+The pid of the Gun connection process.
+
+StreamRef::
+
+Identifier of the stream for the original request.
+
+Trailers::
+
+Request trailers.
+
+== Return value
+
+The atom `ok` is returned.
+
+== Changelog
+
+* *2.3*: Function introduced.
+
+== Examples
+
+.Stream the body of a request
+[source,erlang]
+----
+StreamRef = gun:put(ConnPid, "/lang/fr_FR/hello", #{
+	<<"content-type">> => <<"text/plain">>,
+	<<"trailer">> => <<"x-greetings, content-md5">>
+]).
+gun:data(ConnPid, StreamRef, nofin, <<"Bonjour !\n">>).
+gun:data(ConnPid, StreamRef, nofin, <<"Bonsoir !\n">>).
+gun:trailers(ConnPid, StreamRef, #{
+	<<"x-greetings">> => <<"2">>,
+	<<"content-md5">> => <<"8a4f6308bec3e0069d5d59f7aae8fe04">>
+}).
+----
+
+== See also
+
+link:man:gun(3)[gun(3)],
+link:man:gun:data(3)[gun:data(3)]
+link:man:gun:patch(3)[gun:patch(3)],
+link:man:gun:post(3)[gun:post(3)],
+link:man:gun:put(3)[gun:put(3)],
+link:man:gun:headers(3)[gun:headers(3)]
+

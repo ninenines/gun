@@ -32,6 +32,7 @@
 -export([headers/12]).
 -export([request/13]).
 -export([data/7]).
+-export([trailers/6]).
 -export([connect/10]).
 -export([cancel/5]).
 -export([timeout/3]).
@@ -643,6 +644,10 @@ data(State=#http3_state{conn=Conn, transport=Transport}, StreamRef, _ReplyTo, Is
 %			error_stream_not_found(State, StreamRef, ReplyTo),
 %			{[], EvHandlerState}
 	end.
+
+trailers(_State, StreamRef, _ReplyTo, _Trailers, _EvHandler, _EvHandlerState)
+		when is_reference(StreamRef) ->
+	error(unimplemented).
 
 -spec connect(_, _, _, _, _, _, _, _, _, _) -> no_return().
 
