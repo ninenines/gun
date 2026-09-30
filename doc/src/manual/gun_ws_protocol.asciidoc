@@ -73,6 +73,21 @@ This callback may receive fragmented frames depending
 on the protocol and may need to rebuild the full
 frame to process it.
 
+Gun calls this callback for every frame for the life
+of the connection and does not catch a missing clause.
+`handle/2` must match every `cow_ws:frame()` shape:
+
+[source,erlang]
+----
+close | ping | pong
+{text, iodata()} | {binary, iodata()}
+{close, iodata()} | {ping, iodata()} | {pong, iodata()}
+{close, close_code(), iodata()}
+{fragment, fin | nofin, text | binary | continuation, iodata()}
+----
+
+`gun_ws_h` is the reference implementation.
+
 Frame::
 
 Websocket frame.

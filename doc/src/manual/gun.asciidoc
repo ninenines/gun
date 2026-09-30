@@ -618,7 +618,9 @@ reject parameters that Gun sends by default.
 default_protocol (gun_ws_h)::
 
 Default protocol module when no Websocket subprotocol is
-negotiated.
+negotiated. The module must follow the
+link:man:gun_ws_protocol(3)[gun_ws_protocol(3)] interface.
+Its `handle/2` must match every frame shape listed there.
 
 flow - see below::
 
