@@ -23,7 +23,7 @@
 -export([handle/5]).
 -export([closing/4]).
 -export([close/4]).
-%% @todo down
+-export([down/1]).
 
 -record(socks_state, {
 	ref :: undefined | gun:stream_ref(),
@@ -108,21 +108,34 @@ handle(Data, State, CookieStore, _, EvHandlerState) ->
 	{handle(Data, State), CookieStore, EvHandlerState}.
 
 %% No authentication.
-handle(<<5, 0>>, State=#socks_state{version=5, status=auth_method_select}) ->
-	case send_socks5_connect(State) of
-		ok -> {state, State#socks_state{status=connect}};
-		Error={error, _} -> Error
+handle(<<5, 0>>, State=#socks_state{opts=Opts, version=5, status=auth_method_select}) ->
+	case lists:member(none, maps:get(auth, Opts, [none])) of
+		true ->
+			case send_socks5_connect(State) of
+				ok -> {state, State#socks_state{status=connect}};
+				Error={error, _} -> Error
+			end;
+		false ->
+			{error, {socks5, {auth_method_not_offered, none}}}
 	end;
 %% Username/password authentication.
-handle(<<5, 2>>, State=#socks_state{socket=Socket, transport=Transport, opts=#{auth := AuthMethods},
+handle(<<5, 2>>, State=#socks_state{socket=Socket, transport=Transport, opts=Opts,
 		version=5, status=auth_method_select}) ->
-	[{username_password, Username, Password}] = [Method || Method <- AuthMethods],
-	ULen = byte_size(Username),
-	PLen = byte_size(Password),
-	case Transport:send(Socket, <<1, ULen, Username/binary, PLen, Password/binary>>) of
-		ok -> {state, State#socks_state{status=auth_username_password}};
-		Error={error, _} -> Error
+	case lists:keyfind(username_password, 1, maps:get(auth, Opts, [none])) of
+		{username_password, Username, Password} ->
+			ULen = byte_size(Username),
+			PLen = byte_size(Password),
+			case Transport:send(Socket, <<1, ULen, Username/binary, PLen, Password/binary>>) of
+				ok -> {state, State#socks_state{status=auth_username_password}};
+				Error={error, _} -> Error
+			end;
+		false ->
+			{error, {socks5, {auth_method_not_offered, username_password}}}
 	end;
+handle(<<5, 255>>, #socks_state{version=5, status=auth_method_select}) ->
+	{error, {socks5, no_acceptable_auth_method}};
+handle(<<5, Method>>, #socks_state{version=5, status=auth_method_select}) ->
+	{error, {socks5, {auth_method_not_offered, Method}}};
 %% Username/password authentication successful.
 handle(<<1, 0>>, State=#socks_state{version=5, status=auth_username_password}) ->
 	case send_socks5_connect(State) of
@@ -205,3 +218,9 @@ closing(_, _, _, EvHandlerState) ->
 
 close(_, _, _, EvHandlerState) ->
 	EvHandlerState.
+
+%% No tunnel stream exists until the handshake completes.
+down(#socks_state{ref=undefined}) ->
+	[];
+down(#socks_state{ref=Ref}) ->
+	[Ref].
