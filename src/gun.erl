@@ -1927,32 +1927,44 @@ commands([{switch_protocol, NewProtocol, ReplyTo, Buffer}], State0=#state{
 		#{tunnel_transport := _} -> ProtoOpts0;
 		_ -> ProtoOpts0#{tunnel_transport => tcp}
 	end,
-	%% @todo Handle error result from Protocol:init/4
-	{ok, StateName, ProtoState} = Protocol:init(ReplyTo, Socket, Transport, ProtoOpts),
-	ProtocolChangedEvent = case ProtoOpts of
-		#{stream_ref := StreamRef} ->
-			#{stream_ref => StreamRef, protocol => Protocol:name()};
-		_ ->
-			#{protocol => Protocol:name()}
-	end,
-	EvHandlerState = EvHandler:protocol_changed(ProtocolChangedEvent, EvHandlerState0),
-	%% We cancel the existing keepalive and, depending on the protocol,
-	%% we enable keepalive again, effectively resetting the timer.
-	State1 = State0#state{protocol=Protocol, protocol_state=ProtoState,
-		event_handler_state=EvHandlerState},
-	case active(State1) of
-		{ok, State2} ->
-			State = keepalive_cancel(State2),
-			Actions = case Buffer of
-				<<>> -> [];
-				_ -> [{next_event, info, {OK, Socket, Buffer}}]
+	case Protocol:init(ReplyTo, Socket, Transport, ProtoOpts) of
+		{ok, StateName, ProtoState} ->
+			case {Protocol, ProtoOpts} of
+				{gun_ws, #{stream_ref := WsRef, headers := WsHeaders}} ->
+					reply(ReplyTo, {gun_upgrade, self(), WsRef,
+						[<<"websocket">>], WsHeaders});
+				_ ->
+					ok
 			end,
-			case Protocol:has_keepalive() of
-				true -> {next_state, StateName, keepalive_timeout(State), Actions};
-				false -> {next_state, StateName, State, Actions}
+			ProtocolChangedEvent = case ProtoOpts of
+				#{stream_ref := StreamRef} ->
+					#{stream_ref => StreamRef, protocol => Protocol:name()};
+				_ ->
+					#{protocol => Protocol:name()}
+			end,
+			EvHandlerState = EvHandler:protocol_changed(ProtocolChangedEvent, EvHandlerState0),
+			%% We cancel the existing keepalive and, depending on the protocol,
+			%% we enable keepalive again, effectively resetting the timer.
+			State1 = State0#state{protocol=Protocol, protocol_state=ProtoState,
+				event_handler_state=EvHandlerState},
+			case active(State1) of
+				{ok, State2} ->
+					State = keepalive_cancel(State2),
+					Actions = case Buffer of
+						<<>> -> [];
+						_ -> [{next_event, info, {OK, Socket, Buffer}}]
+					end,
+					case Protocol:has_keepalive() of
+						true -> {next_state, StateName, keepalive_timeout(State), Actions};
+						false -> {next_state, StateName, State, Actions}
+					end;
+				Disconnect ->
+					Disconnect
 			end;
-		Disconnect ->
-			Disconnect
+		%% The 101 has already been consumed. Stay off HTTP and do not
+		%% report a successful upgrade.
+		Error={error, _} ->
+			disconnect(State0, Error)
 	end;
 %% Perform a TLS handshake.
 commands([TLSHandshake={tls_handshake, _, _, _}], State) ->
