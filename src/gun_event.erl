@@ -288,7 +288,9 @@
 	stream_ref := gun:stream_ref(),
 	reply_to := pid(),
 	endpoint := local | remote,
-	reason := atom()
+	reason := atom(),
+	%% `http` only silences the stream. `http2` and `http3` retire it.
+	protocol => http | http2 | http3
 }.
 -export_type([cancel_event/0]).
 

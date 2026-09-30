@@ -733,7 +733,8 @@ stream_aborted(State0, StreamID, Reason, EvHandler, EvHandlerState0) ->
 				stream_ref => StreamRef, %% @todo stream_ref(State, StreamRef),
 				reply_to => ReplyTo,
 				endpoint => remote,
-				reason => Reason
+				reason => Reason,
+				protocol => http3
 			}, EvHandlerState0),
 			{{state, State}, EvHandlerState};
 		error ->

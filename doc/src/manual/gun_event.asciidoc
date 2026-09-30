@@ -454,7 +454,8 @@ cancel_event() :: #{
     stream_ref := gun:stream_ref(),
     reply_to := pid(),
     endpoint := local | remote,
-    reason := atom()
+    reason := atom(),
+    protocol => http | http2 | http3
 }
 
 cancel(cancel_event(), State) -> State
@@ -464,7 +465,8 @@ A stream has been canceled.
 
 HTTP/1.1 streams can't be canceled at the protocol level. In
 this case Gun will silence the stream for the user but events
-may still occur.
+may still occur. `protocol` is `http` for that case. It is
+`http2` or `http3` when the stream was retired.
 
 HTTP/2 streams can be canceled both by the client and the
 server. Events may still occur for a short time after the
