@@ -167,6 +167,13 @@ Configuration for the HTTP protocol.
 The default value is given next to the option name:
 
 // @todo Document content_handlers and gun_sse_h.
+// gun_sse_h accepts max_event_size (1048576). It bounds one event:
+// its data, event type, id, and the incomplete line still buffered.
+// Comment lines are not counted, nor are events already dispatched
+// from the same read. A single read is parsed only up to the limit.
+// Past the limit HTTP/2 resets the stream, unless this read already
+// ends it. HTTP/1 closes the connection, because the rest of the
+// body cannot be skipped. infinity disables the limit.
 
 closing_timeout (15000)::
 
@@ -269,6 +276,13 @@ Configuration for the HTTP/2 protocol.
 The default value is given next to the option name:
 
 // @todo Document content_handlers and gun_sse_h.
+// gun_sse_h accepts max_event_size (1048576). It bounds one event:
+// its data, event type, id, and the incomplete line still buffered.
+// Comment lines are not counted, nor are events already dispatched
+// from the same read. A single read is parsed only up to the limit.
+// Past the limit HTTP/2 resets the stream, unless this read already
+// ends it. HTTP/1 closes the connection, because the rest of the
+// body cannot be skipped. infinity disables the limit.
 
 closing_timeout (15000)::
 

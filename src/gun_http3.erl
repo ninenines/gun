@@ -335,7 +335,12 @@ data_frame(State0, Stream, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0
 data_frame1(State0, Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
 		%flow=Flow0,
 		handler_state=Handlers0}, IsFin, Data, EvHandler, EvHandlerState0) ->
-	{ok, _Dec, Handlers} = gun_content_handler:handle(IsFin, Data, Handlers0),
+	Handlers = case gun_content_handler:handle(IsFin, Data, Handlers0) of
+		{ok, _Dec, Handlers0_} ->
+			Handlers0_;
+		{ok, _Dec, Handlers0_, cancel} ->
+			Handlers0_
+	end,
 %	Flow = case Flow0 of
 %		infinity -> infinity;
 %		_ -> Flow0 - Dec
