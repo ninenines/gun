@@ -95,6 +95,35 @@ max_headers(_) ->
 	{error, _} = gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+transfer_encoding_chunk_size_limit(_) ->
+	doc("Recipients must anticipate very large chunk sizes. "
+		"Reject messages with chunk sizes above 16 digits. (RFC9112 7.1)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"transfer-encoding: chunked\r\n"
+				"\r\n"
+				"11111111111111111\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{retry => 0}),
+	{ok, http} = gun:await_up(ConnPid),
+	MRef = monitor(process, ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	receive
+		{'DOWN', MRef, process, ConnPid, {shutdown, _}} ->
+			ok;
+		{'DOWN', MRef, process, ConnPid, Reason} ->
+			error({unexpected_crash, Reason})
+	after 2000 ->
+		error(timeout)
+	end.
+
 transfer_encoding_overrides_content_length(_) ->
 	doc("When both transfer-encoding and content-length are provided, "
 		"content-length must be ignored. (RFC7230 3.3.3)"),
