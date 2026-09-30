@@ -603,6 +603,14 @@ push_promise_invalid_authority(_) ->
 		]),
 		%% Receive a PROTOCOL_ERROR RST_STREAM for pushed stream.
 		{ok, << 4:24, 3:8, 2:40, 1:32 >>} = gen_tcp:recv(Socket, 13, 1000),
+		%% The pushed response is in flight. It is dropped, and the
+		%% request on stream 1 still completes. :status 200 is the
+		%% static-table index, so this block does not depend on
+		%% earlier header blocks.
+		ok = Transport:send(Socket, [
+			cow_http2:headers(2, fin, <<136>>),
+			cow_http2:headers(1, fin, <<136>>)
+		]),
 		Parent ! done,
 		timer:sleep(5000)
 	end),
@@ -611,12 +619,135 @@ push_promise_invalid_authority(_) ->
 	}),
 	{ok, http2} = gun:await_up(ConnPid),
 	handshake_completed = receive_from(OriginPid),
-	%% Step 1.
 	StreamRef = gun:get(ConnPid, "/"),
-	%% Confirm we never get the gun_push message.
-	{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
 	receive done -> ok end,
 	gun:close(ConnPid).
+
+max_reserved_streams(_) ->
+	doc("The number of concurrently reserved (pushed) streams must be "
+		"bounded by max_reserved_streams, since server-initiated "
+		"streams are not covered by max_concurrent_streams."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(Parent, _, Socket, Transport) ->
+		Authority = recv_request_authority(Socket, Transport),
+		PushHeaderBlock = push_header_block(Authority, <<"/pushed">>),
+		%% Ten pushes. Only max_reserved_streams (5) are accepted.
+		_ = [ok = Transport:send(Socket, cow_http2:push_promise(1, N, PushHeaderBlock))
+			|| N <- lists:seq(2, 20, 2)],
+		%% The five past the cap are refused, in order.
+		_ = [begin
+			{ok, <<4:24, 3:8, StreamID:40, 7:32>>} = Transport:recv(Socket, 13, 1000)
+		end || StreamID <- lists:seq(12, 20, 2)],
+		%% The pushed responses are already in flight. They must be
+		%% ignored; a stream error here would drop the parent response.
+		_ = [ok = Transport:send(Socket, cow_http2:headers(StreamID, fin, <<136>>))
+			|| StreamID <- lists:seq(12, 20, 2)],
+		ok = Transport:send(Socket, cow_http2:headers(1, fin, <<136>>)),
+		Parent ! done,
+		timer:sleep(5000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		protocols => [{http2, #{max_reserved_streams => 5}}]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	receive done -> ok end,
+	5 = count_gun_push(ConnPid, StreamRef, 0),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+max_reserved_streams_zero(_) ->
+	doc("max_reserved_streams set to 0 rejects every push. The pushed "
+		"response that follows, including a header block split across "
+		"CONTINUATION, is decoded and dropped so the parent response "
+		"can still be read."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(Parent, _, Socket, Transport) ->
+		Authority = recv_request_authority(Socket, Transport),
+		ok = Transport:send(Socket, cow_http2:push_promise(1, 2,
+			push_header_block(Authority, <<"/pushed">>))),
+		%% refused_stream is error code 7.
+		{ok, <<4:24, 3:8, 2:40, 7:32>>} = Transport:recv(Socket, 13, 1000),
+		%% :status 200, then an indexed x-drop. The CONTINUATION
+		%% finishes the block. The parent response refers to that
+		%% dynamic-table entry, so the block must be decoded.
+		Refused = <<136, 16#40, 6, "x-drop", 7, "dropped">>,
+		<<Part1:5/binary, Part2/binary>> = Refused,
+		Len1 = byte_size(Part1),
+		Len2 = byte_size(Part2),
+		ok = Transport:send(Socket, [
+			<<Len1:24, 1:8, 0:5, 0:1, 0:1, 1:1, 0:1, 2:31>>, Part1,
+			<<Len2:24, 9:8, 0:5, 1:1, 0:3, 2:31>>, Part2,
+			%% :status 204 and the x-drop entry just inserted.
+			cow_http2:headers(1, fin, <<137, 190>>)
+		]),
+		Parent ! done,
+		timer:sleep(5000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		protocols => [{http2, #{max_reserved_streams => 0}}]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, fin, 204, Headers} = gun:await(ConnPid, StreamRef),
+	{_, <<"dropped">>} = lists:keyfind(<<"x-drop">>, 1, Headers),
+	receive done -> ok end,
+	gun:close(ConnPid).
+
+push_promise_odd_promised_stream_id(_) ->
+	doc("A PUSH_PROMISE whose promised stream id is odd is a "
+		"connection error. An odd id can otherwise overwrite a "
+		"live client stream. (RFC7540 5.1.1, RFC7540 6.6)"),
+	do_reject_promised_stream_id(1).
+
+push_promise_zero_promised_stream_id(_) ->
+	doc("A PUSH_PROMISE whose promised stream id is 0 is a "
+		"connection error. Stream id 0 is even but not a server "
+		"stream. (RFC7540 5.1.1, RFC7540 6.6)"),
+	do_reject_promised_stream_id(0).
+
+do_reject_promised_stream_id(PromisedStreamID) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(Parent, _, Socket, Transport) ->
+		Authority = recv_request_authority(Socket, Transport),
+		ok = Transport:send(Socket, cow_http2:push_promise(1, PromisedStreamID,
+			push_header_block(Authority, <<"/pushed">>))),
+		%% GOAWAY, error code protocol_error (1).
+		{ok, <<_:24, 7:8, _:72, 1:32>>} = Transport:recv(Socket, 17, 1000),
+		Parent ! done,
+		timer:sleep(5000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{protocols => [http2]}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {protocol_error, _}}} = gun:await(ConnPid, StreamRef),
+	receive done -> ok end,
+	gun:close(ConnPid).
+
+recv_request_authority(Socket, Transport) ->
+	{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
+	{ok, HeaderBlock} = Transport:recv(Socket, SkipLen, 1000),
+	{Headers, _} = cow_hpack:decode(HeaderBlock),
+	{_, Authority} = lists:keyfind(<<":authority">>, 1, Headers),
+	Authority.
+
+push_header_block(Authority, Path) ->
+	{Block, _} = cow_hpack:encode([
+		{<<":method">>, <<"GET">>},
+		{<<":scheme">>, <<"http">>},
+		{<<":authority">>, Authority},
+		{<<":path">>, Path}
+	]),
+	Block.
+
+count_gun_push(ConnPid, StreamRef, N) ->
+	receive
+		{gun_push, ConnPid, StreamRef, _, _, _, _} ->
+			count_gun_push(ConnPid, StreamRef, N + 1)
+	after 500 ->
+		N
+	end.
 
 connect_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "

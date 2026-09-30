@@ -239,6 +239,7 @@ http2_opts() :: #{
     flow                        => pos_integer(),
     keepalive                   => timeout(),
     keepalive_tolerance         => non_neg_integer(),
+    max_reserved_streams        => non_neg_integer(),
     notify_settings_changed     => boolean(),
 
     %% HTTP/2 state machine configuration.
@@ -296,6 +297,16 @@ The number of unacknowledged pings in flight that are
 tolerated before the connection is closed. By default
 this mechanism is disabled even if `keepalive` is
 enabled.
+
+max_reserved_streams (100)::
+
+Maximum number of concurrently reserved (server-pushed)
+streams. Unlike client-initiated streams, streams reserved
+via PUSH_PROMISE are not bounded by `max_concurrent_streams`;
+this option provides an equivalent bound for them. Gun
+rejects any push beyond this limit with a `refused_stream`
+error instead of accepting it. Set to `0` to reject all
+pushes.
 
 notify_settings_changed (false)::
 
