@@ -573,10 +573,15 @@ degraded(info, Msg={gun_up, ConnPid, _}, StateData=#state{opts=Opts, conns=Conns
 %	;
 degraded(info, Msg={gun_upgrade, ConnPid, _, _, _},
 		StateData=#state{opts=#{setup_fun := {SetupFun, _}}, conns=Conns}) ->
-	%% @todo Probably shouldn't crash if the state is incorrect, that's programmer error though.
-	#{ConnPid := {setup, SetupState0}} = Conns,
-	%% We run the setup function again using the state previously kept.
-	degraded_setup(ConnPid, Msg, StateData, SetupFun, SetupState0);
+	case Conns of
+		#{ConnPid := {setup, SetupState0}} ->
+			%% We run the setup function again using the state previously kept.
+			degraded_setup(ConnPid, Msg, StateData, SetupFun, SetupState0);
+		%% Already up, down, or not tracked. setup_fun may have
+		%% returned up before this upgrade reply arrived.
+		_ ->
+			keep_state_and_data
+	end;
 degraded(Type, Event, StateData) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, StateData).
 

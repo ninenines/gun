@@ -166,6 +166,63 @@ setup_settings_no_crash(Config) ->
 	true = map_size(Settings2) > 0,
 	gun_pool:stop_pool("localhost", Port2, #{scope => Scope2}).
 
+stray_gun_upgrade_no_crash(Config) ->
+	doc("setup_fun may return before the Websocket upgrade reply "
+		"arrives. That gun_upgrade must not crash the pool while "
+		"another connection is still in setup."),
+	Port = config(port, Config),
+	Scope = ?FUNCTION_NAME,
+	Parent = self(),
+	Tid = ets:new(?FUNCTION_NAME, [public, set]),
+	ets:insert(Tid, {n, 0}),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{
+			protocols => [http],
+			event_handler => {gun_test_event_h, Parent},
+			ws_opts => #{
+				default_protocol => pool_ws_handler,
+				user_opts => Parent
+			}
+		},
+		scope => Scope,
+		size => 2,
+		setup_fun => {fun
+			(ConnPid, {gun_up, _, http}, SetupState) ->
+				case ets:update_counter(Tid, n, 1) of
+					1 ->
+						%% The upgrade reply is delivered to the pool.
+						%% Returning up now leaves that gun_upgrade for
+						%% a connection that is no longer in setup.
+						_ = gun:ws_upgrade(ConnPid, "/ws"),
+						Parent ! {up, ConnPid},
+						{up, http, #{}};
+					_ ->
+						Parent ! {setup, ConnPid},
+						{setup, SetupState}
+				end;
+			(_, {gun_upgrade, _, _, _, _}, SetupState) ->
+				ets:insert(Tid, {upgrade, true}),
+				{setup, SetupState};
+			(_, _, SetupState) ->
+				{setup, SetupState}
+		end, undefined}
+	}),
+	{UpPid, SetupPid} = do_receive_up_and_setup(),
+	%% gun_upgrade is sent before protocol_changed, so this
+	%% info call is queued behind that gun_upgrade.
+	receive
+		{UpPid, protocol_changed, #{protocol := ws}} -> ok
+	after 5000 ->
+		error(ws_timeout)
+	end,
+	{degraded, #{conns := #{
+		UpPid := {up, http, #{}},
+		SetupPid := {setup, _}
+	}}} = gun_pool:info(ManagerPid),
+	[] = ets:lookup(Tid, upgrade),
+	true = ets:delete(Tid),
+	gun_pool:stop_pool("localhost", Port, #{scope => Scope}).
+
 %% #state{} keeps buffered HTTP/2 SETTINGS in this field.
 do_http2_settings(ManagerPid) ->
 	{_, {state, _, _, _, _, _, _, _, HTTP2Settings}} = sys:get_state(ManagerPid),
@@ -176,6 +233,21 @@ do_receive_tag(Tag) ->
 		{Tag, Pid} when is_pid(Pid) -> Pid
 	after 5000 ->
 		error({timeout, Tag})
+	end.
+
+do_receive_up_and_setup() ->
+	do_receive_up_and_setup(undefined, undefined).
+
+do_receive_up_and_setup(Up, Setup) when is_pid(Up), is_pid(Setup) ->
+	{Up, Setup};
+do_receive_up_and_setup(Up, Setup) ->
+	receive
+		{up, Pid} when is_pid(Pid) ->
+			do_receive_up_and_setup(Pid, Setup);
+		{setup, Pid} when is_pid(Pid) ->
+			do_receive_up_and_setup(Up, Pid)
+	after 5000 ->
+		error({timeout, Up, Setup})
 	end.
 
 do_ping(ConnPid) ->
