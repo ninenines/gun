@@ -96,11 +96,94 @@ do_hold_then_close(Parent, ListenSocket, Socket, Transport) ->
 	{ok, Socket2} = gen_tcp:accept(ListenSocket, 5000),
 	receive {Parent, stop} -> Transport:close(Socket2) end.
 
+setup_settings_no_crash(Config) ->
+	doc("SETTINGS that arrive while an HTTP/2 connection is still in "
+		"setup are kept when the Websocket upgrade completes it. "
+		"SETTINGS after the connection is up are kept as well."),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [], #{
+		enable_connect_protocol => true,
+		env => #{dispatch => cowboy_router:compile([{'_', [
+			{"/ws", ws_echo_h, []}
+		]}])}
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	Scope = ?FUNCTION_NAME,
+	Parent = self(),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{protocols => [http2]},
+		scope => Scope,
+		size => 1,
+		setup_fun => {fun
+			(ConnPid, {gun_up, _, http2}, SetupState) ->
+				Parent ! {setup, ConnPid},
+				{setup, SetupState};
+			(ConnPid, {gun_upgrade, _, StreamRef, _, _}, _) ->
+				Parent ! {up, ConnPid, StreamRef},
+				{up, http2, #{ws => StreamRef}};
+			(_, _, SetupState) ->
+				{setup, SetupState}
+		end, undefined}
+	}),
+	ConnPid = do_receive_tag(setup),
+	%% The server preface is SETTINGS. The PING ack is a later
+	%% frame, so settings_changed is already queued for the pool.
+	ok = do_ping(ConnPid),
+	{degraded, #{conns := #{ConnPid := {setup, _}}}} = gun_pool:info(ManagerPid),
+	#{ConnPid := Settings} = do_http2_settings(ManagerPid),
+	true = maps:is_key(enable_connect_protocol, Settings),
+	%% Extended CONNECT is sent once SETTINGS are buffered. The
+	%% gun_upgrade that follows is what marks the connection up.
+	_ = gun:ws_upgrade(ConnPid, "/ws", [], #{
+		reply_to => ManagerPid,
+		default_protocol => pool_ws_handler,
+		user_opts => self()
+	}),
+	StreamRef = receive
+		{up, Pid, Ref} when Pid =:= ConnPid -> Ref
+	after 5000 ->
+		error(upgrade_timeout)
+	end,
+	{operational, #{
+		conns := #{ConnPid := {up, http2, Settings}},
+		conns_meta := #{ConnPid := #{ws := StreamRef}}
+	}} = gun_pool:info(ManagerPid),
+	true = is_reference(StreamRef),
+	#{} = do_http2_settings(ManagerPid),
+	gun_pool:stop_pool("localhost", Port, #{scope => Scope}),
+	cowboy:stop_listener(?FUNCTION_NAME),
+	Port2 = config(port, Config),
+	Scope2 = {?FUNCTION_NAME, up},
+	{ok, ManagerPid2} = gun_pool:start_pool("localhost", Port2, #{
+		conn_opts => #{protocols => [http2]},
+		scope => Scope2,
+		size => 1
+	}),
+	gun_pool:await_up(ManagerPid2),
+	{operational, #{conns := Conns2}} = gun_pool:info(ManagerPid2),
+	[ConnPid2] = maps:keys(Conns2),
+	ok = do_ping(ConnPid2),
+	{operational, #{conns := #{ConnPid2 := {up, http2, Settings2}}}} = gun_pool:info(ManagerPid2),
+	true = map_size(Settings2) > 0,
+	gun_pool:stop_pool("localhost", Port2, #{scope => Scope2}).
+
+%% #state{} keeps buffered HTTP/2 SETTINGS in this field.
+do_http2_settings(ManagerPid) ->
+	{_, {state, _, _, _, _, _, _, _, HTTP2Settings}} = sys:get_state(ManagerPid),
+	HTTP2Settings.
+
 do_receive_tag(Tag) ->
 	receive
 		{Tag, Pid} when is_pid(Pid) -> Pid
 	after 5000 ->
 		error({timeout, Tag})
+	end.
+
+do_ping(ConnPid) ->
+	Ref = gun:ping(ConnPid),
+	receive
+		{gun_notify, ConnPid, ping_ack, Ref} -> ok
+	after 5000 ->
+		error({ping_timeout, ConnPid})
 	end.
 
 hello_pool_h1(Config) ->
