@@ -18,6 +18,7 @@
 
 -import(ct_helper, [doc/1]).
 -import(ct_helper, [config/2]).
+-import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
 all() ->
@@ -48,6 +49,59 @@ do_proto_opts() ->
 	}.
 
 %% Tests.
+
+setup_down_no_crash(_Config) ->
+	doc("A socket close while setup is in progress sends gun_down and "
+		"the Gun process retries. The same pid must be marked down, "
+		"then become setup again on the next gun_up."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http, fun do_hold_then_close/4),
+	Scope = ?FUNCTION_NAME,
+	Parent = self(),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", OriginPort, #{
+		conn_opts => #{
+			protocols => [http],
+			retry => 5,
+			retry_fun => fun(_, _) -> #{retries => 4, timeout => 800} end,
+			event_handler => {gun_test_event_h, Parent}
+		},
+		scope => Scope,
+		size => 1,
+		setup_fun => {fun(ConnPid, {gun_up, _, _}, SetupState) ->
+			Parent ! {setup, ConnPid},
+			{setup, SetupState}
+		end, undefined}
+	}),
+	handshake_completed = receive_from(OriginPid),
+	ConnPid = do_receive_tag(setup),
+	{degraded, #{conns := #{ConnPid := {setup, _}}}} = gun_pool:info(ManagerPid),
+	OriginPid ! {self(), close_it},
+	receive
+		{ConnPid, disconnect, _} -> ok
+	after 5000 ->
+		error(disconnect_timeout)
+	end,
+	%% disconnect/2 runs this event before it sends gun_down.
+	%% gun:info/1 returns after that send, so the pool call is
+	%% queued behind gun_down.
+	_ = gun:info(ConnPid),
+	{degraded, #{conns := #{ConnPid := down}}} = gun_pool:info(ManagerPid),
+	ConnPid = do_receive_tag(setup),
+	{degraded, #{conns := #{ConnPid := {setup, _}}}} = gun_pool:info(ManagerPid),
+	OriginPid ! {self(), stop},
+	gun_pool:stop_pool("localhost", OriginPort, #{scope => Scope}).
+
+do_hold_then_close(Parent, ListenSocket, Socket, Transport) ->
+	receive {Parent, close_it} -> ok end,
+	Transport:close(Socket),
+	{ok, Socket2} = gen_tcp:accept(ListenSocket, 5000),
+	receive {Parent, stop} -> Transport:close(Socket2) end.
+
+do_receive_tag(Tag) ->
+	receive
+		{Tag, Pid} when is_pid(Pid) -> Pid
+	after 5000 ->
+		error({timeout, Tag})
+	end.
 
 hello_pool_h1(Config) ->
 	doc("Confirm the pool can be used for HTTP/1.1 connections."),

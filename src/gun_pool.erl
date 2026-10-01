@@ -628,9 +628,16 @@ handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _, StateD
 	%% Assert that the state is correct.
 	{up, http2, _} = maps:get(ConnPid, Conns),
 	{keep_state, StateData#state{conns=Conns#{ConnPid => {up, http2, Settings}}}};
-handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _, StateData=#state{conns=Conns}) ->
-	{up, Protocol, _} = maps:get(ConnPid, Conns),
-	{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}}};
+%% The Gun process stays up across gun_down when it will retry. The
+%% same pid must be down, or the next gun_up has no clause.
+handle_common(info, {gun_down, ConnPid, _Protocol, _Reason, _KilledStreams}, _,
+		StateData=#state{conns=Conns}) ->
+	case maps:is_key(ConnPid, Conns) of
+		true ->
+			{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}}};
+		false ->
+			keep_state_and_data
+	end;
 %% @todo We do not want to reconnect automatically when the pool is dynamic.
 handle_common(info, {'DOWN', _MRef, process, ConnPid0, Reason}, _,
 		StateData=#state{host=Host, port=Port, opts=Opts, table=Tid, conns=Conns0, conns_meta=ConnsMeta0}) ->
