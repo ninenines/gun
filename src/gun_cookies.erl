@@ -15,6 +15,7 @@
 -module(gun_cookies).
 
 -export([add_cookie_header/5]).
+-export([cookie_sendable/1]).
 -export([domain_match/2]).
 -export([gc/1]).
 -export([path_match/2]).
@@ -96,15 +97,32 @@ add_cookie_header(Scheme, Authority, PathWithQs, Headers0, Store0) ->
 		path => iolist_to_binary(Path)
 	}, [return_map]),
 	{ok, Cookies0, Store} = query(Store0, URIMap),
-	Headers = case Cookies0 of
+	%% One pair cookie/1 refuses must not discard the rest of the header.
+	%% The list store has already removed that cookie; another store may not.
+	Cookies = lists:filtermap(fun cookie_pair/1, Cookies0),
+	Headers = case Cookies of
 		[] ->
 			Headers0;
 		_ ->
-			Cookies = [{Name, Value} || #{name := Name, value := Value} <- Cookies0],
 			%% We put cookies at the end of the headers list as it's the least important header.
-			Headers0 ++ [{<<"cookie">>, cow_cookie:cookie(Cookies)}]
+			Headers0 ++ [{<<"cookie">>, lists:join(<<"; ">>, Cookies)}]
 	end,
 	{Headers, Store}.
+
+%% cookie/1 rejects a semicolon, '=' in the name, and any control
+%% other than tab. Those octets cannot go into a Cookie header.
+cookie_pair(#{name := Name, value := Value}) when is_binary(Name), is_binary(Value) ->
+	try cow_cookie:cookie([{Name, Value}]) of
+		Pair -> {true, Pair}
+	catch error:badarg ->
+		false
+	end;
+cookie_pair(_) ->
+	false.
+
+-spec cookie_sendable(map()) -> boolean().
+cookie_sendable(Cookie) ->
+	cookie_pair(Cookie) =/= false.
 
 -spec domain_match(binary(), binary()) -> boolean().
 domain_match(String, String) ->
@@ -357,15 +375,27 @@ ascii_lower_byte(C) when C >= $A, C =< $Z -> C + 32;
 ascii_lower_byte(C) -> C.
 
 set_cookie_store(Store0, Cookie) ->
-	Match = maps:with([name, domain, host_only, path], Cookie),
-	case set_cookie_get_exact_match(Store0, Match) of
-		{ok, #{creation_time := CreationTime}, Store} ->
-			%% This is where we would reject a new non-HTTP cookie
-			%% if the OldCookie has http_only set to true.
-			store(Store, Cookie#{creation_time => CreationTime});
-		error ->
-			store(Store0, Cookie)
+	%% cookie/1 would reject this value. Do not replace the cookie
+	%% already stored. An expiry in the past still deletes it.
+	case cookie_sendable(Cookie) orelse cookie_expired(Cookie) of
+		false ->
+			{ok, Store0};
+		true ->
+			Match = maps:with([name, domain, host_only, path], Cookie),
+			case set_cookie_get_exact_match(Store0, Match) of
+				{ok, #{creation_time := CreationTime}, Store} ->
+					%% This is where we would reject a new non-HTTP cookie
+					%% if the OldCookie has http_only set to true.
+					store(Store, Cookie#{creation_time => CreationTime});
+				error ->
+					store(Store0, Cookie)
+			end
 	end.
+
+cookie_expired(#{expiry_time := infinity}) ->
+	false;
+cookie_expired(#{expiry_time := ExpiryTime}) ->
+	erlang:universaltime() >= ExpiryTime.
 
 set_cookie_get_exact_match({Mod, State0}, Match) ->
 	case Mod:set_cookie_get_exact_match(State0, Match) of
@@ -1080,4 +1110,99 @@ query_drops_expired_test() ->
 	{gun_cookies_list, #{cookies := Left}} = Store,
 	[<<"live">>] = [N || #{name := N} <- Left],
 	ok.
+
+%% A cookie cookie/1 cannot serialize is omitted from the header
+%% and removed from the jar. The other cookies are still sent.
+query_drops_unsendable_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Now = erlang:universaltime(),
+	{gun_cookies_list, State0} = gun_cookies_list:init(),
+	Base = #{
+		domain => <<"example.org">>,
+		path => <<"/">>,
+		creation_time => Now,
+		last_access_time => Now,
+		expiry_time => infinity,
+		persistent => false,
+		host_only => true,
+		secure_only => false,
+		http_only => false,
+		same_site => default
+	},
+	Good = [
+		Base#{name => <<"good">>, value => <<"yes">>},
+		Base#{name => <<"a b">>, value => <<"c,d">>},
+		Base#{name => <<"tab">>, value => <<"a\tb">>},
+		Base#{name => <<"high">>, value => <<128>>},
+		Base#{name => <<"keep">>, value => <<"1">>, domain => <<"other.example">>}
+	],
+	Bad = [
+		Base#{name => <<"crlf">>, value => <<"b\r\nX: y">>},
+		Base#{name => <<"lf">>, value => <<"b\n">>},
+		Base#{name => <<"nul">>, value => <<0>>},
+		Base#{name => <<"del">>, value => <<127>>},
+		Base#{name => <<"semi">>, value => <<"a;b">>},
+		Base#{name => <<"a=b">>, value => <<"c">>},
+		Base#{name => <<"away">>, value => <<1>>, domain => <<"other.example">>}
+	],
+	Store0 = {gun_cookies_list, State0#{cookies => Good ++ Bad}},
+	{Headers, Store1} = add_cookie_header(<<"http">>, <<"example.org">>, <<"/">>,
+		[{<<"accept">>, <<"*/*">>}], Store0),
+	[{<<"accept">>, <<"*/*">>}, {<<"cookie">>, Cookie}] = Headers,
+	Bin = iolist_to_binary(Cookie),
+	nomatch = binary:match(Bin, <<"crlf">>),
+	nomatch = binary:match(Bin, <<"\r">>),
+	nomatch = binary:match(Bin, <<"\n">>),
+	nomatch = binary:match(Bin, <<";b">>),
+	nomatch = binary:match(Bin, <<"a=b=">>),
+	{_, _} = binary:match(Bin, <<"good=yes">>),
+	{_, _} = binary:match(Bin, <<"a b=c,d">>),
+	{_, _} = binary:match(Bin, <<"tab=a\tb">>),
+	{_, _} = binary:match(Bin, <<"high=", 128>>),
+	[<<"a b">>, <<"good">>, <<"high">>, <<"keep">>, <<"tab">>] =
+		lists:sort([N || #{name := N} <- cookies_of(Store1)]),
+	%% Nothing sendable: no Cookie header, and the bad cookies are gone.
+	StoreBad = {gun_cookies_list, State0#{cookies => Bad}},
+	{[{<<"accept">>, <<"*/*">>}], Store2} = add_cookie_header(
+		<<"http">>, <<"example.org">>, <<"/">>,
+		[{<<"accept">>, <<"*/*">>}], StoreBad),
+	[] = cookies_of(Store2),
+	%% gc removes them without a request.
+	{ok, Store3} = gc(Store0),
+	[<<"a b">>, <<"good">>, <<"high">>, <<"keep">>, <<"tab">>] =
+		lists:sort([N || #{name := N} <- cookies_of(Store3)]),
+	%% A later insert drops bad cookies already in the jar.
+	{ok, Store4} = set_cookie(StoreBad, URI, <<"new">>, <<"1">>, #{}),
+	[<<"new">>] = lists:sort([N || #{name := N} <- cookies_of(Store4)]),
+	%% An unsendable insert does not take a slot or evict a good cookie.
+	{ok, Store5} = set_cookie(Store4, URI, <<"nope">>, <<"a;b">>, #{}),
+	[<<"new">>] = lists:sort([N || #{name := N} <- cookies_of(Store5)]),
+	Init = gun_cookies_list:init(#{max_cookies => 1, max_cookies_per_domain => 1}),
+	{ok, Full} = set_cookie(Init, URI, <<"a">>, <<"1">>, #{}),
+	{ok, Full2} = set_cookie(Full, URI, <<"b">>, <<"x;y">>, #{}),
+	[<<"a">>] = lists:sort([N || #{name := N} <- cookies_of(Full2)]),
+	{[{<<"cookie">>, Cookie1}], _} = add_cookie_header(
+		<<"http">>, <<"example.org">>, <<"/">>, [], Full2),
+	<<"a=1">> = iolist_to_binary(Cookie1),
+	%% Replacing a stored cookie with a value cookie/1 rejects keeps the old one.
+	{ok, Repl} = set_cookie(Full, URI, <<"a">>, <<"x;y">>, #{}),
+	[#{name := <<"a">>, value := <<"1">>}] = cookies_of(Repl),
+	{ok, Two} = set_cookie(gun_cookies_list:init(), URI, <<"a">>, <<"1">>, #{}),
+	{ok, Two1} = set_cookie(Two, URI, <<"b">>, <<"2">>, #{}),
+	{[{<<"cookie">>, Cookie2}], _} = add_cookie_header(
+		<<"http">>, <<"example.org">>, <<"/">>, [], Two1),
+	<<"a=1; b=2">> = iolist_to_binary(Cookie2),
+	{ok, Two2} = set_cookie(Two1, URI, <<"a">>, <<"x;y">>, #{}),
+	[<<"a">>, <<"b">>] = lists:sort([N || #{name := N} <- cookies_of(Two2)]),
+	[<<"1">>] = [V || #{name := <<"a">>, value := V} <- cookies_of(Two2)],
+	%% A past expiry still deletes, including when the value cannot be sent.
+	Past = {{2020, 1, 1}, {0, 0, 0}},
+	{ok, Gone} = set_cookie(Full, URI, <<"a">>, <<"x;y">>, #{max_age => Past}),
+	[] = cookies_of(Gone),
+	{ok, Gone2} = set_cookie(Two1, URI, <<"a">>, <<"1">>, #{max_age => Past}),
+	[<<"b">>] = [N || #{name := N} <- cookies_of(Gone2)],
+	ok.
+
+cookies_of({gun_cookies_list, #{cookies := Cookies}}) ->
+	Cookies.
 -endif.
