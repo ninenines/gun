@@ -287,18 +287,15 @@ set_cookie_secure_match({Mod, State}, Match) ->
 
 set_cookie2(Store, _URI, Attrs, Cookie0) ->
 	Cookie = Cookie0#{same_site => maps:get(same_site, Attrs, default)},
-	%% This is where we would perform the same-site checks.
-	%%
-	%% It seems that an option would need to be added to Gun
-	%% in order to define the "site for cookies" value. It is
-	%% not the same as the site identified by the URI. Although
-	%% I do wonder if in the case of server push we may consider
-	%% the requested URI to be the "site for cookies", at least
-	%% by default.
-	%%
-	%% The URI argument will be used if/when the above gets
-	%% implemented.
-	set_cookie3(Store, Attrs, Cookie).
+	%% Gun has no document, so a request is same-site (RFC6265bis 5.2).
+	%% SameSite=Strict, Lax and Default are therefore stored and sent.
+	%% SameSite=None still requires the Secure attribute.
+	case Cookie of
+		#{same_site := none, secure_only := false} ->
+			{error, samesite_none_requires_secure};
+		_ ->
+			set_cookie3(Store, Attrs, Cookie)
+	end.
 
 set_cookie3(Store, Attrs, Cookie=#{name := Name,
 		host_only := HostOnly, secure_only := SecureOnly}) ->
@@ -961,4 +958,22 @@ wpt_secure_http_test() ->
 	ok.
 
 %% WPT: secure/set-from-ws* (Anything special required?)
+
+%% SameSite=None is stored only when the cookie is also Secure.
+samesite_none_requires_secure_test() ->
+	Https = #{scheme => <<"https">>, host => <<"example.org">>, path => <<"/">>},
+	Http = Https#{scheme := <<"http">>},
+	{error, samesite_none_requires_secure} = set_cookie(
+		gun_cookies_list:init(), Https, <<"a">>, <<"b">>, #{same_site => none}),
+	{error, samesite_none_requires_secure} = set_cookie(
+		gun_cookies_list:init(), Http, <<"a">>, <<"b">>, #{same_site => none}),
+	{ok, _} = set_cookie(gun_cookies_list:init(), Https, <<"a">>, <<"b">>,
+		#{same_site => none, secure => true}),
+	%% Secure is rejected first on an insecure request.
+	{error, secure_scheme_only} = set_cookie(gun_cookies_list:init(), Http,
+		<<"a">>, <<"b">>, #{same_site => none, secure => true}),
+	{ok, Store} = set_cookie(gun_cookies_list:init(), Http, <<"a">>, <<"b">>,
+		#{same_site => lax}),
+	{ok, [#{same_site := lax}], _} = query(Store, Http),
+	ok.
 -endif.
