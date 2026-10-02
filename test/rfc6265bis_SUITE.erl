@@ -317,13 +317,14 @@ wpt_attributes_ctl_httponly(Config) ->
 		<<"testhttponly=t">>
 	} end, "/cookies/attributes", Config).
 
+%% None without Secure is not stored.
 wpt_attributes_ctl_samesite(Config) ->
 	doc("Test cookie attribute parsing with control characters: "
 		"in SameSite attribute value."),
 	do_wpt_ctl_test(fun(CTL) -> {
 		<<"testsamesite">>,
 		<<"testsamesite=t; SameSite=No", CTL, "ne; SameSite=None">>,
-		<<"testsamesite=t">>
+		<<>>
 	} end, "/cookies/attributes", Config).
 
 wpt_attributes_ctl_samesite2(Config) ->
@@ -332,7 +333,7 @@ wpt_attributes_ctl_samesite2(Config) ->
 	do_wpt_ctl_test(fun(CTL) -> {
 		<<"testsamesite2">>,
 		<<"testsamesite2=t; SameSite=None", CTL>>,
-		<<"testsamesite2=t">>
+		<<>>
 	} end, "/cookies/attributes", Config).
 
 %% @todo Redirect cookie test.
