@@ -300,18 +300,32 @@ set_cookie2(Store, _URI, Attrs, Cookie0) ->
 set_cookie3(Store, Attrs, Cookie=#{name := Name,
 		host_only := HostOnly, secure_only := SecureOnly}) ->
 	Path = maps:get(path, Attrs, undefined),
-	case Name of
-		<<"__Secure-",_/bits>> when not SecureOnly ->
+	case known_prefix(Name) of
+		secure when not SecureOnly ->
 			{error, name_prefix_secure_requires_secure_only};
-		<<"__Host-",_/bits>> when not SecureOnly ->
+		host when not SecureOnly ->
 			{error, name_prefix_host_requires_secure_only};
-		<<"__Host-",_/bits>> when not HostOnly ->
+		host when not HostOnly ->
 			{error, name_prefix_host_requires_host_only};
-		<<"__Host-",_/bits>> when Path =/= <<"/">> ->
+		host when Path =/= <<"/">> ->
 			{error, name_prefix_host_requires_top_level_path};
 		_ ->
 			set_cookie_store(Store, Cookie)
 	end.
+
+%% Prefixes are matched case-insensitively. The rest of the name is not.
+known_prefix(<<"__", Chars:4/binary, "-", _/bits>>) ->
+	case ascii_lower(Chars) of
+		<<"host">> -> host;
+		_ -> none
+	end;
+known_prefix(<<"__", Chars:6/binary, "-", _/bits>>) ->
+	case ascii_lower(Chars) of
+		<<"secure">> -> secure;
+		_ -> none
+	end;
+known_prefix(_) ->
+	none.
 
 is_public_suffix(Domain) ->
 	try gun_public_suffix:match(Domain)
@@ -958,6 +972,41 @@ wpt_secure_http_test() ->
 	ok.
 
 %% WPT: secure/set-from-ws* (Anything special required?)
+
+prefix_case_insensitive_test() ->
+	Https = #{scheme => <<"https">>, host => <<"example.org">>, path => <<"/">>},
+	{error, name_prefix_secure_requires_secure_only} = set_cookie(
+		gun_cookies_list:init(), Https, <<"__secure-foo">>, <<"bar">>, #{}),
+	{error, name_prefix_secure_requires_secure_only} = set_cookie(
+		gun_cookies_list:init(), Https, <<"__SeCuRe-foo">>, <<"bar">>, #{}),
+	{error, name_prefix_secure_requires_secure_only} = set_cookie(
+		gun_cookies_list:init(), Https, <<"__SEcure-foo">>, <<"bar">>, #{}),
+	{ok, StoreS} = set_cookie(gun_cookies_list:init(), Https,
+		<<"__sEcUrE-foo">>, <<"bar">>, #{secure => true}),
+	{ok, [#{name := <<"__sEcUrE-foo">>}], _} = query(StoreS, Https),
+	{error, name_prefix_host_requires_secure_only} = set_cookie(
+		gun_cookies_list:init(), Https, <<"__HOST-foo">>, <<"bar">>,
+		#{path => <<"/">>}),
+	{error, name_prefix_host_requires_host_only} = set_cookie(
+		gun_cookies_list:init(), Https, <<"__host-foo">>, <<"bar">>,
+		#{secure => true, path => <<"/">>, domain => <<"example.org">>}),
+	{error, name_prefix_host_requires_top_level_path} = set_cookie(
+		gun_cookies_list:init(), Https, <<"__HoSt-foo">>, <<"bar">>,
+		#{secure => true, path => <<"/cookies">>}),
+	{ok, StoreH} = set_cookie(gun_cookies_list:init(), Https,
+		<<"__HoSt-foo">>, <<"bar">>, #{secure => true, path => <<"/">>}),
+	{ok, [#{name := <<"__HoSt-foo">>}], _} = query(StoreH, Https),
+	%% A non-UTF-8 octet inside the prefix window must not crash.
+	%% __host- is 7 octets and __secure- is 9.
+	{ok, _} = set_cookie(gun_cookies_list:init(), Https,
+		<<255, 255, 255, 255, 255, 255, 255, 255, 255>>, <<"v">>, #{}),
+	{ok, _} = set_cookie(gun_cookies_list:init(), Https,
+		<<"__Ho", 255, "t-x">>, <<"v">>, #{secure => true, path => <<"/">>}),
+	Name = <<"__host", 16#C3, 16#A9>>,
+	{ok, StoreN} = set_cookie(gun_cookies_list:init(), Https,
+		Name, <<"1">>, #{}),
+	{ok, [#{name := Name}], _} = query(StoreN, Https),
+	ok.
 
 %% SameSite=None is stored only when the cookie is also Secure.
 samesite_none_requires_secure_test() ->
