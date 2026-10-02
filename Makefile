@@ -15,7 +15,7 @@ CT_OPTS += -ct_hooks gun_ct_hook [] # -boot start_sasl
 LOCAL_DEPS = public_key ssl
 
 DEPS = cowlib
-dep_cowlib = git https://github.com/ninenines/cowlib 2.20.0
+dep_cowlib = git https://github.com/ninenines/cowlib cookie-rfc6265bis-update
 
 ifeq ($(GUN_QUICER),1)
 DEPS += quicer
@@ -141,14 +141,6 @@ gen-idna: $(DEPS_DIR)/idna
 gen: gen-idna | $(ERLANG_MK_TMP)
 	$(gen_verbose) wget -qO - $(GEN_URL) > $(GEN_DAT)
 	$(gen_verbose) $(call erlang,$(call gen.erl))
-
-# Automatically update the http-state files in test/wpt/cookies.
-
-update-cookie-tests:
-	$(verbose) rm -rf $(ERLANG_MK_TMP)/wpt
-	$(verbose) rm -f test/wpt/cookies/*
-	$(verbose) git clone https://github.com/web-platform-tests/wpt $(ERLANG_MK_TMP)/wpt
-	$(verbose) cp $(ERLANG_MK_TMP)/wpt/cookies/http-state/resources/test-files/* test/wpt/cookies/
 
 # Prepare for the release.
 

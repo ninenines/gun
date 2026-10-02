@@ -59,8 +59,16 @@ query(State=#{cookies := Cookies}, URI) ->
 
 query(State, _, [], _, CookieList, Cookies) ->
 	{ok, CookieList, State#{cookies => Cookies}};
-query(State, URI=#{scheme := Scheme, host := Host, path := Path},
-		[Cookie|Tail], CurrentTime, CookieList, Acc) ->
+query(State, URI, [Cookie|Tail], CurrentTime, CookieList, Acc) ->
+	case expired(Cookie, CurrentTime) orelse not gun_cookies:cookie_sendable(Cookie) of
+		true ->
+			query(State, URI, Tail, CurrentTime, CookieList, Acc);
+		false ->
+			query_match(State, URI, Cookie, Tail, CurrentTime, CookieList, Acc)
+	end.
+
+query_match(State, URI=#{scheme := Scheme, host := Host, path := Path},
+		Cookie, Tail, CurrentTime, CookieList, Acc) ->
 	Match0 = case Cookie of
 		#{host_only := true, domain := Host} ->
 			true;
@@ -138,24 +146,37 @@ store(State=#{cookies := Cookies0, max_cookies := MaxCookies,
 		MaxCookies =:= 0; MaxPerDomain =:= 0 ->
 			{ok, State};
 		true ->
-			Cookies1 = drop_expired(Cookies0, CurrentTime),
-			{Same0, Other} = partition_quota(Cookies1, Domain),
-			Same = trim(Same0, room(MaxPerDomain)),
-			Cookies = make_room(Same, Other, room(MaxCookies)),
-			{ok, State#{cookies => [NewCookie|Cookies]}}
+			Cookies1 = drop_unsendable(drop_expired(Cookies0, CurrentTime)),
+			case gun_cookies:cookie_sendable(NewCookie) of
+				%% Do not give a cookie we cannot send a quota slot.
+				false ->
+					{ok, State#{cookies => Cookies1}};
+				true ->
+					{Same0, Other} = partition_quota(Cookies1, Domain),
+					Same = trim(Same0, room(MaxPerDomain)),
+					Cookies = make_room(Same, Other, room(MaxCookies)),
+					{ok, State#{cookies => [NewCookie|Cookies]}}
+			end
 	end.
 
 -spec gc(State) -> {ok, State} when State::state().
 gc(State=#{cookies := Cookies0, max_cookies := MaxCookies,
 		max_cookies_per_domain := MaxPerDomain}) ->
 	CurrentTime = erlang:universaltime(),
-	Cookies1 = drop_expired(Cookies0, CurrentTime),
+	Cookies1 = drop_unsendable(drop_expired(Cookies0, CurrentTime)),
 	Cookies = trim(trim_domains(Cookies1, MaxPerDomain), MaxCookies),
 	{ok, State#{cookies => Cookies}}.
 
 drop_expired(Cookies, CurrentTime) ->
-	[C || C=#{expiry_time := ExpiryTime} <- Cookies,
-		(ExpiryTime =:= infinity) orelse (ExpiryTime >= CurrentTime)].
+	[C || C <- Cookies, not expired(C, CurrentTime)].
+
+drop_unsendable(Cookies) ->
+	[C || C <- Cookies, gun_cookies:cookie_sendable(C)].
+
+expired(#{expiry_time := infinity}, _) ->
+	false;
+expired(#{expiry_time := ExpiryTime}, CurrentTime) ->
+	CurrentTime >= ExpiryTime.
 
 room(infinity) -> infinity;
 room(Max) -> Max - 1.
