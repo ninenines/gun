@@ -59,8 +59,16 @@ query(State=#{cookies := Cookies}, URI) ->
 
 query(State, _, [], _, CookieList, Cookies) ->
 	{ok, CookieList, State#{cookies => Cookies}};
-query(State, URI=#{scheme := Scheme, host := Host, path := Path},
-		[Cookie|Tail], CurrentTime, CookieList, Acc) ->
+query(State, URI, [Cookie|Tail], CurrentTime, CookieList, Acc) ->
+	case expired(Cookie, CurrentTime) of
+		true ->
+			query(State, URI, Tail, CurrentTime, CookieList, Acc);
+		false ->
+			query_match(State, URI, Cookie, Tail, CurrentTime, CookieList, Acc)
+	end.
+
+query_match(State, URI=#{scheme := Scheme, host := Host, path := Path},
+		Cookie, Tail, CurrentTime, CookieList, Acc) ->
 	Match0 = case Cookie of
 		#{host_only := true, domain := Host} ->
 			true;
@@ -154,8 +162,12 @@ gc(State=#{cookies := Cookies0, max_cookies := MaxCookies,
 	{ok, State#{cookies => Cookies}}.
 
 drop_expired(Cookies, CurrentTime) ->
-	[C || C=#{expiry_time := ExpiryTime} <- Cookies,
-		(ExpiryTime =:= infinity) orelse (ExpiryTime >= CurrentTime)].
+	[C || C <- Cookies, not expired(C, CurrentTime)].
+
+expired(#{expiry_time := infinity}, _) ->
+	false;
+expired(#{expiry_time := ExpiryTime}, CurrentTime) ->
+	CurrentTime >= ExpiryTime.
 
 room(infinity) -> infinity;
 room(Max) -> Max - 1.
