@@ -297,7 +297,7 @@ set_cookie2(Store, _URI, Attrs, Cookie0) ->
 			set_cookie3(Store, Attrs, Cookie)
 	end.
 
-set_cookie3(Store, Attrs, Cookie=#{name := Name,
+set_cookie3(Store, Attrs, Cookie=#{name := Name, value := Value,
 		host_only := HostOnly, secure_only := SecureOnly}) ->
 	Path = maps:get(path, Attrs, undefined),
 	case known_prefix(Name) of
@@ -309,11 +309,18 @@ set_cookie3(Store, Attrs, Cookie=#{name := Name,
 			{error, name_prefix_host_requires_host_only};
 		host when Path =/= <<"/">> ->
 			{error, name_prefix_host_requires_top_level_path};
+		none when Name =:= <<>> ->
+			case known_prefix(Value) of
+				none ->
+					set_cookie_store(Store, Cookie);
+				_ ->
+					{error, nameless_cookie_prefix}
+			end;
 		_ ->
 			set_cookie_store(Store, Cookie)
 	end.
 
-%% Prefixes are matched case-insensitively. The rest of the name is not.
+%% Prefixes are matched case-insensitively. The rest is not.
 known_prefix(<<"__", Chars:4/binary, "-", _/bits>>) ->
 	case ascii_lower(Chars) of
 		<<"host">> -> host;
@@ -1006,6 +1013,25 @@ prefix_case_insensitive_test() ->
 	{ok, StoreN} = set_cookie(gun_cookies_list:init(), Https,
 		Name, <<"1">>, #{}),
 	{ok, [#{name := Name}], _} = query(StoreN, Https),
+	ok.
+
+%% A nameless cookie whose value begins with a prefix is ignored.
+nameless_cookie_prefix_test() ->
+	URI = #{scheme => <<"https">>, host => <<"example.org">>, path => <<"/">>},
+	Reject = [
+		<<"__Secure-abc">>,
+		<<"__secure-abc=123">>,
+		<<"__SEcure-abc">>,
+		<<"__Host-abc">>,
+		<<"__HoSt-abc=123">>
+	],
+	[begin
+		{error, nameless_cookie_prefix} = set_cookie(
+			gun_cookies_list:init(), URI, <<>>, Value, #{secure => true})
+	end || Value <- Reject],
+	{ok, Store} = set_cookie(gun_cookies_list:init(), URI,
+		<<>>, <<"__Secure">>, #{}),
+	{ok, [#{name := <<>>, value := <<"__Secure">>}], _} = query(Store, URI),
 	ok.
 
 %% SameSite=None is stored only when the cookie is also Secure.
