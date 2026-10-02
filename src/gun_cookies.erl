@@ -1051,4 +1051,33 @@ samesite_none_requires_secure_test() ->
 		#{same_site => lax}),
 	{ok, [#{same_site := lax}], _} = query(Store, Http),
 	ok.
+
+%% Expired cookies are removed when the store is queried.
+query_drops_expired_test() ->
+	URI = #{scheme => <<"http">>, host => <<"example.org">>, path => <<"/">>},
+	Now = erlang:universaltime(),
+	Past = {{2020, 1, 1}, {0, 0, 0}},
+	{gun_cookies_list, State0} = gun_cookies_list:init(),
+	Base = #{
+		name => <<"live">>,
+		value => <<"1">>,
+		domain => <<"example.org">>,
+		path => <<"/">>,
+		creation_time => Now,
+		last_access_time => Now,
+		expiry_time => infinity,
+		persistent => false,
+		host_only => true,
+		secure_only => false,
+		http_only => false,
+		same_site => default
+	},
+	Expired = Base#{name => <<"exp">>, expiry_time => Past, persistent => true},
+	EqualNow = Base#{name => <<"now">>, expiry_time => Now, persistent => true},
+	Store0 = {gun_cookies_list, State0#{cookies => [Expired, EqualNow, Base]}},
+	{ok, Cookies, Store} = gun_cookies:query(Store0, URI),
+	[<<"live">>] = [N || #{name := N} <- Cookies],
+	{gun_cookies_list, #{cookies := Left}} = Store,
+	[<<"live">>] = [N || #{name := N} <- Left],
+	ok.
 -endif.
