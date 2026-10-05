@@ -111,6 +111,7 @@ current protocol.
 | put        | yes      | yes    | no
 | request    | yes      | yes    | no
 | data       | yes      | yes    | no
+| trailers   | yes      | yes    | no
 | await      | yes      | yes    | no
 | await_body | yes      | yes    | no
 | flush      | yes      | yes    | no

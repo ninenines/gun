@@ -55,6 +55,7 @@
 
 %% Streaming data.
 -export([data/4]).
+-export([trailers/3]).
 
 %% User pings.
 -export([ping/1]).
@@ -791,6 +792,11 @@ data(ServerPid, StreamRef, IsFin, Data) ->
 		_ ->
 			gen_statem:cast(ServerPid, {data, self(), StreamRef, IsFin, Data})
 	end.
+
+-spec trailers(pid(), stream_ref(), req_headers()) -> ok.
+trailers(ServerPid, StreamRef, Trailers0) ->
+	Trailers = normalize_headers(Trailers0),
+	gen_statem:cast(ServerPid, {trailers, self(), StreamRef, Trailers}).
 
 %% User pings.
 
@@ -1616,6 +1622,13 @@ handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
 	{Commands, EvHandlerState} = Protocol:data(ProtoState,
 		dereference_stream_ref(StreamRef, State),
 		ReplyTo, IsFin, Data, EvHandler, EvHandlerState0),
+	commands(Commands, State#state{event_handler_state=EvHandlerState});
+handle_common_connected(cast, {trailers, ReplyTo, StreamRef, Trailers}, _,
+		State=#state{protocol=Protocol, protocol_state=ProtoState,
+			event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
+	{Commands, EvHandlerState} = Protocol:trailers(ProtoState,
+		dereference_stream_ref(StreamRef, State),
+		ReplyTo, Trailers, EvHandler, EvHandlerState0),
 	commands(Commands, State#state{event_handler_state=EvHandlerState});
 handle_common_connected(info, {timeout, TRef, Name}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->

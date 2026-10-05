@@ -54,6 +54,7 @@
 
 %% Streaming data.
 -export([data/3]).
+-export([trailers/2]).
 
 %% Tunneling. (HTTP/2+ only.)
 %% @todo -export([connect/2]).
@@ -411,6 +412,10 @@ start_missing_pool(_Authority, _ReqOpts) ->
 -spec data(pool_stream_ref(), fin | nofin, iodata()) -> ok.
 data({ConnPid, StreamRef}, IsFin, Data) ->
 	gun:data(ConnPid, StreamRef, IsFin, Data).
+
+-spec trailers(pool_stream_ref(), gun:req_headers()) -> ok.
+trailers({ConnPid, StreamRef}, Trailers) ->
+	gun:trailers(ConnPid, StreamRef, Trailers).
 
 %% Awaiting gun messages.
 
