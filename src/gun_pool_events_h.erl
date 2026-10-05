@@ -64,8 +64,15 @@ tls_handshake_start(Event, State) ->
 tls_handshake_end(Event, State) ->
 	propagate(Event, State, ?FUNCTION_NAME).
 
+%% The table contains {ConnPid, ActiveStreams, PendingStreams}.
+%% Pending streams are reserved by the pool manager when it gives
+%% out the connection for a new request. When the request starts
+%% we convert one pending stream into an active stream. Requests
+%% that were not reserved (for example when the connection was
+%% obtained via gun_pool:checkout/2) do not decrease the number
+%% of pending streams below 0.
 request_start(Event=#{stream_ref := StreamRef}, State=#{table := Tid}) ->
-	_ = ets:update_counter(Tid, self(), +1, {self(), 0}),
+	_ = ets:update_counter(Tid, self(), [{2, +1}, {3, -1, 0, 0}], {self(), 0, 0}),
 	propagate(Event, State#{
 		StreamRef => {nofin, nofin}
 	}, ?FUNCTION_NAME).
