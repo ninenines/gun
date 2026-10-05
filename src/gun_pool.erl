@@ -509,8 +509,9 @@ ws_send(Frames, WsSendOpts=#{authority := Authority}) ->
 %% A connection is deemed suitable if it is possible to open new
 %% streams. How many streams can be open at any one time depends
 %% on the protocol. For HTTP/2 the manager process keeps track of
-%% the connection's settings to know the maximum. For non-stream
-%% based protocols, there is no limit.
+%% the connection's settings to know the maximum, and does not
+%% give the connection out until those settings have been stored.
+%% For non-stream based protocols, there is no limit.
 %%
 %% The connection to be used is otherwise chosen randomly. The
 %% first connection that is suitable is returned. There is no
@@ -601,7 +602,7 @@ setup_fun(_) ->
 	end, undefined}.
 
 degraded_setup(ConnPid, Msg, StateData0=#state{table=Tid, conns=Conns,
-		conns_meta=ConnsMeta, await_up=AwaitUp}, SetupFun, SetupState0) ->
+		conns_meta=ConnsMeta}, SetupFun, SetupState0) ->
 	case SetupFun(ConnPid, Msg, SetupState0) of
 		Setup={setup, _SetupState} ->
 			StateData = StateData0#state{conns=Conns#{ConnPid => Setup}},
@@ -617,18 +618,33 @@ degraded_setup(ConnPid, Msg, StateData0=#state{table=Tid, conns=Conns,
 				conns=Conns#{ConnPid => {up, Protocol, Settings}},
 				conns_meta=ConnsMeta#{ConnPid => Meta}
 			},
-			case is_degraded(StateData) of
-				true -> {keep_state, StateData};
-				false -> {next_state, operational, StateData#state{await_up=[]},
-					[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
-			end
+			maybe_operational(StateData)
 	end.
 
 is_degraded(#state{conns=Conns0}) ->
 	Conns = maps:to_list(Conns0),
-	Len = length(Conns),
-	Ups = [up || {_, {up, _, _}} <- Conns],
-	Len =/= length(Ups).
+	length(Conns) =/= length([up || {_, State} <- Conns, is_up(State)]).
+
+%% HTTP/2 is not up until the server SETTINGS are stored. The map
+%% has no max_concurrent_streams key until then. When the server
+%% omits the setting, the stored value is infinity.
+is_up({up, http2, #{max_concurrent_streams := _}}) ->
+	true;
+is_up({up, http2, _}) ->
+	false;
+is_up({up, _, _}) ->
+	true;
+is_up(_) ->
+	false.
+
+maybe_operational(StateData=#state{await_up=AwaitUp}) ->
+	case is_degraded(StateData) of
+		true ->
+			{keep_state, StateData};
+		false ->
+			{next_state, operational, StateData#state{await_up=[]},
+				[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
+	end.
 
 operational(Type, Event, StateData) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, StateData).
@@ -646,10 +662,11 @@ handle_common({call, From}, {checkout, _ReqOpts, ReserveStream}, _,
 			Meta = maps:get(ConnPid, ConnsMeta, #{}),
 			{keep_state_and_data, {reply, From, {ConnPid, Meta}}}
 	end;
-handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _, StateData=#state{conns=Conns}) ->
+handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _,
+		StateData0=#state{conns=Conns}) ->
 	%% Assert that the state is correct.
 	{up, http2, _} = maps:get(ConnPid, Conns),
-	{keep_state, StateData#state{conns=Conns#{ConnPid => {up, http2, Settings}}}};
+	maybe_operational(StateData0#state{conns=Conns#{ConnPid => {up, http2, Settings}}});
 handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _, StateData=#state{conns=Conns}) ->
 	{up, Protocol, _} = maps:get(ConnPid, Conns),
 	{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}}};
@@ -713,19 +730,24 @@ find_available_connection([], _, _) ->
 	none;
 find_available_connection([{_, ConnPid}|I], Conns, Tid) ->
 	case maps:get(ConnPid, Conns) of
-		{up, Protocol, Settings} ->
-			MaxStreams = max_streams(Protocol, Settings),
-			CurrentStreams = case ets:lookup(Tid, ConnPid) of
-				[] ->
-					0;
-				[{_, ActiveStreams, PendingStreams}] ->
-					ActiveStreams + PendingStreams
-			end,
-			if
-				CurrentStreams + 1 > MaxStreams ->
+		ConnState={up, Protocol, Settings} ->
+			case is_up(ConnState) of
+				false ->
 					find_available_connection(I, Conns, Tid);
 				true ->
-					ConnPid
+					MaxStreams = max_streams(Protocol, Settings),
+					CurrentStreams = case ets:lookup(Tid, ConnPid) of
+						[] ->
+							0;
+						[{_, ActiveStreams, PendingStreams}] ->
+							ActiveStreams + PendingStreams
+					end,
+					if
+						CurrentStreams + 1 > MaxStreams ->
+							find_available_connection(I, Conns, Tid);
+						true ->
+							ConnPid
+					end
 			end;
 		_ ->
 			find_available_connection(I, Conns, Tid)
@@ -735,12 +757,6 @@ max_streams(http, _) ->
 	1;
 max_streams(http2, #{max_concurrent_streams := MaxStreams}) ->
 	MaxStreams;
-%% The server's SETTINGS frame has not been received yet. Until then
-%% we use the value that RFC 9113 6.5.2 recommends as a minimum for
-%% SETTINGS_MAX_CONCURRENT_STREAMS. Otherwise we could open more
-%% streams than the server allows.
-max_streams(http2, #{}) ->
-	100;
 %% There are no streams or Gun is not aware of streams when
 %% the protocol is Websocket or raw.
 max_streams(ws, _) ->
