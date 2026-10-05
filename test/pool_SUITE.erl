@@ -20,6 +20,14 @@
 -import(ct_helper, [config/2]).
 -import(gun_test, [receive_from/1]).
 
+%% Number of requests sent by the HTTP/2 tests using the default pool.
+%% The default pool has 8 connections and Cowboy allows 100 concurrent
+%% streams per connection by default, for a total of 800. The pool
+%% keeps track of the number of streams asynchronously, so we stay well
+%% below that total to avoid intermittent too_many_streams errors when
+%% the count is slightly out of date.
+-define(H2_NUM_REQUESTS, 400).
+
 all() ->
 	ct_helper:all(?MODULE).
 
@@ -79,7 +87,7 @@ hello_pool_h2(Config) ->
 	Streams = [{async, _} = gun_pool:get("/",
 		#{<<"host">> => ["localhost:", integer_to_binary(Port)]},
 		#{scope => ?FUNCTION_NAME}
-	) || _ <- lists:seq(1, 800)],
+	) || _ <- lists:seq(1, ?H2_NUM_REQUESTS)],
 	_ = [begin
 		{response, nofin, 200, _} = gun_pool:await(StreamRef),
 		{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef)
@@ -293,7 +301,7 @@ kill_restart_h2(Config) ->
 	Streams1 = [{async, _} = gun_pool:get("/",
 		#{<<"host">> => Authority},
 		#{scope => ?FUNCTION_NAME}
-	) || _ <- lists:seq(1, 800)],
+	) || _ <- lists:seq(1, ?H2_NUM_REQUESTS)],
 	_ = [begin
 		{response, nofin, 200, _} = gun_pool:await(StreamRef),
 		{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef)
@@ -309,7 +317,7 @@ kill_restart_h2(Config) ->
 	Streams2 = [{async, _} = gun_pool:get("/",
 		#{<<"host">> => Authority},
 		#{scope => ?FUNCTION_NAME}
-	) || _ <- lists:seq(1, 800)],
+	) || _ <- lists:seq(1, ?H2_NUM_REQUESTS)],
 	_ = [begin
 		{response, nofin, 200, _} = gun_pool:await(StreamRef),
 		{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef)
@@ -357,7 +365,7 @@ reconnect_h2(Config) ->
 	Streams1 = [{async, _} = gun_pool:get("/",
 		#{<<"host">> => Authority},
 		#{scope => ?FUNCTION_NAME}
-	) || _ <- lists:seq(1, 800)],
+	) || _ <- lists:seq(1, ?H2_NUM_REQUESTS)],
 	_ = [begin
 		{response, nofin, 200, _} = gun_pool:await(StreamRef),
 		{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef)
@@ -369,7 +377,7 @@ reconnect_h2(Config) ->
 	Streams2 = [{async, _} = gun_pool:get("/",
 		#{<<"host">> => Authority},
 		#{scope => ?FUNCTION_NAME}
-	) || _ <- lists:seq(1, 800)],
+	) || _ <- lists:seq(1, ?H2_NUM_REQUESTS)],
 	_ = [begin
 		{response, nofin, 200, _} = gun_pool:await(StreamRef),
 		{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef)
