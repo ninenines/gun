@@ -97,6 +97,9 @@
 	content_handlers :: gun_content_handler:opt(),
 	buffer = <<>> :: binary(),
 
+	%% Continuation for an in-progress DATA frame payload (cow_http2:parse_data/2).
+	data_cont = undefined :: undefined | cow_http2:data_cont(),
+
 	%% Base stream ref, defined when the protocol runs
 	%% inside an HTTP/2 CONNECT stream.
 	base_stream_ref = undefined :: undefined | gun:stream_ref(),
@@ -253,6 +256,29 @@ parse(Data, State0=#http2_state{status=preface, http2_machine=HTTP2Machine},
 			{connection_error(State0, {connection_error, protocol_error, Reason}),
 				CookieStore0, EvHandlerState0}
 	end;
+%% Continue an in-progress DATA frame without re-buffering the payload.
+parse(Data, State0=#http2_state{data_cont=Cont},
+		CookieStore0, EvHandler, EvHandlerState0) when Cont =/= undefined ->
+	case cow_http2:parse_data(Data, Cont) of
+		{ok, Frame, Rest} ->
+			case frame(State0#http2_state{data_cont=undefined}, Frame,
+					CookieStore0, EvHandler, EvHandlerState0) of
+				{Error={error, _}, CookieStore, EvHandlerState} ->
+					{Error, CookieStore, EvHandlerState};
+				{[{state, State}, close], CookieStore, EvHandlerState} ->
+					{[{state, State}, close], CookieStore, EvHandlerState};
+				{{state, State}, CookieStore, EvHandlerState} ->
+					parse(Rest, State, CookieStore, EvHandler, EvHandlerState)
+			end;
+		{more, Frame = {data, _, _, _}, Cont2} ->
+			frame(State0#http2_state{data_cont=Cont2}, Frame,
+				CookieStore0, EvHandler, EvHandlerState0);
+		{more, Cont2} ->
+			{{state, State0#http2_state{data_cont=Cont2}},
+				CookieStore0, EvHandlerState0};
+		Error = {connection_error, _, _} ->
+			{connection_error(State0, Error), CookieStore0, EvHandlerState0}
+	end;
 parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, streams=Streams},
 		CookieStore0, EvHandler, EvHandlerState0) ->
 	MaxFrameSize = cow_http2_machine:get_local_setting(max_frame_size, HTTP2Machine),
@@ -282,6 +308,13 @@ parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, strea
 			end;
 		Error = {connection_error, _, _} ->
 			{connection_error(State0, Error), CookieStore0, EvHandlerState0};
+		%% Incomplete DATA: forward what we have and continue via parse_data/2.
+		{more, Frame = {data, _, _, _}, Cont} ->
+			frame(State0#http2_state{data_cont=Cont}, Frame,
+				CookieStore0, EvHandler, EvHandlerState0);
+		{more, Cont} ->
+			{{state, State0#http2_state{data_cont=Cont}},
+				CookieStore0, EvHandlerState0};
 		%% If we both received and sent a GOAWAY frame and there are no streams
 		%% currently running, we can close the connection immediately.
 		more when Status =/= connected, Streams =:= #{} ->
