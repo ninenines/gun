@@ -32,6 +32,7 @@ end_per_suite(_) ->
 	ExtraListeners = [
 		max_streams_h2_size_1,
 		max_streams_h2_size_2,
+		max_streams_h2_no_wait,
 		reconnect_h1
 	],
 	_ = [cowboy:stop_listener(Listener) || Listener <- ExtraListeners],
@@ -245,6 +246,58 @@ max_streams_h2_size_2_retry(_) ->
 		checkout_retry => [100, 500, 500, 500, 500, 500, 500]
 	}).
 
+max_streams_h2_no_wait(_) ->
+	doc("Confirm the pool never gives out an HTTP/2 connection that is "
+		"at the server's maximum number of streams, even when requests "
+		"are sent faster than the connection processes can count them."),
+	ProtoOpts = do_proto_opts(),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [], ProtoOpts#{
+		max_concurrent_streams => 5
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	Authority = ["localhost:", integer_to_binary(Port)],
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{protocols => [http2]},
+		scope => ?FUNCTION_NAME,
+		size => 2
+	}),
+	gun_pool:await_up(ManagerPid),
+	do_await_max_concurrent_streams(ManagerPid, 5),
+	%% We do not wait between requests: the streams must be
+	%% accounted for as soon as a connection is given out.
+	Streams = [{async, _} = gun_pool:get("/delay",
+		#{<<"host">> => Authority},
+		#{scope => ?FUNCTION_NAME}
+	) || _ <- lists:seq(1, 10)],
+	{error, no_connection_available, _} = gun_pool:get("/delay",
+		#{<<"host">> => Authority}, #{scope => ?FUNCTION_NAME}),
+	%% None of the requests may fail with too_many_streams.
+	_ = [begin
+		{response, nofin, 200, _} = gun_pool:await(StreamRef),
+		{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef)
+	end || {async, StreamRef} <- Streams].
+
+%% Wait until the pool manager has received the HTTP/2 settings
+%% of all its connections.
+do_await_max_concurrent_streams(ManagerPid, MaxStreams) ->
+	do_await_max_concurrent_streams(ManagerPid, MaxStreams, 100).
+
+do_await_max_concurrent_streams(_, _, 0) ->
+	error(timeout);
+do_await_max_concurrent_streams(ManagerPid, MaxStreams, N) ->
+	{_, #{conns := Conns}} = gun_pool:info(ManagerPid),
+	AllKnown = lists:all(fun
+		({up, http2, #{max_concurrent_streams := M}}) -> M =:= MaxStreams;
+		(_) -> false
+	end, maps:values(Conns)),
+	case AllKnown of
+		true ->
+			ok;
+		false ->
+			timer:sleep(10),
+			do_await_max_concurrent_streams(ManagerPid, MaxStreams, N - 1)
+	end.
+
 kill_restart_h1(Config) ->
 	doc("Confirm the Gun process is restarted and the pool operational "
 		"after an HTTP/1.1 Gun process has crashed."),
@@ -399,7 +452,7 @@ push_promise_no_crash(Config) ->
 	ok = do_await_pushed({ConnPid, PromisedRef2}),
 	{operational, #{table := Tid, conns := Conns}} = gun_pool:info(ManagerPid),
 	{up, http2, _} = maps:get(ConnPid, Conns),
-	[{_, 0}] = ets:lookup(Tid, ConnPid),
+	[{_, 0, 0}] = ets:lookup(Tid, ConnPid),
 	{async, NextRef} = gun_pool:get("/",
 		#{<<"host">> => Authority},
 		#{scope => ?FUNCTION_NAME}),
