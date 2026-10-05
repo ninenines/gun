@@ -1170,9 +1170,8 @@ ws_handshake_extensions_and_protocol(Buffer, State,
 %% We know that the most recent stream is the Websocket one.
 ws_handshake_end(Buffer, State=#http_state{streams=[#stream{flow=InitialFlow}|_]},
 		#websocket{ref=StreamRef, reply_to=ReplyTo, opts=Opts}, Headers, Extensions, Handler) ->
-	%% Inform the user that the upgrade was successful and switch the protocol.
+	%% gun_upgrade is sent after the handler init succeeds.
 	RealStreamRef = stream_ref(State, StreamRef),
-	gun:reply(ReplyTo, {gun_upgrade, self(), RealStreamRef, [<<"websocket">>], Headers}),
 	{switch_protocol, {ws, #{
 		stream_ref => RealStreamRef,
 		headers => Headers,

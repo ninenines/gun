@@ -501,8 +501,8 @@ tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
 		State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}},
 		State, EvHandler, EvHandlerState);
-tunnel_commands([{error, Reason0}|_], #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},
-		State, _EvHandler, EvHandlerState) ->
+tunnel_commands([{error, Reason0}|_], #stream{id=StreamID, ref=StreamRef},
+		State0=#http2_state{http2_machine=HTTP2Machine0}, _EvHandler, EvHandlerState) ->
 	%% See gun:maybe_tls_alert for details.
 	Reason = case Reason0 of
 		closed ->
@@ -515,9 +515,16 @@ tunnel_commands([{error, Reason0}|_], #stream{id=StreamID, ref=StreamRef, reply_
 		_ ->
 			Reason0
 	end,
-	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
-		{stream_error, Reason, 'Tunnel closed unexpectedly.'}}),
-	{{state, delete_stream(State, StreamID)}, EvHandlerState};
+	%% Dropping the Gun stream without RST leaves the HTTP/2 machine
+	%% holding the id. The next DATA frame then crashes the connection.
+	{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
+	State1 = State0#http2_state{http2_machine=HTTP2Machine},
+	case reset_stream(State1, StreamID, {stream_error, cancel, Reason}) of
+		{state, State} ->
+			{{state, State}, EvHandlerState};
+		Error ->
+			{Error, EvHandlerState}
+	end;
 %% @todo Set a timeout for closing the Websocket stream.
 tunnel_commands([{closing, _}|Tail], Stream, State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState);
@@ -692,7 +699,8 @@ headers_frame_connect(State=#http2_state{transport=Transport, opts=Opts, tunnel_
 			{Error, EvHandlerState3}
 	end.
 
-headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
+headers_frame_connect_websocket(State=#http2_state{http2_machine=HTTP2Machine0},
+		Stream=#stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo,
 		tunnel=Tunnel=#tunnel{info=#websocket_info{opts=WsOpts}}},
 		Headers, EvHandler, EvHandlerState0, Extensions, Handler) ->
 	RealStreamRef = stream_ref(State, StreamRef),
@@ -703,12 +711,7 @@ headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=Re
 		stream_ref => RealStreamRef,
 		handle_continue_stream_ref => ContinueStreamRef
 	},
-	gun:reply(ReplyTo, {gun_upgrade, self(), RealStreamRef, [<<"websocket">>], Headers}),
 	Proto = gun_ws,
-	EvHandlerState = EvHandler:protocol_changed(#{
-		stream_ref => RealStreamRef,
-		protocol => Proto:name()
-	}, EvHandlerState0),
 	ProtoOpts = #{
 		stream_ref => RealStreamRef,
 		headers => Headers,
@@ -717,12 +720,26 @@ headers_frame_connect_websocket(State, Stream=#stream{ref=StreamRef, reply_to=Re
 		handler => Handler,
 		opts => WsOpts
 	},
-	%% @todo Handle error result from Proto:init/4
-	{ok, connected_ws_only, ProtoState} = Proto:init(
-		ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts),
-	{{state, store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
-		protocol=Proto, protocol_state=ProtoState}})},
-		EvHandlerState}.
+	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy, ProtoOpts) of
+		{ok, connected_ws_only, ProtoState} ->
+			gun:reply(ReplyTo, {gun_upgrade, self(), RealStreamRef,
+				[<<"websocket">>], Headers}),
+			EvHandlerState = EvHandler:protocol_changed(#{
+				stream_ref => RealStreamRef,
+				protocol => Proto:name()
+			}, EvHandlerState0),
+			{{state, store_stream(State, Stream#stream{tunnel=Tunnel#tunnel{state=established,
+				protocol=Proto, protocol_state=ProtoState}})},
+				EvHandlerState};
+		%% One stream. Reset it and keep the connection, same as a bad
+		%% subprotocol. The upgrade is not announced.
+		{error, _} ->
+			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
+			State1 = State#http2_state{http2_machine=HTTP2Machine},
+			StateOrError = reset_stream(State1, StreamID, {stream_error, cancel,
+				'The Websocket handler failed to initialize.'}),
+			{StateOrError, EvHandlerState0}
+	end.
 
 headers_frame_response(State=#http2_state{content_handlers=Handlers0},
 		Stream=#stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},

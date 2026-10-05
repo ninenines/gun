@@ -155,10 +155,16 @@ default_keepalive() -> infinity.
 
 init(ReplyTo, Socket, Transport, #{stream_ref := StreamRef, headers := Headers,
 		extensions := Extensions, flow := InitialFlow, handler := Handler, opts := Opts}) ->
-	{ok, HandlerState} = Handler:init(ReplyTo, StreamRef, Headers, Opts),
-	{ok, connected_ws_only, #ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
-		socket=Socket, transport=Transport, opts=Opts, extensions=Extensions,
-		flow=InitialFlow, handler=Handler, handler_state=HandlerState}}.
+	%% A raise is not caught: gun_ws_protocol requires init/4 not to raise.
+	%% A return other than {ok, State} fails this operation.
+	case Handler:init(ReplyTo, StreamRef, Headers, Opts) of
+		{ok, HandlerState} ->
+			{ok, connected_ws_only, #ws_state{reply_to=ReplyTo, stream_ref=StreamRef,
+				socket=Socket, transport=Transport, opts=Opts, extensions=Extensions,
+				flow=InitialFlow, handler=Handler, handler_state=HandlerState}};
+		Other ->
+			{error, {ws_handler_init_failed, Handler, Other}}
+	end.
 
 handle(Data, State, CookieStore, EvHandler, EvHandlerState0) ->
 	{Commands, EvHandlerState} = handle(Data, State, EvHandler, EvHandlerState0),
