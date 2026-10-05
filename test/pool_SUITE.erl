@@ -18,6 +18,7 @@
 
 -import(ct_helper, [doc/1]).
 -import(ct_helper, [config/2]).
+-import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
 all() ->
@@ -50,6 +51,214 @@ do_proto_opts() ->
 	}.
 
 %% Tests.
+
+setup_down_no_crash(_Config) ->
+	doc("A socket close while setup is in progress sends gun_down and "
+		"the Gun process retries. The same pid must be marked down, "
+		"then become setup again on the next gun_up."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http, fun do_hold_then_close/4),
+	Scope = ?FUNCTION_NAME,
+	Parent = self(),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", OriginPort, #{
+		conn_opts => #{
+			protocols => [http],
+			retry => 5,
+			retry_fun => fun(_, _) -> #{retries => 4, timeout => 800} end,
+			event_handler => {gun_test_event_h, Parent}
+		},
+		scope => Scope,
+		size => 1,
+		setup_fun => {fun(ConnPid, {gun_up, _, _}, SetupState) ->
+			Parent ! {setup, ConnPid},
+			{setup, SetupState}
+		end, undefined}
+	}),
+	handshake_completed = receive_from(OriginPid),
+	ConnPid = do_receive_tag(setup),
+	{degraded, #{conns := #{ConnPid := {setup, _}}}} = gun_pool:info(ManagerPid),
+	OriginPid ! {self(), close_it},
+	receive
+		{ConnPid, disconnect, _} -> ok
+	after 5000 ->
+		error(disconnect_timeout)
+	end,
+	%% disconnect/2 runs this event before it sends gun_down.
+	%% gun:info/1 returns after that send, so the pool call is
+	%% queued behind gun_down.
+	_ = gun:info(ConnPid),
+	{degraded, #{conns := #{ConnPid := down}}} = gun_pool:info(ManagerPid),
+	ConnPid = do_receive_tag(setup),
+	{degraded, #{conns := #{ConnPid := {setup, _}}}} = gun_pool:info(ManagerPid),
+	OriginPid ! {self(), stop},
+	gun_pool:stop_pool("localhost", OriginPort, #{scope => Scope}).
+
+do_hold_then_close(Parent, ListenSocket, Socket, Transport) ->
+	receive {Parent, close_it} -> ok end,
+	Transport:close(Socket),
+	{ok, Socket2} = gen_tcp:accept(ListenSocket, 5000),
+	receive {Parent, stop} -> Transport:close(Socket2) end.
+
+setup_settings_no_crash(Config) ->
+	doc("SETTINGS that arrive while an HTTP/2 connection is still in "
+		"setup are kept when the Websocket upgrade completes it. "
+		"SETTINGS after the connection is up are kept as well."),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [], #{
+		enable_connect_protocol => true,
+		env => #{dispatch => cowboy_router:compile([{'_', [
+			{"/ws", ws_echo_h, []}
+		]}])}
+	}),
+	Port = ranch:get_port(?FUNCTION_NAME),
+	Scope = ?FUNCTION_NAME,
+	Parent = self(),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{protocols => [http2]},
+		scope => Scope,
+		size => 1,
+		setup_fun => {fun
+			(ConnPid, {gun_up, _, http2}, SetupState) ->
+				Parent ! {setup, ConnPid},
+				{setup, SetupState};
+			(ConnPid, {gun_upgrade, _, StreamRef, _, _}, _) ->
+				Parent ! {up, ConnPid, StreamRef},
+				{up, http2, #{ws => StreamRef}};
+			(_, _, SetupState) ->
+				{setup, SetupState}
+		end, undefined}
+	}),
+	ConnPid = do_receive_tag(setup),
+	%% The server preface is SETTINGS. The PING ack is a later
+	%% frame, so settings_changed is already queued for the pool.
+	ok = do_ping(ConnPid),
+	{degraded, #{conns := #{ConnPid := {setup, _}}}} = gun_pool:info(ManagerPid),
+	#{ConnPid := Settings} = do_http2_settings(ManagerPid),
+	true = maps:is_key(enable_connect_protocol, Settings),
+	%% Extended CONNECT is sent once SETTINGS are buffered. The
+	%% gun_upgrade that follows is what marks the connection up.
+	_ = gun:ws_upgrade(ConnPid, "/ws", [], #{
+		reply_to => ManagerPid,
+		default_protocol => pool_ws_handler,
+		user_opts => self()
+	}),
+	StreamRef = receive
+		{up, Pid, Ref} when Pid =:= ConnPid -> Ref
+	after 5000 ->
+		error(upgrade_timeout)
+	end,
+	{operational, #{
+		conns := #{ConnPid := {up, http2, Settings}},
+		conns_meta := #{ConnPid := #{ws := StreamRef}}
+	}} = gun_pool:info(ManagerPid),
+	true = is_reference(StreamRef),
+	#{} = do_http2_settings(ManagerPid),
+	gun_pool:stop_pool("localhost", Port, #{scope => Scope}),
+	cowboy:stop_listener(?FUNCTION_NAME),
+	Port2 = config(port, Config),
+	Scope2 = {?FUNCTION_NAME, up},
+	{ok, ManagerPid2} = gun_pool:start_pool("localhost", Port2, #{
+		conn_opts => #{protocols => [http2]},
+		scope => Scope2,
+		size => 1
+	}),
+	gun_pool:await_up(ManagerPid2),
+	{operational, #{conns := Conns2}} = gun_pool:info(ManagerPid2),
+	[ConnPid2] = maps:keys(Conns2),
+	ok = do_ping(ConnPid2),
+	{operational, #{conns := #{ConnPid2 := {up, http2, Settings2}}}} = gun_pool:info(ManagerPid2),
+	true = map_size(Settings2) > 0,
+	gun_pool:stop_pool("localhost", Port2, #{scope => Scope2}).
+
+stray_gun_upgrade_no_crash(Config) ->
+	doc("setup_fun may return before the Websocket upgrade reply "
+		"arrives. That gun_upgrade must not crash the pool while "
+		"another connection is still in setup."),
+	Port = config(port, Config),
+	Scope = ?FUNCTION_NAME,
+	Parent = self(),
+	Tid = ets:new(?FUNCTION_NAME, [public, set]),
+	ets:insert(Tid, {n, 0}),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{
+			protocols => [http],
+			event_handler => {gun_test_event_h, Parent},
+			ws_opts => #{
+				default_protocol => pool_ws_handler,
+				user_opts => Parent
+			}
+		},
+		scope => Scope,
+		size => 2,
+		setup_fun => {fun
+			(ConnPid, {gun_up, _, http}, SetupState) ->
+				case ets:update_counter(Tid, n, 1) of
+					1 ->
+						%% The upgrade reply is delivered to the pool.
+						%% Returning up now leaves that gun_upgrade for
+						%% a connection that is no longer in setup.
+						_ = gun:ws_upgrade(ConnPid, "/ws"),
+						Parent ! {up, ConnPid},
+						{up, http, #{}};
+					_ ->
+						Parent ! {setup, ConnPid},
+						{setup, SetupState}
+				end;
+			(_, {gun_upgrade, _, _, _, _}, SetupState) ->
+				ets:insert(Tid, {upgrade, true}),
+				{setup, SetupState};
+			(_, _, SetupState) ->
+				{setup, SetupState}
+		end, undefined}
+	}),
+	{UpPid, SetupPid} = do_receive_up_and_setup(),
+	%% gun_upgrade is sent before protocol_changed, so this
+	%% info call is queued behind that gun_upgrade.
+	receive
+		{UpPid, protocol_changed, #{protocol := ws}} -> ok
+	after 5000 ->
+		error(ws_timeout)
+	end,
+	{degraded, #{conns := #{
+		UpPid := {up, http, #{}},
+		SetupPid := {setup, _}
+	}}} = gun_pool:info(ManagerPid),
+	[] = ets:lookup(Tid, upgrade),
+	true = ets:delete(Tid),
+	gun_pool:stop_pool("localhost", Port, #{scope => Scope}).
+
+%% #state{} keeps buffered HTTP/2 SETTINGS in this field.
+do_http2_settings(ManagerPid) ->
+	{_, {state, _, _, _, _, _, _, _, HTTP2Settings}} = sys:get_state(ManagerPid),
+	HTTP2Settings.
+
+do_receive_tag(Tag) ->
+	receive
+		{Tag, Pid} when is_pid(Pid) -> Pid
+	after 5000 ->
+		error({timeout, Tag})
+	end.
+
+do_receive_up_and_setup() ->
+	do_receive_up_and_setup(undefined, undefined).
+
+do_receive_up_and_setup(Up, Setup) when is_pid(Up), is_pid(Setup) ->
+	{Up, Setup};
+do_receive_up_and_setup(Up, Setup) ->
+	receive
+		{up, Pid} when is_pid(Pid) ->
+			do_receive_up_and_setup(Pid, Setup);
+		{setup, Pid} when is_pid(Pid) ->
+			do_receive_up_and_setup(Up, Pid)
+	after 5000 ->
+		error({timeout, Up, Setup})
+	end.
+
+do_ping(ConnPid) ->
+	Ref = gun:ping(ConnPid),
+	receive
+		{gun_notify, ConnPid, ping_ack, Ref} -> ok
+	after 5000 ->
+		error({ping_timeout, ConnPid})
+	end.
 
 hello_pool_h1(Config) ->
 	doc("Confirm the pool can be used for HTTP/1.1 connections."),

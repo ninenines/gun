@@ -150,7 +150,9 @@
 	table :: ets:tid(),
 	conns :: #{pid() => down | {setup, any()} | {up, http | http2 | ws | raw, map()}},
 	conns_meta = #{} :: meta(),
-	await_up = [] :: [{pid(), any()}]
+	await_up = [] :: [{pid(), any()}],
+	%% SETTINGS that arrived before the connection was {up, http2, _}.
+	http2_settings = #{} :: #{pid() => map()}
 }).
 
 %% Pool management.
@@ -571,10 +573,15 @@ degraded(info, Msg={gun_up, ConnPid, _}, StateData=#state{opts=Opts, conns=Conns
 %	;
 degraded(info, Msg={gun_upgrade, ConnPid, _, _, _},
 		StateData=#state{opts=#{setup_fun := {SetupFun, _}}, conns=Conns}) ->
-	%% @todo Probably shouldn't crash if the state is incorrect, that's programmer error though.
-	#{ConnPid := {setup, SetupState0}} = Conns,
-	%% We run the setup function again using the state previously kept.
-	degraded_setup(ConnPid, Msg, StateData, SetupFun, SetupState0);
+	case Conns of
+		#{ConnPid := {setup, SetupState0}} ->
+			%% We run the setup function again using the state previously kept.
+			degraded_setup(ConnPid, Msg, StateData, SetupFun, SetupState0);
+		%% Already up, down, or not tracked. setup_fun may have
+		%% returned up before this upgrade reply arrived.
+		_ ->
+			keep_state_and_data
+	end;
 degraded(Type, Event, StateData) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, StateData).
 
@@ -586,18 +593,23 @@ setup_fun(_) ->
 	end, undefined}.
 
 degraded_setup(ConnPid, Msg, StateData0=#state{conns=Conns, conns_meta=ConnsMeta,
-		await_up=AwaitUp}, SetupFun, SetupState0) ->
+		await_up=AwaitUp, http2_settings=HTTP2Settings}, SetupFun, SetupState0) ->
 	case SetupFun(ConnPid, Msg, SetupState0) of
 		Setup={setup, _SetupState} ->
 			StateData = StateData0#state{conns=Conns#{ConnPid => Setup}},
 			{keep_state, StateData};
 		%% The Meta is different from Settings. It allows passing around
-		%% Websocket or tunnel stream refs.
+		%% Websocket or tunnel stream refs. HTTP/2 SETTINGS may already
+		%% have arrived while setup was still in progress.
 		{up, Protocol, Meta} ->
-			Settings = #{},
+			Settings = case Protocol of
+				http2 -> maps:get(ConnPid, HTTP2Settings, #{});
+				_ -> #{}
+			end,
 			StateData = StateData0#state{
 				conns=Conns#{ConnPid => {up, Protocol, Settings}},
-				conns_meta=ConnsMeta#{ConnPid => Meta}
+				conns_meta=ConnsMeta#{ConnPid => Meta},
+				http2_settings=maps:remove(ConnPid, HTTP2Settings)
 			},
 			case is_degraded(StateData) of
 				true -> {keep_state, StateData};
@@ -624,28 +636,51 @@ handle_common({call, From}, {checkout, _ReqOpts}, _,
 			Meta = maps:get(ConnPid, ConnsMeta, #{}),
 			{keep_state_and_data, {reply, From, {ConnPid, Meta}}}
 	end;
-handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _, StateData=#state{conns=Conns}) ->
-	%% Assert that the state is correct.
-	{up, http2, _} = maps:get(ConnPid, Conns),
-	{keep_state, StateData#state{conns=Conns#{ConnPid => {up, http2, Settings}}}};
-handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _, StateData=#state{conns=Conns}) ->
-	{up, Protocol, _} = maps:get(ConnPid, Conns),
-	{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}}};
+handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _,
+		StateData=#state{conns=Conns, http2_settings=HTTP2Settings}) ->
+	case maps:get(ConnPid, Conns, undefined) of
+		{up, http2, _} ->
+			{keep_state, StateData#state{
+				conns=Conns#{ConnPid => {up, http2, Settings}},
+				http2_settings=maps:remove(ConnPid, HTTP2Settings)}};
+		%% Kept until setup completes and the connection is HTTP/2.
+		{setup, _} ->
+			{keep_state, StateData#state{http2_settings=HTTP2Settings#{ConnPid => Settings}}};
+		%% Unknown, down, or not HTTP/2. Nothing removes these entries.
+		_ ->
+			keep_state_and_data
+	end;
+%% The Gun process stays up across gun_down when it will retry. The
+%% same pid must be down, or the next gun_up has no clause.
+handle_common(info, {gun_down, ConnPid, _Protocol, _Reason, _KilledStreams}, _,
+		StateData=#state{conns=Conns, http2_settings=HTTP2Settings}) ->
+	case maps:is_key(ConnPid, Conns) of
+		true ->
+			{next_state, degraded, StateData#state{
+				conns=Conns#{ConnPid => down},
+				http2_settings=maps:remove(ConnPid, HTTP2Settings)}};
+		false ->
+			keep_state_and_data
+	end;
 %% @todo We do not want to reconnect automatically when the pool is dynamic.
 handle_common(info, {'DOWN', _MRef, process, ConnPid0, Reason}, _,
-		StateData=#state{host=Host, port=Port, opts=Opts, table=Tid, conns=Conns0, conns_meta=ConnsMeta0}) ->
+		StateData=#state{host=Host, port=Port, opts=Opts, table=Tid,
+			conns=Conns0, conns_meta=ConnsMeta0, http2_settings=HTTP2Settings}) ->
 	Conns = maps:remove(ConnPid0, Conns0),
 	ConnsMeta = maps:remove(ConnPid0, ConnsMeta0),
+	HTTP2Settings1 = maps:remove(ConnPid0, HTTP2Settings),
 	case Reason of
 		%% The process is down because of a configuration error.
 		%% Do NOT attempt to reconnect, leave the pool in a degraded state.
 		badarg ->
-			{next_state, degraded, StateData#state{conns=Conns, conns_meta=ConnsMeta}};
+			{next_state, degraded, StateData#state{conns=Conns,
+				conns_meta=ConnsMeta, http2_settings=HTTP2Settings1}};
 		_ ->
 			ConnOpts = conn_opts(Tid, Opts),
 			{ok, ConnPid} = gun:open(Host, Port, ConnOpts),
 			_ = monitor(process, ConnPid),
-			{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}, conns_meta=ConnsMeta}}
+			{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down},
+				conns_meta=ConnsMeta, http2_settings=HTTP2Settings1}}
 	end;
 handle_common({call, From}, info, StateName, #state{host=Host, port=Port,
 		opts=Opts, table=Tid, conns=Conns, conns_meta=ConnsMeta}) ->
