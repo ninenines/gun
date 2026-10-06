@@ -249,6 +249,26 @@ invalid_request_headers_raise_headers(_) ->
 	end,
 	gun:close(Pid).
 
+invalid_content_length_raise(_) ->
+	doc("An unparseable content-length raises in the caller "
+		"before the request is sent to the connection. "
+		"invalid_request_headers => ignore skips that check."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	%% The connection will not succeed, but we don't need it to.
+	try
+		gun:headers(Pid, "POST", "/", [
+			{<<"content-length">>, <<"not-a-number">>}
+		]),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, <<"content-length">>, _} -> ok
+	end,
+	StreamRef = gun:headers(Pid, "POST", "/", [
+		{<<"content-length">>, <<"not-a-number">>}
+	], #{invalid_request_headers => ignore}),
+	true = is_reference(StreamRef),
+	gun:close(Pid).
+
 invalid_request_headers_raise_request(_) ->
 	doc("Ensure invalid request headers raise an exception."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
@@ -398,6 +418,27 @@ invalid_request_line_raise_connect_nul(_) ->
 		error:{invalid_request_line, host, _} -> ok
 	end,
 	gun:close(Pid).
+
+iodata_request_content_length(_) ->
+	doc("A content-length request header given as an iolist is accepted."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http,
+		fun(Parent, _, ClientSocket, ClientTransport) ->
+			{ok, Data} = ClientTransport:recv(ClientSocket, 0, 1000),
+			Parent ! {self(), Data}
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:headers(ConnPid, "POST", "/", [
+		{<<"content-length">>, "5"}
+	]),
+	Data = receive
+		{OriginPid, Bin} when is_binary(Bin) ->
+			Bin
+	after 5000 ->
+		error(timeout)
+	end,
+	{_, _} = binary:match(Data, <<"content-length: 5">>),
+	gun:close(ConnPid).
 
 keepalive_infinity(_) ->
 	doc("Ensure infinity for keepalive is accepted by all protocols."),

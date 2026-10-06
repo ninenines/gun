@@ -689,6 +689,7 @@ headers(ServerPid, Method, Path, Headers0, ReqOpts) ->
 	Headers = normalize_headers(Headers0),
 	maybe_invalid_request_line(Method, Path, ReqOpts),
 	maybe_invalid_request_headers(Headers, ReqOpts),
+	maybe_validate_content_length(Headers, ReqOpts),
 	Tunnel = get_tunnel(ReqOpts),
 	StreamRef = make_stream_ref(Tunnel),
 	InitialFlow = maps:get(flow, ReqOpts, infinity),
@@ -770,6 +771,29 @@ validate_request_headers([{Name, Value}|Tail]) ->
 	end;
 validate_request_headers([]) ->
 	ok.
+
+%% headers/5 frames the body from this value. request/6 replaces it
+%% with the size of the body, so the check lives here.
+maybe_validate_content_length(Headers, ReqOpts) ->
+	case maps:get(invalid_request_headers, ReqOpts, raise) of
+		raise ->
+			validate_content_length(Headers);
+		ignore ->
+			ok
+	end.
+
+validate_content_length(Headers) ->
+	case lists:keyfind(<<"content-length">>, 1, Headers) of
+		false ->
+			ok;
+		{_, Value} ->
+			try cow_http_hd:parse_content_length(iolist_to_binary(Value)) of
+				_ -> ok
+			catch _:_ ->
+				error({invalid_request_header, <<"content-length">>,
+					"The content-length header is invalid."})
+			end
+	end.
 
 maybe_invalid_connect_destination(#{host := Host}, ReqOpts) when not is_tuple(Host) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of

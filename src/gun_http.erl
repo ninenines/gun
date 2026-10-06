@@ -1038,7 +1038,7 @@ conn_from_header([_|Tail]) -> conn_from_header(Tail).
 request_io_from_headers(Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
 		{_, Length} ->
-			{body, cow_http_hd:parse_content_length(Length)};
+			{body, cow_http_hd:parse_content_length(iolist_to_binary(Length))};
 		_ ->
 			body_chunked
 	end.
