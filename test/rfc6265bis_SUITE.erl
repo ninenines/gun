@@ -855,6 +855,31 @@ wpt_value_ctl(Config) ->
 		<<"test=value">>
 	} end, "/cookies/value", Config).
 
+malformed_path_set_cookie_header_no_crash(_) ->
+	doc("A request path that cannot be parsed as a URI must not crash "
+		"the caller when recording cookies from a response. (RFC6265bis 5.7)"),
+	Store0 = gun_cookies_list:init(),
+	Store0 = gun_cookies:set_cookie_header(<<"http">>, <<"example.com">>, <<"/a b">>,
+		200, [{<<"set-cookie">>, <<"a=b">>}], Store0, #{}).
+
+malformed_path_add_cookie_header_no_crash(_) ->
+	doc("A request path that cannot be parsed as a URI must not crash "
+		"the caller when building the Cookie header for a request. (RFC6265bis 5.8)"),
+	Store0 = gun_cookies_list:init(),
+	{[], Store0} = gun_cookies:add_cookie_header(<<"http">>,
+		<<"example.com">>, <<"/a b">>, [], Store0).
+
+malformed_percent_cookie_no_crash(_) ->
+	doc("A path whose percent-encoding is invalid must not crash "
+		"cookie handling. (RFC6265bis 5.7, 5.8)"),
+	Store0 = gun_cookies_list:init(),
+	Store1 = gun_cookies:set_cookie_header(<<"http">>, <<"example.com">>, <<"/">>,
+		200, [{<<"set-cookie">>, <<"a=b">>}], Store0, #{}),
+	{[], Store1} = gun_cookies:add_cookie_header(<<"http">>,
+		<<"example.com">>, <<"/%zz">>, [], Store1),
+	Store1 = gun_cookies:set_cookie_header(<<"http">>, <<"example.com">>, <<"/%zz">>,
+		200, [{<<"set-cookie">>, <<"c=d">>}], Store1, #{}).
+
 %% JSON files are created by taking the Javascript Object
 %% from the HTML files in the WPT suite, using the browser
 %% Developer console to convert into JSON:
