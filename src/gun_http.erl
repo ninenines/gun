@@ -1048,10 +1048,11 @@ response_io_from_headers(<<"HEAD">>, _, _, _) ->
 response_io_from_headers(_, _, Status, _) when (Status =:= 204) or (Status =:= 304) ->
 	head;
 response_io_from_headers(_, Version, _Status, Headers) ->
-	case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
-		{_, TE} when Version =:= 'HTTP/1.1' ->
+	case [TE || {<<"transfer-encoding">>, TE} <- Headers] of
+		TEs = [_|_] when Version =:= 'HTTP/1.1' ->
 			try
-				case cow_http_hd:parse_transfer_encoding(iolist_to_binary(TE)) of
+				case cow_http_hd:parse_transfer_encoding(iolist_to_binary(
+						lists:join(<<", ">>, TEs))) of
 					[<<"chunked">>] -> body_chunked;
 					[<<"identity">>] -> body_close
 				end

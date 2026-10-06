@@ -255,6 +255,26 @@ malformed_transfer_encoding_header(_) ->
 		gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+transfer_encoding_multiple_lines(_) ->
+	doc("Transfer-Encoding field lines combine into one field. "
+		"chunked followed by another coding is a protocol error. (RFC9112 6.1)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"transfer-encoding: chunked\r\n"
+				"transfer-encoding: gzip\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 malformed_trailers_no_crash(_) ->
 	doc("A trailer line with no colon must not crash the connection. (RFC9112 7.1.2, 5)"),
 	{ok, _, OriginPort} = init_origin(tcp, http,
