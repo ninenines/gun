@@ -119,6 +119,39 @@ hello_pool_ws(Config) ->
 			ok
 	end || _ <- lists:seq(1, 8)].
 
+invalid_request_header_releases_stream(Config) ->
+	doc("A request header that raises in the caller releases the reserved stream."),
+	Port = config(port, Config),
+	Authority = ["localhost:", integer_to_binary(Port)],
+	Headers = #{
+		<<"host">> => Authority,
+		<<"x-bad">> => <<"a\r\nb">>
+	},
+	Opts = #{scope => ?FUNCTION_NAME},
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{protocols => [http]},
+		scope => ?FUNCTION_NAME,
+		size => 1
+	}),
+	gun_pool:await_up(ManagerPid),
+	%% request/5 via get, then headers/4 via post without a body.
+	try gun_pool:get("/", Headers, Opts) of
+		_ -> ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, <<"x-bad">>, _} -> ok
+	end,
+	try gun_pool:post("/", Headers, Opts) of
+		_ -> ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, <<"x-bad">>, _} -> ok
+	end,
+	{operational, #{table := Tid, conns := Conns}} = gun_pool:info(ManagerPid),
+	[{ConnPid, {up, http, _}}] = maps:to_list(Conns),
+	[{ConnPid, _, 0}] = ets:lookup(Tid, ConnPid),
+	{async, StreamRef} = gun_pool:get("/", #{<<"host">> => Authority}, Opts),
+	{response, nofin, 200, _} = gun_pool:await(StreamRef),
+	{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef).
+
 max_streams_h1(Config) ->
 	doc("Confirm requests are rejected when the maximum number "
 		"of streams is reached for HTTP/1.1 connections."),

@@ -352,9 +352,9 @@ headers(Method, Path, Headers, ReqOpts) ->
 					{error, no_connection_available,
 						'No connection in the pool with enough capacity available to open a new stream.'};
 				{ConnPid, _Meta} ->
-					StreamRef = gun:headers(ConnPid, Method, Path, Headers, ReqOpts),
-					%% @todo Synchronous mode.
-					{async, {ConnPid, StreamRef}}
+					reserved_stream(ManagerPid, ConnPid, fun() ->
+						gun:headers(ConnPid, Method, Path, Headers, ReqOpts)
+					end)
 			end
 	end.
 
@@ -374,10 +374,22 @@ request(Method, Path, Headers, Body, ReqOpts) ->
 					{error, no_connection_available,
 						'No connection in the pool with enough capacity available to open a new stream.'};
 				{ConnPid, _Meta} ->
-					StreamRef = gun:request(ConnPid, Method, Path, Headers, Body, ReqOpts),
-					%% @todo Synchronous mode.
-					{async, {ConnPid, StreamRef}}
+					reserved_stream(ManagerPid, ConnPid, fun() ->
+						gun:request(ConnPid, Method, Path, Headers, Body, ReqOpts)
+					end)
 			end
+	end.
+
+%% gun:headers/5 and gun:request/6 raise before the request is sent.
+%% The reservation must be released or the stream stays pending.
+reserved_stream(ManagerPid, ConnPid, Fun) ->
+	try Fun() of
+		StreamRef ->
+			%% @todo Synchronous mode.
+			{async, {ConnPid, StreamRef}}
+	catch Class:Reason:Stack ->
+		gen_statem:cast(ManagerPid, {unreserve_stream, ConnPid}),
+		erlang:raise(Class, Reason, Stack)
 	end.
 
 %% We require the host to be given in the headers for the time being.
@@ -659,6 +671,9 @@ handle_common({call, From}, {checkout, _ReqOpts, ReserveStream}, _,
 			Meta = maps:get(ConnPid, ConnsMeta, #{}),
 			{keep_state_and_data, {reply, From, {ConnPid, Meta}}}
 	end;
+handle_common(cast, {unreserve_stream, ConnPid}, _, #state{table=Tid}) ->
+	_ = unreserve_stream(Tid, ConnPid),
+	keep_state_and_data;
 handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _,
 		StateData0=#state{conns=Conns}) ->
 	%% Assert that the state is correct.
@@ -712,6 +727,13 @@ reserve_stream(Tid, ConnPid, {up, Protocol, _})
 	ets:update_counter(Tid, ConnPid, {3, 1}, {ConnPid, 0, 0});
 reserve_stream(_, _, _) ->
 	ok.
+
+%% disconnect/2 may already have deleted the row.
+unreserve_stream(Tid, ConnPid) ->
+	try ets:update_counter(Tid, ConnPid, {3, -1, 0, 0})
+	catch error:badarg ->
+		ok
+	end.
 
 %% We go over every connection and return the first one
 %% we find that has capacity. How we determine whether
