@@ -1050,9 +1050,13 @@ response_io_from_headers(_, _, Status, _) when (Status =:= 204) or (Status =:= 3
 response_io_from_headers(_, Version, _Status, Headers) ->
 	case lists:keyfind(<<"transfer-encoding">>, 1, Headers) of
 		{_, TE} when Version =:= 'HTTP/1.1' ->
-			case cow_http_hd:parse_transfer_encoding(TE) of
-				[<<"chunked">>] -> body_chunked;
-				[<<"identity">>] -> body_close
+			try
+				case cow_http_hd:parse_transfer_encoding(iolist_to_binary(TE)) of
+					[<<"chunked">>] -> body_chunked;
+					[<<"identity">>] -> body_close
+				end
+			catch _:_ ->
+				{error, "The transfer-encoding header is invalid."}
 			end;
 		_ ->
 			response_io_from_content_length(Headers)
