@@ -442,6 +442,73 @@ push_promise_no_crash(Config) ->
 	{response, nofin, 200, _} = gun_pool:await(NextRef),
 	{ok, <<"Hello world!">>} = gun_pool:await_body(NextRef).
 
+pending_cleared_on_down(_Config) ->
+	doc("Confirm a stream reserved after the connection has disconnected "
+		"is forgotten when the pool processes gun_down."),
+	{ok, OriginPid, Port} = gun_test:init_origin(tcp, http, fun do_origin_close/4),
+	{ok, ManagerPid} = gun_pool:start_pool("localhost", Port, #{
+		conn_opts => #{
+			protocols => [http],
+			retry => 0
+		},
+		scope => ?FUNCTION_NAME,
+		size => 1
+	}),
+	try
+		gun_pool:await_up(ManagerPid),
+		handshake_completed = receive_from(OriginPid),
+		{operational, #{table := Tid, conns := Conns}} = gun_pool:info(ManagerPid),
+		[{ConnPid, {up, http, _}}] = maps:to_list(Conns),
+		%% Hold gun_down in the mailbox so checkout reserves a stream
+		%% after disconnect/2 has deleted the row.
+		ok = sys:suspend(ManagerPid),
+		{message_queue_len, 0} = process_info(ManagerPid, message_queue_len),
+		Caller = self(),
+		_ = spawn_link(fun() ->
+			Result = gen_statem:call(ManagerPid, {checkout, #{}, true}, 5000),
+			Caller ! {checkout, Result}
+		end),
+		ok = do_wait_queue(ManagerPid, 1),
+		OriginPid ! close,
+		ok = do_wait_queue(ManagerPid, 2),
+		ok = sys:resume(ManagerPid),
+		{ConnPid, _} = receive
+			{checkout, Result} ->
+				Result
+		after 5000 ->
+			error(timeout)
+		end,
+		%% The info call is handled after the queued gun_down.
+		_ = gun_pool:info(ManagerPid),
+		[{_, _, 0}] = ets:lookup(Tid, ConnPid)
+	after
+		_ = try sys:resume(ManagerPid) catch _:_ -> ok end,
+		gun_pool:stop_pool("localhost", Port, #{scope => ?FUNCTION_NAME})
+	end.
+
+do_origin_close(_Parent, _ListenSocket, ClientSocket, ClientTransport) ->
+	receive
+		close ->
+			ok = ClientTransport:close(ClientSocket)
+	end.
+
+%% The manager is suspended, so the queue only grows when another
+%% process sends. Poll until at least MinLen messages are waiting.
+do_wait_queue(Pid, MinLen) ->
+	do_wait_queue(Pid, MinLen, 50).
+
+do_wait_queue(Pid, MinLen, 0) ->
+	error({timeout, process_info(Pid, message_queue_len), MinLen});
+do_wait_queue(Pid, MinLen, N) ->
+	{message_queue_len, Len} = process_info(Pid, message_queue_len),
+	if
+		Len >= MinLen ->
+			ok;
+		true ->
+			timer:sleep(10),
+			do_wait_queue(Pid, MinLen, N - 1)
+	end.
+
 do_await_pushed(PoolRef) ->
 	case gun_pool:await(PoolRef) of
 		{response, fin, 200, _} ->

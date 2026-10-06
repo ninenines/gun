@@ -601,7 +601,7 @@ setup_fun(_) ->
 		{up, Protocol, #{}}
 	end, undefined}.
 
-degraded_setup(ConnPid, Msg, StateData0=#state{table=Tid, conns=Conns,
+degraded_setup(ConnPid, Msg, StateData0=#state{conns=Conns,
 		conns_meta=ConnsMeta}, SetupFun, SetupState0) ->
 	case SetupFun(ConnPid, Msg, SetupState0) of
 		Setup={setup, _SetupState} ->
@@ -611,9 +611,6 @@ degraded_setup(ConnPid, Msg, StateData0=#state{table=Tid, conns=Conns,
 		%% Websocket or tunnel stream refs.
 		{up, Protocol, Meta} ->
 			Settings = #{},
-			%% Streams reserved before the connection went down will
-			%% never be started on this connection, forget about them.
-			_ = ets:update_element(Tid, ConnPid, {3, 0}),
 			StateData = StateData0#state{
 				conns=Conns#{ConnPid => {up, Protocol, Settings}},
 				conns_meta=ConnsMeta#{ConnPid => Meta}
@@ -667,8 +664,12 @@ handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _,
 	%% Assert that the state is correct.
 	{up, http2, _} = maps:get(ConnPid, Conns),
 	maybe_operational(StateData0#state{conns=Conns#{ConnPid => {up, http2, Settings}}});
-handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _, StateData=#state{conns=Conns}) ->
+handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _,
+		StateData=#state{table=Tid, conns=Conns}) ->
 	{up, Protocol, _} = maps:get(ConnPid, Conns),
+	%% A reservation made after disconnect/2 deleted the row
+	%% will not start. The row is otherwise already gone.
+	_ = ets:update_element(Tid, ConnPid, {3, 0}),
 	{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}}};
 %% @todo We do not want to reconnect automatically when the pool is dynamic.
 handle_common(info, {'DOWN', _MRef, process, ConnPid0, Reason}, _,
