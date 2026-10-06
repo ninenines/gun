@@ -342,21 +342,9 @@ headers(Method, Path, Headers) ->
 
 -spec headers(iodata(), iodata(), gun:req_headers(), req_opts()) -> request_result().
 headers(Method, Path, Headers, ReqOpts) ->
-	case get_pool(authority(Headers), ReqOpts) of
-		undefined ->
-			{error, pool_not_found,
-				'No pool was found for the given scope and authority.'};
-		ManagerPid ->
-			case checkout(ManagerPid, ReqOpts, true) of
-				undefined ->
-					{error, no_connection_available,
-						'No connection in the pool with enough capacity available to open a new stream.'};
-				{ConnPid, _Meta} ->
-					reserved_stream(ManagerPid, ConnPid, fun() ->
-						gun:headers(ConnPid, Method, Path, Headers, ReqOpts)
-					end)
-			end
-	end.
+	do_request(Headers, ReqOpts, fun(ConnPid) ->
+		gun:headers(ConnPid, Method, Path, Headers, ReqOpts)
+	end).
 
 -spec request(iodata(), iodata(), gun:req_headers(), iodata()) -> request_result().
 request(Method, Path, Headers, Body) ->
@@ -364,6 +352,13 @@ request(Method, Path, Headers, Body) ->
 
 -spec request(iodata(), iodata(), gun:req_headers(), iodata(), req_opts()) -> request_result().
 request(Method, Path, Headers, Body, ReqOpts) ->
+	do_request(Headers, ReqOpts, fun(ConnPid) ->
+		gun:request(ConnPid, Method, Path, Headers, Body, ReqOpts)
+	end).
+
+%% gun:headers/5 and gun:request/6 raise before the request is sent.
+%% The reservation must be released or the stream stays pending.
+do_request(Headers, ReqOpts, Fun) ->
 	case get_pool(authority(Headers), ReqOpts) of
 		undefined ->
 			{error, pool_not_found,
@@ -374,22 +369,15 @@ request(Method, Path, Headers, Body, ReqOpts) ->
 					{error, no_connection_available,
 						'No connection in the pool with enough capacity available to open a new stream.'};
 				{ConnPid, _Meta} ->
-					reserved_stream(ManagerPid, ConnPid, fun() ->
-						gun:request(ConnPid, Method, Path, Headers, Body, ReqOpts)
-					end)
+					try Fun(ConnPid) of
+						StreamRef ->
+							%% @todo Synchronous mode.
+							{async, {ConnPid, StreamRef}}
+					catch Class:Reason:Stack ->
+						gen_statem:cast(ManagerPid, {unreserve_stream, ConnPid}),
+						erlang:raise(Class, Reason, Stack)
+					end
 			end
-	end.
-
-%% gun:headers/5 and gun:request/6 raise before the request is sent.
-%% The reservation must be released or the stream stays pending.
-reserved_stream(ManagerPid, ConnPid, Fun) ->
-	try Fun() of
-		StreamRef ->
-			%% @todo Synchronous mode.
-			{async, {ConnPid, StreamRef}}
-	catch Class:Reason:Stack ->
-		gen_statem:cast(ManagerPid, {unreserve_stream, ConnPid}),
-		erlang:raise(Class, Reason, Stack)
 	end.
 
 %% We require the host to be given in the headers for the time being.
