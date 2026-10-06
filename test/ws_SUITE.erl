@@ -32,6 +32,7 @@ groups() ->
 		http11_request_error,
 		http11_keepalive,
 		http11_keepalive_default_silence_pings,
+		malformed_sec_websocket_extensions_no_crash,
 		max_frame_size_compressed,
 		max_frame_size_control_during_fragment,
 		max_frame_size_fragmented,
@@ -137,6 +138,39 @@ http11_keepalive_default_silence_pings(Config) ->
 	%% Gun sent a ping automatically, but we silence ping/pong by default.
 	{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
 	gun:close(ConnPid).
+
+malformed_sec_websocket_extensions_no_crash(_) ->
+	doc("A malformed Sec-Websocket-Extensions response header must not "
+		"crash the connection."),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, ReqData} = ClientTransport:recv(ClientSocket, 0, 5000),
+			Lines = binary:split(ReqData, <<"\r\n">>, [global]),
+			[KeyLine] = [L || <<"sec-websocket-key: ", _/bits>> = L <- Lines],
+			<<"sec-websocket-key: ", Key/bits>> = KeyLine,
+			Accept = cow_ws:encode_key(Key),
+			ok = ClientTransport:send(ClientSocket, [
+				"HTTP/1.1 101 Switching Protocols\r\n"
+				"connection: upgrade\r\n"
+				"upgrade: websocket\r\n"
+				"sec-websocket-accept: ", Accept, "\r\n"
+				"sec-websocket-extensions: @invalid\r\n"
+				"\r\n"
+			]),
+			receive after infinity -> ok end
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [http],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	_ = gun:ws_upgrade(ConnPid, "/", []),
+	receive
+		{gun_down, ConnPid, http, normal, _} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end.
 
 max_frame_size_compressed(_) ->
 	doc("A compressed Websocket frame whose inflated size exceeds "
