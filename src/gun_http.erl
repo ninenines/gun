@@ -1023,7 +1023,11 @@ conn_from_headers(Version, Headers) ->
 			keepalive;
 		{_, ConnHd0} ->
 			ConnHd = iolist_to_binary(ConnHd0),
-			conn_from_header(cow_http_hd:parse_connection(ConnHd))
+			try cow_http_hd:parse_connection(ConnHd) of
+				Conn -> conn_from_header(Conn)
+			catch _:_ ->
+				close
+			end
 	end.
 
 conn_from_header([]) -> close;

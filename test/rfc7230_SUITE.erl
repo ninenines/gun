@@ -174,6 +174,33 @@ max_headers(_) ->
 	{error, _} = gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+malformed_connection_header(_) ->
+	doc("A malformed Connection response header must not crash the connection. (RFC9110 7.6.1)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"connection: @invalid\r\n"
+				"content-length: 0\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	%% The response is delivered, then the connection closes.
+	%% A crash in conn_from_headers exits the process instead.
+	receive
+		{gun_down, ConnPid, http, normal, _} ->
+			ok
+	after 1000 ->
+		error(timeout)
+	end,
+	true = is_process_alive(ConnPid),
+	gun:close(ConnPid).
+
 malformed_status_line_no_crash(_) ->
 	doc("A status line that cannot be parsed must not crash the connection. (RFC9112 4)"),
 	{ok, _, OriginPort} = init_origin(tcp, http,
