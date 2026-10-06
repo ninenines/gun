@@ -19,7 +19,8 @@
 -import(ct_helper, [config/2]).
 
 all() ->
-	[http_clock, http2_clock, lone_id, with_mime_param, http_clock_close].
+	[http_clock, http2_clock, lone_id, malformed_content_type_no_crash,
+		with_mime_param, http_clock_close].
 
 init_per_suite(Config) ->
 	gun_test:init_cowboy_tls(?MODULE, #{
@@ -28,6 +29,12 @@ init_per_suite(Config) ->
 
 end_per_suite(Config) ->
 	cowboy:stop_listener(config(ref, Config)).
+
+malformed_content_type_no_crash(_) ->
+	disable = gun_sse_h:init(self(), make_ref(), 200,
+		[{<<"content-type">>, <<"text">>}], #{}),
+	disable = gun_sse_h:init(self(), make_ref(), 200,
+		[{<<"content-type">>, <<"text/plain">>}], #{}).
 
 init_routes() -> [
 	{"localhost", [
