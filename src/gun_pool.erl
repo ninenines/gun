@@ -222,29 +222,36 @@ await_up(Authority, Scope) ->
 	end.
 
 -spec checkout(pid(), req_opts() | ws_send_opts()) -> undefined | {pid(), map()}.
-checkout(ManagerPid, ReqOpts=#{checkout_retry := Retry}) when is_list(Retry) ->
+checkout(ManagerPid, ReqOpts) ->
+	checkout(ManagerPid, ReqOpts, false).
+
+%% When ReserveStream is true the caller is about to open a new stream
+%% on the connection it is given. The manager then counts this stream
+%% immediately instead of waiting for the connection process to
+%% process the request and update the stream count.
+checkout(ManagerPid, ReqOpts=#{checkout_retry := Retry}, ReserveStream) when is_list(Retry) ->
 	CallTimeout = maps:get(checkout_call_timeout, ReqOpts, 5000),
-	case gen_server:call(ManagerPid, {checkout, ReqOpts}, CallTimeout) of
+	case gen_server:call(ManagerPid, {checkout, ReqOpts, ReserveStream}, CallTimeout) of
 		undefined ->
-			checkout_retry(ManagerPid, ReqOpts, CallTimeout, Retry);
+			checkout_retry(ManagerPid, ReqOpts, ReserveStream, CallTimeout, Retry);
 		Result ->
 			Result
 	end;
-checkout(ManagerPid, ReqOpts) ->
+checkout(ManagerPid, ReqOpts, ReserveStream) ->
 	CallTimeout = maps:get(checkout_call_timeout, ReqOpts, 5000),
-	gen_server:call(ManagerPid, {checkout, ReqOpts}, CallTimeout).
+	gen_server:call(ManagerPid, {checkout, ReqOpts, ReserveStream}, CallTimeout).
 
 %% When the checkout_retry option is used, and the first call resulted
 %% in no connection being given out, we wait for the configured amount
 %% of time then try again. We loop over the wait times until there is
 %% none.
-checkout_retry(_, _, _, []) ->
+checkout_retry(_, _, _, _, []) ->
 	undefined;
-checkout_retry(ManagerPid, ReqOpts, CallTimeout, [Wait|Retry]) ->
+checkout_retry(ManagerPid, ReqOpts, ReserveStream, CallTimeout, [Wait|Retry]) ->
 	timer:sleep(Wait),
-	case gen_server:call(ManagerPid, {checkout, ReqOpts}, CallTimeout) of
+	case gen_server:call(ManagerPid, {checkout, ReqOpts, ReserveStream}, CallTimeout) of
 		undefined ->
-			checkout_retry(ManagerPid, ReqOpts, CallTimeout, Retry);
+			checkout_retry(ManagerPid, ReqOpts, ReserveStream, CallTimeout, Retry);
 		Result ->
 			Result
 	end.
@@ -335,21 +342,9 @@ headers(Method, Path, Headers) ->
 
 -spec headers(iodata(), iodata(), gun:req_headers(), req_opts()) -> request_result().
 headers(Method, Path, Headers, ReqOpts) ->
-	case get_pool(authority(Headers), ReqOpts) of
-		undefined ->
-			{error, pool_not_found,
-				'No pool was found for the given scope and authority.'};
-		ManagerPid ->
-			case checkout(ManagerPid, ReqOpts) of
-				undefined ->
-					{error, no_connection_available,
-						'No connection in the pool with enough capacity available to open a new stream.'};
-				{ConnPid, _Meta} ->
-					StreamRef = gun:headers(ConnPid, Method, Path, Headers, ReqOpts),
-					%% @todo Synchronous mode.
-					{async, {ConnPid, StreamRef}}
-			end
-	end.
+	do_request(Headers, ReqOpts, fun(ConnPid) ->
+		gun:headers(ConnPid, Method, Path, Headers, ReqOpts)
+	end).
 
 -spec request(iodata(), iodata(), gun:req_headers(), iodata()) -> request_result().
 request(Method, Path, Headers, Body) ->
@@ -357,19 +352,31 @@ request(Method, Path, Headers, Body) ->
 
 -spec request(iodata(), iodata(), gun:req_headers(), iodata(), req_opts()) -> request_result().
 request(Method, Path, Headers, Body, ReqOpts) ->
+	do_request(Headers, ReqOpts, fun(ConnPid) ->
+		gun:request(ConnPid, Method, Path, Headers, Body, ReqOpts)
+	end).
+
+%% gun:headers/5 and gun:request/6 raise before the request is sent.
+%% The reservation must be released or the stream stays pending.
+do_request(Headers, ReqOpts, Fun) ->
 	case get_pool(authority(Headers), ReqOpts) of
 		undefined ->
 			{error, pool_not_found,
 				'No pool was found for the given scope and authority.'};
 		ManagerPid ->
-			case checkout(ManagerPid, ReqOpts) of
+			case checkout(ManagerPid, ReqOpts, true) of
 				undefined ->
 					{error, no_connection_available,
 						'No connection in the pool with enough capacity available to open a new stream.'};
 				{ConnPid, _Meta} ->
-					StreamRef = gun:request(ConnPid, Method, Path, Headers, Body, ReqOpts),
-					%% @todo Synchronous mode.
-					{async, {ConnPid, StreamRef}}
+					try Fun(ConnPid) of
+						StreamRef ->
+							%% @todo Synchronous mode.
+							{async, {ConnPid, StreamRef}}
+					catch Class:Reason:Stack ->
+						gen_statem:cast(ManagerPid, {unreserve_stream, ConnPid}),
+						erlang:raise(Class, Reason, Stack)
+					end
 			end
 	end.
 
@@ -491,11 +498,20 @@ ws_send(Frames, WsSendOpts=#{authority := Authority}) ->
 %% active streams. It updates the gun_pooled_conns ets table
 %% whenever a stream begins or ends.
 %%
+%% Because the event handler runs in the connection process, the
+%% number of active streams is only updated once the connection
+%% has processed the request. To avoid giving out a connection
+%% that is already at capacity, the manager also counts the
+%% streams it reserved when giving out a connection for a new
+%% request. The event handler converts these pending streams
+%% into active streams when the request starts.
+%%
 %% A connection is deemed suitable if it is possible to open new
 %% streams. How many streams can be open at any one time depends
 %% on the protocol. For HTTP/2 the manager process keeps track of
-%% the connection's settings to know the maximum. For non-stream
-%% based protocols, there is no limit.
+%% the connection's settings to know the maximum, and does not
+%% give the connection out until those settings have been stored.
+%% For non-stream based protocols, there is no limit.
 %%
 %% The connection to be used is otherwise chosen randomly. The
 %% first connection that is suitable is returned. There is no
@@ -585,8 +601,8 @@ setup_fun(_) ->
 		{up, Protocol, #{}}
 	end, undefined}.
 
-degraded_setup(ConnPid, Msg, StateData0=#state{conns=Conns, conns_meta=ConnsMeta,
-		await_up=AwaitUp}, SetupFun, SetupState0) ->
+degraded_setup(ConnPid, Msg, StateData0=#state{conns=Conns,
+		conns_meta=ConnsMeta}, SetupFun, SetupState0) ->
 	case SetupFun(ConnPid, Msg, SetupState0) of
 		Setup={setup, _SetupState} ->
 			StateData = StateData0#state{conns=Conns#{ConnPid => Setup}},
@@ -599,36 +615,60 @@ degraded_setup(ConnPid, Msg, StateData0=#state{conns=Conns, conns_meta=ConnsMeta
 				conns=Conns#{ConnPid => {up, Protocol, Settings}},
 				conns_meta=ConnsMeta#{ConnPid => Meta}
 			},
-			case is_degraded(StateData) of
-				true -> {keep_state, StateData};
-				false -> {next_state, operational, StateData#state{await_up=[]},
-					[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
-			end
+			maybe_operational(StateData)
+	end.
+
+maybe_operational(StateData=#state{await_up=AwaitUp}) ->
+	case is_degraded(StateData) of
+		true ->
+			{keep_state, StateData};
+		false ->
+			{next_state, operational, StateData#state{await_up=[]},
+				[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
 	end.
 
 is_degraded(#state{conns=Conns0}) ->
 	Conns = maps:to_list(Conns0),
-	Len = length(Conns),
-	Ups = [up || {_, {up, _, _}} <- Conns],
-	Len =/= length(Ups).
+	length(Conns) =/= length([up || {_, State} <- Conns, is_up(State)]).
+
+%% HTTP/2 is not up until the server SETTINGS are stored. The map
+%% has no max_concurrent_streams key until then. When the server
+%% omits the setting, the stored value is infinity.
+is_up({up, http2, #{max_concurrent_streams := _}}) ->
+	true;
+is_up({up, http2, _}) ->
+	false;
+is_up({up, _, _}) ->
+	true;
+is_up(_) ->
+	false.
 
 operational(Type, Event, StateData) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, StateData).
 
-handle_common({call, From}, {checkout, _ReqOpts}, _,
-		StateData=#state{conns_meta=ConnsMeta}) ->
+handle_common({call, From}, {checkout, _ReqOpts, ReserveStream}, _,
+		StateData=#state{table=Tid, conns=Conns, conns_meta=ConnsMeta}) ->
 	case find_available_connection(StateData) of
 		none ->
 			{keep_state_and_data, {reply, From, undefined}};
 		ConnPid ->
+			_ = case ReserveStream of
+				true -> reserve_stream(Tid, ConnPid, maps:get(ConnPid, Conns));
+				false -> ok
+			end,
 			Meta = maps:get(ConnPid, ConnsMeta, #{}),
 			{keep_state_and_data, {reply, From, {ConnPid, Meta}}}
 	end;
-handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _, StateData=#state{conns=Conns}) ->
+handle_common(cast, {unreserve_stream, ConnPid}, _, #state{table=Tid}) ->
+	_ = unreserve_stream(Tid, ConnPid),
+	keep_state_and_data;
+handle_common(info, {gun_notify, ConnPid, settings_changed, Settings}, _,
+		StateData0=#state{conns=Conns}) ->
 	%% Assert that the state is correct.
 	{up, http2, _} = maps:get(ConnPid, Conns),
-	{keep_state, StateData#state{conns=Conns#{ConnPid => {up, http2, Settings}}}};
-handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _, StateData=#state{conns=Conns}) ->
+	maybe_operational(StateData0#state{conns=Conns#{ConnPid => {up, http2, Settings}}});
+handle_common(info, {gun_down, ConnPid, Protocol, _Reason, _KilledStreams}, _,
+		StateData=#state{conns=Conns}) ->
 	{up, Protocol, _} = maps:get(ConnPid, Conns),
 	{next_state, degraded, StateData#state{conns=Conns#{ConnPid => down}}};
 %% @todo We do not want to reconnect automatically when the pool is dynamic.
@@ -667,12 +707,29 @@ handle_common(Type, Event, StateName, StateData) ->
 		[StateName, Type, Event, StateData]),
 	keep_state_and_data.
 
+%% The stream is counted as pending until the connection
+%% process starts the request. Only protocols that have
+%% a limit on the number of streams need to be counted.
+reserve_stream(Tid, ConnPid, {up, Protocol, _})
+		when Protocol =:= http; Protocol =:= http2 ->
+	ets:update_counter(Tid, ConnPid, {3, 1}, {ConnPid, 0, 0});
+reserve_stream(_, _, _) ->
+	ok.
+
+%% disconnect/2 may already have deleted the row.
+unreserve_stream(Tid, ConnPid) ->
+	try ets:update_counter(Tid, ConnPid, {3, -1, 0, 0})
+	catch error:badarg ->
+		ok
+	end.
+
 %% We go over every connection and return the first one
 %% we find that has capacity. How we determine whether
 %% capacity is available depends on the protocol. For
 %% HTTP/2 we look into the protocol settings. The
 %% current number of streams is maintained by the
-%% event handler gun_pool_events_h.
+%% event handler gun_pool_events_h, to which we add
+%% the streams that were reserved but not started yet.
 find_available_connection(#state{table=Tid, conns=Conns}) ->
 	I = lists:sort([{rand:uniform(), K} || K <- maps:keys(Conns)]),
 	find_available_connection(I, Conns, Tid).
@@ -681,19 +738,24 @@ find_available_connection([], _, _) ->
 	none;
 find_available_connection([{_, ConnPid}|I], Conns, Tid) ->
 	case maps:get(ConnPid, Conns) of
-		{up, Protocol, Settings} ->
-			MaxStreams = max_streams(Protocol, Settings),
-			CurrentStreams = case ets:lookup(Tid, ConnPid) of
-				[] ->
-					0;
-				[{_, CS}] ->
-					CS
-			end,
-			if
-				CurrentStreams + 1 > MaxStreams ->
+		ConnState={up, Protocol, Settings} ->
+			case is_up(ConnState) of
+				false ->
 					find_available_connection(I, Conns, Tid);
 				true ->
-					ConnPid
+					MaxStreams = max_streams(Protocol, Settings),
+					CurrentStreams = case ets:lookup(Tid, ConnPid) of
+						[] ->
+							0;
+						[{_, ActiveStreams, PendingStreams}] ->
+							ActiveStreams + PendingStreams
+					end,
+					if
+						CurrentStreams + 1 > MaxStreams ->
+							find_available_connection(I, Conns, Tid);
+						true ->
+							ConnPid
+					end
 			end;
 		_ ->
 			find_available_connection(I, Conns, Tid)
@@ -703,8 +765,6 @@ max_streams(http, _) ->
 	1;
 max_streams(http2, #{max_concurrent_streams := MaxStreams}) ->
 	MaxStreams;
-max_streams(http2, #{}) ->
-	infinity;
 %% There are no streams or Gun is not aware of streams when
 %% the protocol is Websocket or raw.
 max_streams(ws, _) ->
