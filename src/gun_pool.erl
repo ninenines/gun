@@ -621,6 +621,15 @@ degraded_setup(ConnPid, Msg, StateData0=#state{table=Tid, conns=Conns,
 			maybe_operational(StateData)
 	end.
 
+maybe_operational(StateData=#state{await_up=AwaitUp}) ->
+	case is_degraded(StateData) of
+		true ->
+			{keep_state, StateData};
+		false ->
+			{next_state, operational, StateData#state{await_up=[]},
+				[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
+	end.
+
 is_degraded(#state{conns=Conns0}) ->
 	Conns = maps:to_list(Conns0),
 	length(Conns) =/= length([up || {_, State} <- Conns, is_up(State)]).
@@ -636,15 +645,6 @@ is_up({up, _, _}) ->
 	true;
 is_up(_) ->
 	false.
-
-maybe_operational(StateData=#state{await_up=AwaitUp}) ->
-	case is_degraded(StateData) of
-		true ->
-			{keep_state, StateData};
-		false ->
-			{next_state, operational, StateData#state{await_up=[]},
-				[{reply, ReplyTo, ok} || ReplyTo <- AwaitUp]}
-	end.
 
 operational(Type, Event, StateData) ->
 	handle_common(Type, Event, ?FUNCTION_NAME, StateData).
