@@ -184,30 +184,42 @@ handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {ok, Negotiated},
 		CookieStore, EvHandler, EvHandlerState0)
 		when is_reference(ContinueStreamRef) ->
 	#{reply_to := ReplyTo} = HandshakeEvent,
-	NewProtocol = gun_protocols:negotiated(Negotiated, Protocols),
-	{Proto, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
-	EvHandlerState1 = EvHandler:tls_handshake_end(HandshakeEvent#{
-		socket => ProxyPid,
-		protocol => Proto:name()
-	}, EvHandlerState0),
-	EvHandlerState = EvHandler:protocol_changed(#{
-		stream_ref => StreamRef,
-		protocol => Proto:name()
-	}, EvHandlerState1),
-	%% @todo Terminate the current protocol or something?
-	OriginSocket = #{
-		gun_pid => self(),
-		reply_to => ReplyTo,
-		stream_ref => StreamRef
-	},
-	case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
-			ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}) of
-		{ok, _, ProtoState} ->
-			gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()}),
-			{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}},
-				CookieStore, EvHandlerState};
-		Error={error, _} ->
-			{Error, CookieStore, EvHandlerState}
+	case gun_protocols:negotiated(Negotiated, Protocols) of
+		{error, Reason0} ->
+			%% Close the TLS proxy, then let the HTTP/2 layer reset
+			%% only this stream. A connection-level gun_error would be
+			%% visible to every other stream.
+			EvHandlerState1 = EvHandler:tls_handshake_end(HandshakeEvent#{
+				error => Reason0
+			}, EvHandlerState0),
+			{Commands, EvHandlerState} = commands({error, Reason0},
+				State, EvHandler, EvHandlerState1),
+			{Commands, CookieStore, EvHandlerState};
+		{ok, NewProtocol} ->
+			{Proto, ProtoOpts} = gun_protocols:handler_and_opts(NewProtocol, Opts),
+			EvHandlerState1 = EvHandler:tls_handshake_end(HandshakeEvent#{
+				socket => ProxyPid,
+				protocol => Proto:name()
+			}, EvHandlerState0),
+			EvHandlerState = EvHandler:protocol_changed(#{
+				stream_ref => StreamRef,
+				protocol => Proto:name()
+			}, EvHandlerState1),
+			%% @todo Terminate the current protocol or something?
+			OriginSocket = #{
+				gun_pid => self(),
+				reply_to => ReplyTo,
+				stream_ref => StreamRef
+			},
+			case Proto:init(ReplyTo, OriginSocket, gun_tcp_proxy,
+					ProtoOpts#{stream_ref => StreamRef, tunnel_transport => tls}) of
+				{ok, _, ProtoState} ->
+					gun:reply(ReplyTo, {gun_tunnel_up, self(), StreamRef, Proto:name()}),
+					{{state, State#tunnel_state{protocol=Proto, protocol_state=ProtoState}},
+						CookieStore, EvHandlerState};
+				Error={error, _} ->
+					{Error, CookieStore, EvHandlerState}
+			end
 	end;
 handle_continue(ContinueStreamRef, {gun_tls_proxy, ProxyPid, {error, Reason},
 		{handle_continue, _, HandshakeEvent, _}},

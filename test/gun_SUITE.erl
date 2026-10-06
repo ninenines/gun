@@ -57,6 +57,20 @@ groups() ->
 
 %% Tests.
 
+alpn_negotiation_failed_no_crash(_) ->
+	doc("A peer selecting an ALPN protocol that was never advertised "
+		"must not crash the caller. (RFC 7301)"),
+	{ok, http2} = gun_protocols:negotiated({ok, <<"h2">>}, [http2, http]),
+	{ok, http} = gun_protocols:negotiated({ok, <<"http/1.1">>}, [http2, http]),
+	{error, {alpn_negotiation_failed, <<"h2">>}} =
+		gun_protocols:negotiated({ok, <<"h2">>}, [http]),
+	{error, {alpn_negotiation_failed, <<"http/1.1">>}} =
+		gun_protocols:negotiated({ok, <<"http/1.1">>}, [http2]),
+	{ok, http2} = gun_protocols:negotiated({error, protocol_not_negotiated}, [http2]),
+	{ok, http} = gun_protocols:negotiated({error, protocol_not_negotiated}, [http2, http]),
+	{error, {alpn_negotiation_failed, <<"h2c">>}} =
+		gun_protocols:negotiated({ok, <<"h2c">>}, [http2, http]).
+
 atom_header_name(_) ->
 	doc("Header names may be given as atom."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http),

@@ -51,23 +51,32 @@ handler_and_opts(ProtocolName, Opts) ->
 	{Protocol, maps:get(Protocol:opts_name(), Opts, #{})}.
 
 -spec negotiated({ok, binary()} | {error, protocol_not_negotiated}, gun:protocols())
-	-> gun:protocol().
+	-> {ok, gun:protocol()} | {error, {alpn_negotiation_failed, binary()}}.
 negotiated({ok, <<"h2">>}, Protocols) ->
-	lists:foldl(fun
-		(E = http2, _) -> E;
-		(E = {http2, _}, _) -> E;
+	case lists:foldl(fun
+		(E = http2, _) -> {ok, E};
+		(E = {http2, _}, _) -> {ok, E};
 		(_, Acc) -> Acc
-	end, http2, Protocols);
+	end, error, Protocols) of
+		error -> {error, {alpn_negotiation_failed, <<"h2">>}};
+		Result -> Result
+	end;
 negotiated({ok, <<"http/1.1">>}, Protocols) ->
-	lists:foldl(fun
-		(E = http, _) -> E;
-		(E = {http, _}, _) -> E;
+	case lists:foldl(fun
+		(E = http, _) -> {ok, E};
+		(E = {http, _}, _) -> {ok, E};
 		(_, Acc) -> Acc
-	end, http, Protocols);
+	end, error, Protocols) of
+		error -> {error, {alpn_negotiation_failed, <<"http/1.1">>}};
+		Result -> Result
+	end;
 negotiated({error, protocol_not_negotiated}, [Protocol]) ->
-	Protocol;
+	{ok, Protocol};
 negotiated({error, protocol_not_negotiated}, _) ->
-	http.
+	{ok, http};
+%% RFC7301: the peer selected a protocol we never advertised.
+negotiated({ok, Other}, _) ->
+	{error, {alpn_negotiation_failed, Other}}.
 
 -spec stream_ref(gun:protocol()) -> undefined | gun:stream_ref().
 stream_ref({_, ProtocolOpts}) -> maps:get(stream_ref, ProtocolOpts, undefined);

@@ -502,7 +502,8 @@ tunnel_commands([{state, ProtoState}|Tail], Stream=#stream{tunnel=Tunnel},
 	tunnel_commands(Tail, Stream#stream{tunnel=Tunnel#tunnel{protocol_state=ProtoState}},
 		State, EvHandler, EvHandlerState);
 tunnel_commands([{error, Reason0}|_], #stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo},
-		State, _EvHandler, EvHandlerState) ->
+		State0=#http2_state{socket=Socket, transport=Transport, http2_machine=HTTP2Machine0},
+		_EvHandler, EvHandlerState) ->
 	%% See gun:maybe_tls_alert for details.
 	Reason = case Reason0 of
 		closed ->
@@ -515,9 +516,24 @@ tunnel_commands([{error, Reason0}|_], #stream{id=StreamID, ref=StreamRef, reply_
 		_ ->
 			Reason0
 	end,
-	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
-		{stream_error, Reason, 'Tunnel closed unexpectedly.'}}),
-	{{state, delete_stream(State, StreamID)}, EvHandlerState};
+	%% Drop the stream from the machine as well. DATA for this id is
+	%% then ignored. Do not RST a stream the machine no longer has.
+	case cow_http2_machine:reset_stream(StreamID, HTTP2Machine0) of
+		{ok, HTTP2Machine} ->
+			case Transport:send(Socket, cow_http2:rst_stream(StreamID, cancel)) of
+				ok ->
+					State = State0#http2_state{http2_machine=HTTP2Machine},
+					gun:reply(ReplyTo, {gun_error, self(), stream_ref(State, StreamRef),
+						{stream_error, Reason, 'Tunnel closed unexpectedly.'}}),
+					{{state, delete_stream(State, StreamID)}, EvHandlerState};
+				Error={error, _} ->
+					{Error, EvHandlerState}
+			end;
+		{error, _} ->
+			gun:reply(ReplyTo, {gun_error, self(), stream_ref(State0, StreamRef),
+				{stream_error, Reason, 'Tunnel closed unexpectedly.'}}),
+			{{state, delete_stream(State0, StreamID)}, EvHandlerState}
+	end;
 %% @todo Set a timeout for closing the Websocket stream.
 tunnel_commands([{closing, _}|Tail], Stream, State, EvHandler, EvHandlerState) ->
 	tunnel_commands(Tail, Stream, State, EvHandler, EvHandlerState);
