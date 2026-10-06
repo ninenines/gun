@@ -357,6 +357,34 @@ transfer_encoding_invalid_last_chunk(_) ->
 		error(timeout)
 	end.
 
+transfer_encoding_incomplete_last_chunk(_) ->
+	doc("A finished chunk must be delivered before the last-chunk "
+		"line is complete. (RFC9112 7.1)"),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\r\n"
+				"transfer-encoding: chunked\r\n"
+				"\r\n"
+				"4\r\n"
+				"Wiki\r\n"
+				"0\r\n"
+			),
+			receive send_tail ->
+				ClientTransport:send(ClientSocket, "\r\n")
+			end
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{retry => 0}),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{data, nofin, <<"Wiki">>} = gun:await(ConnPid, StreamRef),
+	{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
+	OriginPid ! send_tail,
+	{data, fin, <<>>} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 transfer_encoding_overrides_content_length(_) ->
 	doc("When both transfer-encoding and content-length are provided, "
 		"content-length must be ignored. (RFC7230 3.3.3)"),
