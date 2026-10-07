@@ -17,6 +17,7 @@
 
 -export([init/5]).
 -export([handle/3]).
+-export([check_options/1]).
 
 -record(state, {
 	reply_to :: gun:reply_to(),
@@ -26,16 +27,18 @@
 
 %% @todo In the future we want to allow different media types.
 
--spec init(pid(), reference(), _, cow_http:headers(), _)
+-spec init(pid(), reference(), _, cow_http:headers(), map())
 	-> {ok, #state{}} | disable.
-init(ReplyTo, StreamRef, _, Headers, _) ->
+init(ReplyTo, StreamRef, _, Headers, Opts) ->
 	case lists:keyfind(<<"content-type">>, 1, Headers) of
 		{_, ContentType} ->
 			try
 				{<<"text">>, <<"event-stream">>, _} =
 					cow_http_hd:parse_content_type(ContentType),
 				{ok, #state{reply_to=ReplyTo, stream_ref=StreamRef,
-					sse_state=cow_sse:init()}}
+					sse_state=cow_sse:init(#{
+						max_event_size => maps:get(max_event_size, Opts, 10240)
+					})}}
 			catch _:_ ->
 				disable
 			end;
@@ -43,7 +46,20 @@ init(ReplyTo, StreamRef, _, Headers, _) ->
 			disable
 	end.
 
--spec handle(_, binary(), State) -> {done, non_neg_integer(), State} when State::#state{}.
+%% The atom `gun_sse_h` uses 10 KiB. `infinity` disables the limit.
+-spec check_options(map()) -> ok | error.
+check_options(#{max_event_size := infinity}) ->
+	ok;
+check_options(#{max_event_size := Size}) when is_integer(Size), Size > 0 ->
+	ok;
+check_options(#{max_event_size := _}) ->
+	error;
+check_options(#{}) ->
+	ok.
+
+-spec handle(_, binary(), State)
+	-> {done, non_neg_integer(), State} | {error, {limit_reached, string()}}
+	when State::#state{}.
 handle(IsFin, Data, State) ->
 	handle(IsFin, Data, State, 0).
 
@@ -60,5 +76,8 @@ handle(IsFin, Data, State=#state{reply_to=ReplyTo, stream_ref=StreamRef, sse_sta
 				_ ->
 					0
 			end,
-			{done, Flow + Inc, State#state{sse_state=SSE}}
+			{done, Flow + Inc, State#state{sse_state=SSE}};
+		{error, limit_reached} ->
+			{error, {limit_reached,
+				"The Server-Sent Events event is too large."}}
 	end.

@@ -195,10 +195,11 @@ parse1(Data, State, Stream=#stream{status={data, Len}, id=StreamID}, IsFin,
 			FrameIsFin = is_fin(IsFin, Rest),
 			case frame(State, Stream#stream{status=normal}, {data, Data1}, FrameIsFin,
 					CookieStore, EvHandler, EvHandlerState) of
-				%% @todo {error, _}.
 				{{state, State1}, CookieStore1, EvHandlerState1} ->
 					parse(Rest, State1, StreamID, IsFin,
-						CookieStore1, EvHandler, EvHandlerState1)
+						CookieStore1, EvHandler, EvHandlerState1);
+				Error={{error, _}, _, _} ->
+					Error
 			end
 	end;
 %% @todo Clause that discards receiving data for aborted streams.
@@ -209,10 +210,11 @@ parse1(Data, State, Stream=#stream{id=StreamID}, IsFin,
 			FrameIsFin = is_fin(IsFin, Rest),
 			case frame(State, Stream, Frame, FrameIsFin,
 					CookieStore, EvHandler, EvHandlerState) of
-				%% @todo {error, _}.
 				{{state, State1}, CookieStore1, EvHandlerState1} ->
 					parse(Rest, State1, StreamID, IsFin,
-						CookieStore1, EvHandler, EvHandlerState1)
+						CookieStore1, EvHandler, EvHandlerState1);
+				Error={{error, _}, _, _} ->
+					Error
 			end;
 		{more, Frame = {data, _}, Len} ->
 			%% We're at the end of the data so FrameIsFin is equivalent to IsFin.
@@ -335,31 +337,35 @@ data_frame(State0, Stream, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0
 data_frame1(State0, Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
 		%flow=Flow0,
 		handler_state=Handlers0}, IsFin, Data, EvHandler, EvHandlerState0) ->
-	{ok, _Dec, Handlers} = gun_content_handler:handle(IsFin, Data, Handlers0),
-%	Flow = case Flow0 of
-%		infinity -> infinity;
-%		_ -> Flow0 - Dec
-%	end,
-	State1 = stream_update(State0, Stream#stream{%flow=Flow,
-		handler_state=Handlers}),
-	{StateOrError, EvHandlerState} = case IsFin of
-		fin ->
-			EvHandlerState1 = EvHandler:response_end(#{
-				stream_ref => StreamRef, %% @todo stream_ref(State1, StreamRef),
-				reply_to => ReplyTo
-			}, EvHandlerState0),
-			{{state, State1}, EvHandlerState1};
-		nofin ->
-			{{state, State1}, EvHandlerState0}
-	end,
-	case StateOrError of
-		{state, State} ->
-			%% We do not remove the stream immediately. We will only when
-			%% the QUIC stream gets closed.
-			{{state, State}, EvHandlerState}%;
-%		Error={error, _} ->
-%			%% @todo Delete stream and return new state and error commands.
-%			{Error, EvHandlerState}
+	case gun_content_handler:handle(IsFin, Data, Handlers0) of
+		{error, {limit_reached, Human}} ->
+			{{error, {connection_error, limit_reached, Human}}, EvHandlerState0};
+		{ok, _Dec, Handlers} ->
+%			Flow = case Flow0 of
+%				infinity -> infinity;
+%				_ -> Flow0 - Dec
+%			end,
+			State1 = stream_update(State0, Stream#stream{%flow=Flow,
+				handler_state=Handlers}),
+			{StateOrError, EvHandlerState} = case IsFin of
+				fin ->
+					EvHandlerState1 = EvHandler:response_end(#{
+						stream_ref => StreamRef, %% @todo stream_ref(State1, StreamRef),
+						reply_to => ReplyTo
+					}, EvHandlerState0),
+					{{state, State1}, EvHandlerState1};
+				nofin ->
+					{{state, State1}, EvHandlerState0}
+			end,
+			case StateOrError of
+				{state, State} ->
+					%% We do not remove the stream immediately. We will only when
+					%% the QUIC stream gets closed.
+					{{state, State}, EvHandlerState}%;
+%				Error={error, _} ->
+%					%% @todo Delete stream and return new state and error commands.
+%					{Error, EvHandlerState}
+			end
 	end.
 
 headers_frame(State0=#http3_state{opts=Opts}, Stream, IsFin, Headers,
