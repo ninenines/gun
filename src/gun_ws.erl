@@ -238,11 +238,6 @@ handle(Data, State=#ws_state{in=In=#payload{type=Type, rsv=Rsv, len=Len, mask_ke
 			dispatch(Rest, State#ws_state{in=head, utf8_state=Utf8State2}, Type,
 				<<Unmasked/binary, Payload/binary>>, CloseCode,
 				EvHandler, EvHandlerState);
-		{more, CloseCode2, Payload, Utf8State2} ->
-			maybe_active(State#ws_state{in=In#payload{close_code=CloseCode2,
-				unmasked= <<Unmasked/binary, Payload/binary>>,
-				len=Len - byte_size(Data), unmasked_len=2 + byte_size(Data)}, utf8_state=Utf8State2},
-				EvHandlerState);
 		{more, Payload, Utf8State2} ->
 			maybe_active(State#ws_state{in=In#payload{unmasked= <<Unmasked/binary, Payload/binary>>,
 				len=Len - byte_size(Data), unmasked_len=UnmaskedLen + byte_size(Data)}, utf8_state=Utf8State2},

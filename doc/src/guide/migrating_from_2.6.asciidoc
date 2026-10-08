@@ -1,0 +1,78 @@
+[appendix]
+== Migrating from Gun 2.6 to 2.7
+
+Gun 2.7 is a maintenance release.
+
+Gun 2.7 updates Cowlib to 2.21. Both applications
+must be updated as they both contain security fixes.
+
+Gun 2.7 requires Erlang/OTP 27.0 or greater.
+
+=== Features added
+
+* Update Cowlib to 2.21.0.
+
+=== Bugs fixed
+
+* The cookie code was updated to the current
+  RFC6265bis draft.
+
+* Potential incompatibility: a `SameSite=None`
+  cookie that is not `Secure` is rejected. Gun
+  has no document, so a request is same-site.
+  `Strict`, `Lax` and `Default` are stored.
+
+* Expired cookies are dropped when the jar is
+  queried, including a query for a different URI.
+
+* Websocket close reason in the middle of a fragmented
+  text message could fail UTF-8 validation despite
+  being valid.
+
+* A ping, pong or close frame sent between fragments
+  of a compressed message is no longer inflated.
+
+* The empty final fragment of a compressed message
+  is now inflated and checked. Bad deflate data or
+  a bad UTF-8 state fails the connection. Bytes
+  flushed by the compression trailer are delivered.
+
+* Unexpected RSV1 on a Websocket control frame is now
+  rejected and the connection closed.
+
+* HPACK was not using the configured header table
+  size if below 4096 until the peer sent its own
+  setting.
+
+* After `RST_STREAM` is sent, a `HEADERS` or
+  `CONTINUATION` frame for that stream was not
+  decoded, desynchronizing the HPACK state.
+
+* An invalid last chunk in a chunked body is now
+  rejected immediately.
+
+* The chunk before the last chunk is no longer left
+  unparsed longer than necessary.
+
+* HTTP date parsing was made stricter.
+
+* The experimental `gun_pool` module received
+  a number of improvements.
+
+* Malformed HTTP/1.1 protocol elements are now
+  rejected without crashing the connection.
+
+* An ALPN protocol the client did not offer is
+  rejected.
+
+* A SOCKS5 authentication method the client did
+  not offer is rejected.
+
+* A bad request content-length header is now
+  rejected immediately in the calling process.
+
+* Calling `set_owner` after shutdown no longer
+  crashes.
+
+* A request whose stream reference is not nested
+  in the tunnel no longer crashes.
