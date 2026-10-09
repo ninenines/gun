@@ -151,6 +151,7 @@ Handshake timeout for tunneled TLS connections.
 ----
 http_opts() :: #{
     closing_timeout             => timeout(),
+    content_handlers            => [module() | {module(), map()}],
     cookie_ignore_informational => boolean(),
     flow                        => pos_integer(),
     keepalive                   => timeout(),
@@ -166,13 +167,34 @@ Configuration for the HTTP protocol.
 
 The default value is given next to the option name:
 
-// @todo Document content_handlers and gun_sse_h.
-
 closing_timeout (15000)::
 
 Time to wait before brutally closing the connection when a
 graceful shutdown was requested via a call to
 link:man:gun:shutdown(3)[gun:shutdown(3)].
+
+content_handlers ([gun_data_h])::
+
+Modules that receive the response body, in order. Each entry
+is a module or `{Module, Opts}`. `gun_data_h` forwards the
+body as `gun_data` messages. `gun_sse_h` parses
+`text/event-stream` bodies and sends `gun_sse` messages.
+
+`gun_sse_h` accepts `max_event_size` (`10240`, 10 KiB, by default,
+`infinity` to disable it). This is a soft limit on the
+approximate size of the event being built: the data, the
+event type and the id, including the field prefix and the
+newline. A completed event is delivered even when the read
+that finished it went past the limit. While the event is
+incomplete, a larger size is a `limit_reached` error. Bytes
+that follow a completed event are checked on the next read.
+The caller must not grow one binary forever.
+
+With HTTP/1.1 Gun closes the connection with `limit_reached`.
+With HTTP/2 Gun resets the stream with `internal_error` and
+keeps the connection, unless that read already ends the
+stream, in which case the stream ends with that error and
+Gun does not send `RST_STREAM`.
 
 cookie_ignore_informational (false)::
 
@@ -235,6 +257,7 @@ HTTP version to use.
 ----
 http2_opts() :: #{
     closing_timeout             => timeout(),
+    content_handlers            => [module() | {module(), map()}],
     cookie_ignore_informational => boolean(),
     flow                        => pos_integer(),
     keepalive                   => timeout(),
@@ -268,13 +291,16 @@ Configuration for the HTTP/2 protocol.
 
 The default value is given next to the option name:
 
-// @todo Document content_handlers and gun_sse_h.
-
 closing_timeout (15000)::
 
 Time to wait before brutally closing the connection when a
 graceful shutdown was requested either via a call to
 link:man:gun:shutdown(3)[gun:shutdown(3)] or by the server.
+
+content_handlers ([gun_data_h])::
+
+Same as the HTTP/1.1 `content_handlers` option, including
+`gun_sse_h` and `max_event_size`.
 
 cookie_ignore_informational (false)::
 
@@ -668,6 +694,7 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.7*: `gun_sse_h` accepts `max_event_size`.
 * *2.6*: The `max_headers` HTTP/1.1 option was added.
 * *2.5*: The `max_headers` HTTP/2 option was added.
 * *2.5*: Websocket `compress` option value `compat` was added.

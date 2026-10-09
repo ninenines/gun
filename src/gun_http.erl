@@ -213,16 +213,20 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 			end,
 			%% I suppose it doesn't hurt to append an empty binary.
 			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(<<>>, State, IsFin),
-			case {HasTrailers, Conn} of
-				{trailers, _} ->
-					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
-						CookieStore, EvHandler, EvHandlerState);
-				{no_trailers, keepalive} ->
-					end_keepalive_stream(Rest, State1#http_state{buffer= <<>>},
-						CookieStore, EvHandler, EvHandlerState);
-				{no_trailers, close} ->
-					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
+			case send_data(<<>>, State, IsFin) of
+				[{state, State1}|_] ->
+					case {HasTrailers, Conn} of
+						{trailers, _} ->
+							handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
+								CookieStore, EvHandler, EvHandlerState);
+						{no_trailers, keepalive} ->
+							end_keepalive_stream(Rest, State1#http_state{buffer= <<>>},
+								CookieStore, EvHandler, EvHandlerState);
+						{no_trailers, close} ->
+							{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
+					end;
+				Error={error, _} ->
+					{Error, CookieStore, EvHandlerState}
 			end;
 		{done, Data2, HasTrailers, Rest} ->
 			%% @todo response_end should be called AFTER send_data
@@ -237,16 +241,20 @@ handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 					{fin, EvHandlerState1}
 			end,
 			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(Data2, State, IsFin),
-			case {HasTrailers, Conn} of
-				{trailers, _} ->
-					handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
-						CookieStore, EvHandler, EvHandlerState);
-				{no_trailers, keepalive} ->
-					end_keepalive_stream(Rest, State1#http_state{buffer= <<>>},
-						CookieStore, EvHandler, EvHandlerState);
-				{no_trailers, close} ->
-					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
+			case send_data(Data2, State, IsFin) of
+				[{state, State1}|_] ->
+					case {HasTrailers, Conn} of
+						{trailers, _} ->
+							handle(Rest, State1#http_state{buffer = <<>>, in=body_trailer},
+								CookieStore, EvHandler, EvHandlerState);
+						{no_trailers, keepalive} ->
+							end_keepalive_stream(Rest, State1#http_state{buffer= <<>>},
+								CookieStore, EvHandler, EvHandlerState);
+						{no_trailers, close} ->
+							{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
+					end;
+				Error={error, _} ->
+					{Error, CookieStore, EvHandlerState}
 			end
 	catch _:_ ->
 		Reason = {connection_error, protocol_error,
@@ -311,30 +319,43 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 		%% Stream finished, no rest.
 		DataSize =:= Length ->
 			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(Data, State, fin),
-			EvHandlerState = EvHandler:response_end(#{
-				stream_ref => stream_ref(State, StreamRef),
-				reply_to => ReplyTo
-			}, EvHandlerState0),
-			case Conn of
-				keepalive ->
-					end_keepalive_stream(<<>>, State1, CookieStore, EvHandler, EvHandlerState);
-				close ->
-					{[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
+			case send_data(Data, State, fin) of
+				[{state, State1}|_] ->
+					EvHandlerState = EvHandler:response_end(#{
+						stream_ref => stream_ref(State, StreamRef),
+						reply_to => ReplyTo
+					}, EvHandlerState0),
+					case Conn of
+						keepalive ->
+							end_keepalive_stream(<<>>, State1, CookieStore,
+								EvHandler, EvHandlerState);
+						close ->
+							{[{state, end_stream(State1)}, close],
+								CookieStore, EvHandlerState}
+					end;
+				Error={error, _} ->
+					{Error, CookieStore, EvHandlerState0}
 			end;
 		%% Stream finished, rest.
 		true ->
 			<< Body:Length/binary, Rest/bits >> = Data,
 			%% We ignore the active command because the stream ended.
-			[{state, State1}|_] = send_data(Body, State, fin),
-			EvHandlerState = EvHandler:response_end(#{
-				stream_ref => stream_ref(State1, StreamRef),
-				reply_to => ReplyTo
-			}, EvHandlerState0),
-			case Conn of
-				keepalive ->
-					end_keepalive_stream(Rest, State1, CookieStore, EvHandler, EvHandlerState);
-				close -> {[{state, end_stream(State1)}, close], CookieStore, EvHandlerState}
+			case send_data(Body, State, fin) of
+				[{state, State1}|_] ->
+					EvHandlerState = EvHandler:response_end(#{
+						stream_ref => stream_ref(State1, StreamRef),
+						reply_to => ReplyTo
+					}, EvHandlerState0),
+					case Conn of
+						keepalive ->
+							end_keepalive_stream(Rest, State1, CookieStore,
+								EvHandler, EvHandlerState);
+						close ->
+							{[{state, end_stream(State1)}, close],
+								CookieStore, EvHandlerState}
+					end;
+				Error={error, _} ->
+					{Error, CookieStore, EvHandlerState0}
 			end
 	end.
 
@@ -596,16 +617,24 @@ send_data(<<>>, State, nofin) ->
 	[{state, State}, {active, true}];
 %% @todo What if we receive data when the HEAD method was used?
 send_data(Data, State=#http_state{streams=[Stream=#stream{
-		flow=Flow0, is_alive=true, handler_state=Handlers0}|Tail]}, IsFin) ->
-	{ok, Dec, Handlers} = gun_content_handler:handle(IsFin, Data, Handlers0),
-	Flow = case Flow0 of
-		infinity -> infinity;
-		_ -> Flow0 - Dec
-	end,
-	[
-		{state, State#http_state{streams=[Stream#stream{flow=Flow, handler_state=Handlers}|Tail]}},
-		{active, Flow > 0}
-	];
+		reply_to=ReplyTo, flow=Flow0, is_alive=true,
+		handler_state=Handlers0}|Tail]}, IsFin) ->
+	case gun_content_handler:handle(IsFin, Data, Handlers0) of
+		{ok, Dec, Handlers} ->
+			Flow = case Flow0 of
+				infinity -> infinity;
+				_ -> Flow0 - Dec
+			end,
+			[
+				{state, State#http_state{streams=[Stream#stream{
+					flow=Flow, handler_state=Handlers}|Tail]}},
+				{active, Flow > 0}
+			];
+		{error, {limit_reached, Human}} ->
+			Reason = {connection_error, limit_reached, Human},
+			gun:reply(ReplyTo, {gun_error, self(), Reason}),
+			{error, Reason}
+	end;
 send_data(_, State, _) ->
 	[{state, State}, {active, true}].
 
