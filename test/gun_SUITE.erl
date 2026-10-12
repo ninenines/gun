@@ -996,12 +996,16 @@ supervise_false(_) ->
 tls13_post_handshake_alert_http1(_) ->
 	case os:type() of
 		{unix, linux} ->
-			do_tls13_post_handshake_alert_http1();
+			do_tls13_post_handshake_alert_http1(10);
 		_ ->
 			{skip, "This test is only enabled on Linux to avoid intermittent failures."}
 	end.
 
-do_tls13_post_handshake_alert_http1() ->
+%% The server closes the connection right after sending the alert,
+%% before reading the data we sent. The kernel then resets the
+%% connection and the alert may be discarded before we can read it,
+%% resulting in {error,closed} or {error,einval}. We retry in that case.
+do_tls13_post_handshake_alert_http1(Attempts) ->
 	doc("Ensure that a TLS 1.3 post-handshake alert is properly "
 		"propagated when using HTTP/1.1 in mTLS scenarios."),
 	TestOpts = ct_helper:get_certs_from_ets(),
@@ -1031,6 +1035,9 @@ do_tls13_post_handshake_alert_http1() ->
 			{verify, verify_none}
 		]
 	}),
+	%% We monitor early so that the down reason is not lost
+	%% to a noproc if the connection process exits too soon.
+	MRef = monitor(process, ConnPid),
 	%% We want to send data immediately as soon as the connection is up.
 	%% So we do it before we receive the gun_up message.
 	StreamRef = gun:post(ConnPid, "/", [{<<"content-type">>, <<"application/octet-stream">>}]),
@@ -1040,10 +1047,17 @@ do_tls13_post_handshake_alert_http1() ->
 	end || _ <- lists:seq(1, 100)],
 	%% The alert will occur after the gun_up message has been sent
 	%% in the case of HTTP/1.1 (when active mode gets enabled).
-	{ok, http} = gun:await_up(ConnPid),
-	{error, {down, {shutdown,
-		{tls_alert, {certificate_required, _}}}}} = gun:await(ConnPid, undefined),
-	gun:close(ConnPid).
+	{ok, http} = gun:await_up(ConnPid, MRef),
+	Result = gun:await(ConnPid, undefined, MRef),
+	gun:close(ConnPid),
+	case Result of
+		{error, {down, {shutdown, {tls_alert, {certificate_required, _}}}}} ->
+			ok;
+		{error, {down, {shutdown, {error, Reason}}}}
+				when Attempts > 1, (Reason =:= closed orelse Reason =:= einval) ->
+			ct:log("Connection reset before the TLS alert was received, retrying."),
+			do_tls13_post_handshake_alert_http1(Attempts - 1)
+	end.
 
 tls13_post_handshake_alert_http2(_) ->
 	case os:type() of
@@ -1085,12 +1099,13 @@ do_tls13_post_handshake_alert_http2() ->
 			{verify, verify_none}
 		]
 	}),
-	case gun:await_up(ConnPid) of
+	MRef = monitor(process, ConnPid),
+	case gun:await_up(ConnPid, MRef) of
 		{error, {down, {shutdown, {tls_alert, {certificate_required, _}}}}} ->
 			ct:log("TLS alert received in gun:await_up");
 		{ok, http2} ->
 			{error, {down, {shutdown,
-				{tls_alert, {certificate_required, _}}}}} = gun:await(ConnPid, undefined),
+				{tls_alert, {certificate_required, _}}}}} = gun:await(ConnPid, undefined, MRef),
 			ct:log("TLS alert received after gun:await_up")
 	end,
 	gun:close(ConnPid).
@@ -1184,6 +1199,10 @@ tls13_post_handshake_alert_http2_via_h2(_) ->
 	end.
 
 do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol) ->
+	do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol, 10).
+
+%% See do_tls13_post_handshake_alert_http1/1 for why we may retry.
+do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol, Attempts) ->
 	TestOpts = ct_helper:get_certs_from_ets(),
 	ExtraOpts = case OriginProtocol of
 		http -> [];
@@ -1216,7 +1235,8 @@ do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol) ->
 		protocols => [ProxyProtocol]
 		%,trace => true
 	}),
-	{ok, ProxyProtocol} = gun:await_up(ConnPid),
+	MRef = monitor(process, ConnPid),
+	{ok, ProxyProtocol} = gun:await_up(ConnPid, MRef),
 	tunnel_SUITE:do_handshake_completed(ProxyProtocol, ProxyPid),
 	TunnelStreamRef = gun:connect(ConnPid, #{
 		host => "localhost",
@@ -1227,12 +1247,12 @@ do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol) ->
 			{verify, verify_none}
 		]
 	}),
-	{response, fin, 200, _} = gun:await(ConnPid, TunnelStreamRef),
+	{response, fin, 200, _} = gun:await(ConnPid, TunnelStreamRef, MRef),
 	%% When going through an HTTP/2 tunnel we must wait for the protocol
 	%% to be up before sending data.
 	Continue = case ProxyProtocol of
 		http2 ->
-			case gun:await(ConnPid, TunnelStreamRef) of
+			case gun:await(ConnPid, TunnelStreamRef, MRef) of
 				{up, OriginProtocol} ->
 					ok;
 				{error, {stream_error, {stream_error,
@@ -1242,7 +1262,7 @@ do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol) ->
 		http ->
 			ok
 	end,
-	case Continue of
+	Result = case Continue of
 		stop ->
 			ok;
 		ok ->
@@ -1258,23 +1278,36 @@ do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol) ->
 				http2 ->
 					%% We already received the gun_tunnel_up at this point for HTTP/2.
 					{error, {stream_error, {stream_error,
-						{tls_alert, {certificate_required, _}}, _}}} = gun:await(ConnPid, TunnelStreamRef);
+						{tls_alert, {certificate_required, _}}, _}}} = gun:await(ConnPid, TunnelStreamRef, MRef);
 				http ->
 					%% The alert will occur after the gun_up message has been sent
 					%% in the case of HTTP/1.1 (when active mode gets enabled).
 					%% But when we are using TLS over TLS the timing is a little
 					%% different and we may get a failure before receiving gun_tunnel_up.
-					case gun:await(ConnPid, TunnelStreamRef) of
+					case gun:await(ConnPid, TunnelStreamRef, MRef) of
 						{up, OriginProtocol} ->
-							{error, {down, {shutdown,
-								{tls_alert, {certificate_required, _}}}}} = gun:await(ConnPid, undefined);
+							case gun:await(ConnPid, undefined, MRef) of
+								{error, {down, {shutdown,
+										{tls_alert, {certificate_required, _}}}}} ->
+									ok;
+								{error, {down, {shutdown, {error, Reason}}}}
+										when Attempts > 1, (Reason =:= closed orelse Reason =:= einval) ->
+									retry
+							end;
 						{error, {stream_error, {closed,
 								{tls_alert, {certificate_required, _}}}}} ->
 							ok
 					end
 			end
 	end,
-	gun:close(ConnPid).
+	gun:close(ConnPid),
+	case Result of
+		retry ->
+			ct:log("Connection reset before the TLS alert was received, retrying."),
+			do_tls13_post_handshake_alert_via_tunnel(ProxyType, OriginProtocol, Attempts - 1);
+		_ ->
+			ok
+	end.
 
 tls_handshake_error_gun_http2_init_retry_0(_) ->
 	doc("Ensure an early TLS connection close is propagated "
