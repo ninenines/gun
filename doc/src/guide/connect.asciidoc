@@ -56,7 +56,7 @@ form of a map.
 ----
 
 When using TLS you may want to tweak the
-http://erlang.org/doc/man/ssl_app.html#configuration[configuration]
+https://www.erlang.org/doc/apps/ssl/ssl_app.html#configuration[configuration]
 for the `ssl` application, in particular the `session_lifetime`
 and `session_cache_client_max` to limit the amount of memory
 used for the TLS sessions cache.
