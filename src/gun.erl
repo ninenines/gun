@@ -1745,7 +1745,8 @@ handle_common_connected_no_input(info, {OK, Socket, Data}, _,
 		event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(info, {Closed, Socket}, _,
 		State=#state{socket=Socket, messages={_, Closed, _}}) ->
-	disconnect(State, closed);
+	%% A TLS alert is reported instead of the closed message, never after it.
+	disconnect(State, closed, no_alert);
 handle_common_connected_no_input(info, {Error, Socket, Reason}, _,
 		State=#state{socket=Socket, messages={_, _, Error}}) ->
 	disconnect(State, {error, Reason});
@@ -2070,11 +2071,17 @@ commands([TLSHandshake={tls_handshake, _, _, _}], State) ->
 	{next_state, tls_handshake, State,
 		{next_event, internal, TLSHandshake}}.
 
+disconnect(State, Reason) ->
+	disconnect(State, Reason, maybe_alert).
+
 disconnect(State0=#state{owner=Owner, status=Status, opts=Opts,
 		intermediaries=Intermediaries, socket=Socket, transport=Transport0,
 		protocol=Protocol, protocol_state=ProtoState,
-		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason0) ->
-	Reason = maybe_tls_alert(State0, Reason0),
+		event_handler=EvHandler, event_handler_state=EvHandlerState0}, Reason0, Alert) ->
+	Reason = case Alert of
+		no_alert -> Reason0;
+		maybe_alert -> maybe_tls_alert(State0, Reason0)
+	end,
 	EvHandlerState1 = Protocol:close(Reason, ProtoState, EvHandler, EvHandlerState0),
 	_ = Transport0:close(Socket),
 	EvHandlerState = EvHandler:disconnect(#{reason => Reason}, EvHandlerState1),

@@ -993,6 +993,26 @@ supervise_false(_) ->
 	[] = [P || {_, P, _, _} <- supervisor:which_children(gun_sup), P =:= Pid],
 	ok.
 
+tls_closed_down_without_delay(_) ->
+	doc("Ensure the gun_down message is sent as soon as the TLS socket is closed "
+		"by the peer. There is no TLS alert to wait for after an ssl_closed message."),
+	{ok, _, OriginPort} = init_origin(tls, http,
+		fun (_, _, ClientSocket, ClientTransport) ->
+			ClientTransport:close(ClientSocket)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		transport => tls,
+		tls_opts => [{verify, verify_none}],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	receive
+		{gun_down, ConnPid, http, closed, []} ->
+			gun:close(ConnPid)
+	after 100 ->
+		error(timeout)
+	end.
+
 tls13_post_handshake_alert_http1(_) ->
 	case os:type() of
 		{unix, linux} ->
