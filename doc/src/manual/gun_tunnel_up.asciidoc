@@ -33,7 +33,7 @@ The pid of the Gun connection process.
 StreamRef::
 
 The stream reference the tunnel is running on, or `undefined`
-if there are no underlying stream.
+if there is no underlying stream.
 
 Protocol::
 
