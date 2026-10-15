@@ -16,13 +16,6 @@ closes it, saving time for the requests that come in.
 All connections are *supervised* automatically, allowing
 developers to focus on writing their code without worrying.
 
-== Sponsors
-
-Gun was previously sponsored by
-http://leo-project.net/leofs/[LeoFS Cloud Storage],
-https://sameroom.io/[Sameroom],
-and https://pleroma.social/[Pleroma].
-
 == Online documentation
 
 * https://ninenines.eu/docs/en/gun/2.7/guide[User guide]
@@ -40,4 +33,4 @@ and https://pleroma.social/[Pleroma].
 
 * https://discord.gg/x25nNq2fFE[Discord server]
 * https://github.com/ninenines/gun/issues[Issues tracker]
-* https://ninenines.eu/services/[Commercial Support]
+* https://github.com/sponsors/essen[Sponsor me!]
