@@ -376,7 +376,7 @@ next number of retries left and the timeout to apply before reconnecting.
 The default fun will remove one to the number of retries and set the
 timeout to the `retry_timeout` value.
 
-The fun must be defined as follow:
+The fun must be defined as follows:
 
 [source,erlang]
 ----
