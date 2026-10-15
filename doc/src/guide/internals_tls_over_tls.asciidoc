@@ -30,7 +30,7 @@ default TCP outer socket module with our own custom module.
 Gun uses the `gun_tls_proxy_cb` module instead. This module
 will forward all messages to the `gun_tls_proxy` process.
 
-The resulting operations looks like this:
+The resulting operations look like this:
 
 ----
 Gun process <-> gun_tls_proxy <-> sslsocket() <-> gun_tls_proxy <-> "inner socket"
@@ -158,7 +158,7 @@ HTTP/2 proxy <-> SOCKS proxy <-> HTTP/1.1 origin
 ----
 
 In this case the modules involved to handle the request
-will be as follow:
+will be as follows:
 
 ----
 gun_http2 <-> gun_tunnel <-> gun_tunnel <-> gun_http

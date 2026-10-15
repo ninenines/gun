@@ -13,7 +13,7 @@ Gun 2.5 requires Erlang/OTP 24.0 or greater.
 
 * A `compat` Websocket compression mode has been
   added. In this mode, Gun uses default compression
-  and does not send parameters to accomodate servers
+  and does not send parameters to accommodate servers
   that do not support them.
 
 * The HTTP/2 option `max_headers` is now documented.

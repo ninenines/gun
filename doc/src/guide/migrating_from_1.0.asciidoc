@@ -15,7 +15,7 @@ few problems with experimental features.
   dependency.
 
 * The status code was incorrectly given to the experimental
-  content handlers as a binary. It has been fixed an an
+  content handlers as a binary. It has been fixed and an
   integer is now given as was intended.
 
 * A number of Dialyzer warnings have been fixed.

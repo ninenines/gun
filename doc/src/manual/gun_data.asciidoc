@@ -19,7 +19,7 @@ Data      :: binary()
 Response body.
 
 This message informs the relevant process that the server
-sent a all or part of the body for the response to the
+sent all or part of the body for the response to the
 original request.
 
 A data message is always preceded by a response message.
