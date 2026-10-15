@@ -46,7 +46,7 @@ The pid of the Gun connection process.
 
 == Return value
 
-A map is returned containing various informations about
+A map is returned containing various information about
 the connection.
 
 == Changelog
