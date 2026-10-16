@@ -912,6 +912,24 @@ do_shutdown_reason() ->
 			gun:close(ConnPid)
 	end.
 
+stale_inet_timeout_http(_) ->
+	doc("A stray inet timeout message must not crash an HTTP/1.1 connection."),
+	do_stale_inet_timeout(http).
+
+stale_inet_timeout_http2(_) ->
+	doc("A stray inet timeout message must not crash an HTTP/2 connection."),
+	do_stale_inet_timeout(http2).
+
+do_stale_inet_timeout(Protocol) ->
+	{ok, OriginPid, OriginPort} = init_origin(tcp, Protocol),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{protocols => [Protocol]}),
+	{ok, Protocol} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	ConnPid ! {timeout, make_ref(), inet},
+	%% gun:info/1 is a call, so the timeout message is handled first.
+	#{} = gun:info(ConnPid),
+	gun:close(ConnPid).
+
 stream_info_http(_) ->
 	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/1.1."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http,

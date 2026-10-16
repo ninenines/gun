@@ -1718,6 +1718,10 @@ handle_common_connected(cast, {data, ReplyTo, StreamRef, IsFin, Data}, _,
 		error ->
 			bad_tunnel_stream_ref(ReplyTo, StreamRef)
 	end;
+%% We ignore inet timeouts left over from gun_tcp. Erlang/OTP may
+%% deliver them after inet:stop_timer/1 returns (see erlang:cancel_timer/2).
+handle_common_connected(info, {timeout, _, inet}, _, _) ->
+	keep_state_and_data;
 handle_common_connected(info, {timeout, TRef, Name}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState}) ->
 	Commands = Protocol:timeout(ProtoState, Name, TRef),
