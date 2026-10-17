@@ -126,6 +126,84 @@ flow_http(_) ->
 		cowboy:stop_listener(?FUNCTION_NAME)
 	end.
 
+flow_http_connect(_) ->
+	doc("Confirm flow control works for HTTP/1.1 with HTTP/1.1 CONNECT."),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [], #{env => #{
+		dispatch => cowboy_router:compile([{'_', [{"/", sse_clock_h, date}]}])
+	}}),
+	OriginPort = ranch:get_port(?FUNCTION_NAME),
+	{ok, ProxyPid, ProxyPort} = rfc7231_SUITE:do_proxy_start(tcp),
+	try
+		{ok, ConnPid} = gun:open("localhost", ProxyPort),
+		{ok, http} = gun:await_up(ConnPid),
+		Tunnel = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => OriginPort
+		}),
+		{request, <<"CONNECT">>, _, 'HTTP/1.1', _} = gun_test:receive_from(ProxyPid),
+		{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+		{up, http} = gun:await(ConnPid, Tunnel),
+		StreamRef = gun:get(ConnPid, "/", [], #{tunnel => Tunnel, flow => 1}),
+		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+		%% We set the flow to 1 therefore we will receive 1 data message,
+		%% and then nothing because Gun doesn't read from the socket.
+		{data, nofin, _} = gun:await(ConnPid, StreamRef),
+		{error, timeout} = gun:await(ConnPid, StreamRef, 3000),
+		%% We then update the flow and get 2 more data messages but no more.
+		gun:update_flow(ConnPid, StreamRef, 2),
+		{data, nofin, _} = gun:await(ConnPid, StreamRef),
+		{data, nofin, _} = gun:await(ConnPid, StreamRef),
+		{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
+		%% Reject a stream_ref that is not nested
+		BareRef = lists:last(StreamRef),
+		gun:update_flow(ConnPid, BareRef, 1),
+		{error, {stream_error, {badstate, _}}} = gun:await(ConnPid, BareRef),
+		gun:close(ConnPid)
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
+flow_http_connect_two_hops(_) ->
+	doc("Confirm flow control works for HTTP/1.1 with two CONNECT hops."),
+	{ok, _} = cowboy:start_clear(?FUNCTION_NAME, [], #{env => #{
+		dispatch => cowboy_router:compile([{'_', [{"/", sse_clock_h, date}]}])
+	}}),
+	OriginPort = ranch:get_port(?FUNCTION_NAME),
+	{ok, Proxy1Pid, Proxy1Port} = rfc7231_SUITE:do_proxy_start(tcp),
+	{ok, Proxy2Pid, Proxy2Port} = rfc7231_SUITE:do_proxy_start(tcp),
+	try
+		{ok, ConnPid} = gun:open("localhost", Proxy1Port),
+		{ok, http} = gun:await_up(ConnPid),
+		Tunnel1 = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => Proxy2Port
+		}),
+		{request, <<"CONNECT">>, _, 'HTTP/1.1', _} = gun_test:receive_from(Proxy1Pid),
+		{response, fin, 200, _} = gun:await(ConnPid, Tunnel1),
+		{up, http} = gun:await(ConnPid, Tunnel1),
+		Tunnel2 = gun:connect(ConnPid, #{
+			host => "localhost",
+			port => OriginPort
+		}, [], #{tunnel => Tunnel1}),
+		{request, <<"CONNECT">>, _, 'HTTP/1.1', _} = gun_test:receive_from(Proxy2Pid),
+		{response, fin, 200, _} = gun:await(ConnPid, Tunnel2),
+		{up, http} = gun:await(ConnPid, Tunnel2),
+		StreamRef = gun:get(ConnPid, "/", [], #{tunnel => Tunnel2, flow => 1}),
+		{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+		%% We set the flow to 1 therefore we will receive 1 data message,
+		%% and then nothing because Gun doesn't read from the socket.
+		{data, nofin, _} = gun:await(ConnPid, StreamRef),
+		{error, timeout} = gun:await(ConnPid, StreamRef, 3000),
+		%% We then update the flow and get 2 more data messages but no more.
+		gun:update_flow(ConnPid, StreamRef, 2),
+		{data, nofin, _} = gun:await(ConnPid, StreamRef),
+		{data, nofin, _} = gun:await(ConnPid, StreamRef),
+		{error, timeout} = gun:await(ConnPid, StreamRef, 1000),
+		gun:close(ConnPid)
+	after
+		cowboy:stop_listener(?FUNCTION_NAME)
+	end.
+
 flow_http_body_end_keepalive(_) ->
 	doc("Chunked response body ending with exhausted flow window HTTP/1.1"),
 	do_flow_http_body_end_keepalive(no_trailers).

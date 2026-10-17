@@ -120,6 +120,11 @@ do_proxy_loop(Transport, ClientSocket, OriginSocket) ->
 			timer:sleep(infinity);
 		{ssl_closed, _} ->
 			timer:sleep(infinity);
+		%% On windows a client closes connection with unread data (econnaborted)
+		{tcp_error, _, _} ->
+			timer:sleep(infinity);
+		{ssl_error, _, _} ->
+			timer:sleep(infinity);
 		Msg ->
 			error(Msg)
 	end.

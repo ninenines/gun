@@ -1779,8 +1779,13 @@ handle_common_connected_no_input(info, keepalive, _,
 		event_handler_state=EvHandlerState}));
 handle_common_connected_no_input(cast, {update_flow, ReplyTo, StreamRef, Flow}, _,
 		State0=#state{protocol=Protocol, protocol_state=ProtoState}) ->
-	Commands = Protocol:update_flow(ProtoState, ReplyTo, StreamRef, Flow),
-	maybe_active(commands(Commands, State0));
+	case dereference_stream_ref(StreamRef, State0) of
+		{ok, StreamRef1} ->
+			Commands = Protocol:update_flow(ProtoState, ReplyTo, StreamRef1, Flow),
+			maybe_active(commands(Commands, State0));
+		error ->
+			bad_tunnel_stream_ref(ReplyTo, StreamRef)
+	end;
 handle_common_connected_no_input(cast, {cancel, ReplyTo, StreamRef}, _,
 		State=#state{protocol=Protocol, protocol_state=ProtoState,
 		event_handler=EvHandler, event_handler_state=EvHandlerState0}) ->
