@@ -417,11 +417,22 @@ maybe_ack_or_notify(State=#http2_state{reply_to=ReplyTo, socket=Socket,
 data_frame(State0, StreamID, IsFin, Data, CookieStore0, EvHandler, EvHandlerState0) ->
 	case get_stream_by_id(State0, StreamID) of
 		Stream=#stream{tunnel=undefined, handler_state=Handlers0} ->
-			{ok, Dec, Handlers} = gun_content_handler:handle(IsFin, Data, Handlers0),
-			{StateOrError, EvHandlerState} = data_frame1(State0,
-				StreamID, IsFin, Data, EvHandler, EvHandlerState0,
-				Stream#stream{handler_state=Handlers}, Dec),
-			{StateOrError, CookieStore0, EvHandlerState};
+			case gun_content_handler:handle(IsFin, Data, Handlers0) of
+				{ok, Dec, Handlers} ->
+					{StateOrError, EvHandlerState} = data_frame1(State0,
+						StreamID, IsFin, Data, EvHandler, EvHandlerState0,
+						Stream#stream{handler_state=Handlers}, Dec),
+					{StateOrError, CookieStore0, EvHandlerState};
+				%% The DATA frame was already accepted. Return only the
+				%% connection window, then reset the stream.
+				{error, {limit_reached, Human}} when IsFin =:= nofin ->
+					event_too_large(State0, Stream, Human,
+						CookieStore0, EvHandlerState0);
+				%% END_STREAM was already consumed. Do not send RST_STREAM.
+				{error, {limit_reached, Human}} ->
+					event_too_large_fin(State0, StreamID, Stream, Data, Human,
+						CookieStore0, EvHandler, EvHandlerState0)
+			end;
 		Stream=#stream{tunnel=#tunnel{protocol=Proto, protocol_state=ProtoState0}} ->
 %			%% @todo What about IsFin?
 			{StateOrError, EvHandlerState1} = data_frame1(State0,
@@ -481,6 +492,26 @@ data_frame1(State0, StreamID, IsFin, Data, EvHandler, EvHandlerState0,
 			%% @todo Delete stream and return new state and error commands.
 			{Error, EvHandlerState}
 	end.
+
+%% The handler state from this read is dropped.
+event_too_large(State0, #stream{id=StreamID}, Human, CookieStore, EvHandlerState) ->
+	case update_window(State0) of
+		{state, State1=#http2_state{http2_machine=HTTP2Machine0}} ->
+			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(StreamID, HTTP2Machine0),
+			State2 = State1#http2_state{http2_machine=HTTP2Machine},
+			{reset_stream(State2, StreamID, {stream_error, internal_error, Human}),
+				CookieStore, EvHandlerState};
+		Error={error, _} ->
+			{Error, CookieStore, EvHandlerState}
+	end.
+
+event_too_large_fin(State0, StreamID, Stream=#stream{ref=StreamRef, reply_to=ReplyTo},
+		Data, Human, CookieStore, EvHandler, EvHandlerState0) ->
+	gun:reply(ReplyTo, {gun_error, self(), stream_ref(State0, StreamRef),
+		{stream_error, internal_error, Human}}),
+	{StateOrError, EvHandlerState} = data_frame1(State0,
+		StreamID, fin, Data, EvHandler, EvHandlerState0, Stream, 0),
+	{StateOrError, CookieStore, EvHandlerState}.
 
 %% Send errors are returned. Other errors cause the stream to be deleted.
 tunnel_commands(Command, Stream, State, EvHandler, EvHandlerState)
