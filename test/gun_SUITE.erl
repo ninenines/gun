@@ -537,6 +537,207 @@ max_header_block_size(_) ->
 			gun:close(ConnPid)
 	end.
 
+max_header_list_size(_) ->
+	doc("The max_header_list_size HTTP/2 option resets the stream "
+	    "when a response header list is larger than the limit. "
+	    "The connection stays usable."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		%% :status and nine 4000-byte user-agents exceed 32768.
+		Value = binary:copy(<<$a>>, 4000),
+		{Big, _} = cow_hpack:encode([
+			{<<":status">>, <<"200">>}
+			|lists:duplicate(9, {<<"user-agent">>, Value})
+		], cow_hpack:init(), #{huffman => false}),
+		{Status, _} = cow_hpack:encode([{<<":status">>, <<"200">>}]),
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len, 1000),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID, fin, Big)),
+		{ok, <<4:24, 3:8, 0:8, StreamID:32, _:32>>}
+			= Transport:recv(Socket, 13, 1000),
+		{ok, <<Len2:24, 1:8, _:8, StreamID2:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len2, 1000),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID2, fin, Status)),
+		timer:sleep(1000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {stream_error, {stream_error, enhance_your_calm, _}}}
+		= gun:await(ConnPid, StreamRef),
+	StreamRef2 = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
+	gun:close(ConnPid).
+
+max_header_list_size_infinity(_) ->
+	doc("The max_header_list_size HTTP/2 option set to infinity disables the limit."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		%% :status and nine 4000-byte user-agents exceed 32768.
+		Value = binary:copy(<<$a>>, 4000),
+		{Big, _} = cow_hpack:encode([
+			{<<":status">>, <<"200">>}
+			|lists:duplicate(9, {<<"user-agent">>, Value})
+		], cow_hpack:init(), #{huffman => false}),
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len, 1000),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID, fin, Big)),
+		timer:sleep(1000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2],
+		http2_opts => #{max_header_list_size => infinity}
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+max_header_list_size_trailers(_) ->
+	doc("The max_header_list_size HTTP/2 option resets the stream "
+	    "when trailers are larger than the limit. Later DATA on that "
+	    "stream is ignored and the connection stays usable."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		%% :status and nine 4000-byte user-agents exceed 32768.
+		Value = binary:copy(<<$a>>, 4000),
+		{Status, _} = cow_hpack:encode([{<<":status">>, <<"200">>}]),
+		{Big, _} = cow_hpack:encode([
+			{<<":status">>, <<"200">>}
+			|lists:duplicate(9, {<<"user-agent">>, Value})
+		], cow_hpack:init(), #{huffman => false}),
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len, 1000),
+		ok = Transport:send(Socket, [
+			cow_http2:headers(StreamID, nofin, Status),
+			cow_http2:data(StreamID, nofin, <<"body">>),
+			cow_http2:headers(StreamID, fin, Big),
+			cow_http2:data(StreamID, fin, <<"late">>)
+		]),
+		{ok, <<4:24, 3:8, 0:8, StreamID:32, _:32>>}
+			= Transport:recv(Socket, 13, 1000),
+		{ok, <<Len2:24, 1:8, _:8, StreamID2:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len2, 1000),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID2, fin, Status)),
+		timer:sleep(1000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{data, nofin, <<"body">>} = gun:await(ConnPid, StreamRef),
+	{error, {stream_error, {stream_error, enhance_your_calm, _}}}
+		= gun:await(ConnPid, StreamRef),
+	{error, timeout} = gun:await(ConnPid, StreamRef, 500),
+	StreamRef2 = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
+	gun:close(ConnPid).
+
+max_header_list_size_push(_) ->
+	doc("The max_header_list_size HTTP/2 option rejects an oversized "
+	    "PUSH_PROMISE. No gun_push is produced and the parent response "
+	    "completes."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, ReqBlock} = Transport:recv(Socket, Len, 1000),
+		%% Scheme and authority must match the request. A mismatch is
+		%% rejected by Gun, so the test would pass with no size check.
+		{ReqHeaders, _} = cow_hpack:decode(ReqBlock),
+		{_, Scheme} = lists:keyfind(<<":scheme">>, 1, ReqHeaders),
+		{_, Authority} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
+		Value = binary:copy(<<$a>>, 4000),
+		{Promise, _} = cow_hpack:encode([
+			{<<":method">>, <<"GET">>},
+			{<<":scheme">>, Scheme},
+			{<<":authority">>, Authority},
+			{<<":path">>, <<"/">>}
+			|lists:duplicate(9, {<<"user-agent">>, Value})
+		], cow_hpack:init(), #{huffman => false}),
+		{Status, _} = cow_hpack:encode([{<<":status">>, <<"200">>}]),
+		ok = Transport:send(Socket, cow_http2:push_promise(StreamID, 2, Promise)),
+		%% ENHANCE_YOUR_CALM on the promised id. The connection stays up.
+		{ok, <<4:24, 3:8, 0:8, 2:32, 11:32>>}
+			= Transport:recv(Socket, 13, 1000),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID, fin, Status)),
+		timer:sleep(1000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	receive
+		{gun_push, ConnPid, _, _, _, _, _} ->
+			error(unexpected_push)
+	after 0 ->
+		ok
+	end,
+	gun:close(ConnPid).
+
+%% :status 200 is 42 octets. An empty user-agent adds 42.
+max_header_list_size_bounds(_) ->
+	doc("The max_header_list_size HTTP/2 option accepts a header list "
+	    "of that many octets and rejects one more."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len, 1000),
+		{Exact, _} = cow_hpack:encode([
+			{<<":status">>, <<"200">>},
+			{<<"user-agent">>, <<>>}
+		], cow_hpack:init(), #{huffman => false}),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID, fin,
+			iolist_to_binary(Exact))),
+		{ok, <<Len2:24, 1:8, _:8, StreamID2:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len2, 1000),
+		{Over, _} = cow_hpack:encode([
+			{<<":status">>, <<"200">>},
+			{<<"user-agent">>, <<$a>>}
+		], cow_hpack:init(), #{huffman => false}),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID2, fin,
+			iolist_to_binary(Over))),
+		{ok, <<4:24, 3:8, 0:8, StreamID2:32, _:32>>}
+			= Transport:recv(Socket, 13, 1000),
+		{ok, <<Len3:24, 1:8, _:8, StreamID3:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, _} = Transport:recv(Socket, Len3, 1000),
+		{Status, _} = cow_hpack:encode([{<<":status">>, <<"200">>}]),
+		ok = Transport:send(Socket, cow_http2:headers(StreamID3, fin, Status)),
+		timer:sleep(1000)
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2],
+		http2_opts => #{max_header_list_size => 84}
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef1 = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
+	StreamRef2 = gun:get(ConnPid, "/"),
+	{error, {stream_error, {stream_error, enhance_your_calm, _}}}
+		= gun:await(ConnPid, StreamRef2),
+	StreamRef3 = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef3),
+	gun:close(ConnPid).
+
 max_trailer_block_size(_) ->
 	doc("The max_trailer_block_size HTTP/1.1 option limits the size of data "
 	    "accumulated while waiting for the response trailer block terminator."),
