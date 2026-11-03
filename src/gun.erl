@@ -247,7 +247,7 @@
 	initial_connection_window_size => 65535..16#7fffffff,
 	initial_stream_window_size => 0..16#7fffffff,
 	max_connection_window_size => 0..16#7fffffff,
-	max_concurrent_streams => non_neg_integer() | infinity,
+	max_concurrent_streams => 0..16#ffffffff | infinity,
 	max_decode_table_size => 0..16#ffffffff,
 	max_encode_table_size => 0..16#ffffffff,
 	max_fragmented_header_block_size => 16384..16#7fffffff,
