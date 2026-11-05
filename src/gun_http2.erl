@@ -322,12 +322,12 @@ frame(State=#http2_state{http2_machine=HTTP2Machine0}, Frame, CookieStore, EvHan
 			EvHandlerState0
 	end,
 	case cow_http2_machine:frame(Frame, HTTP2Machine0) of
-		%% We only update the connection's window when receiving a lingering data frame.
-		{ok, HTTP2Machine} when element(1, Frame) =:= data ->
-			{update_window(State#http2_state{http2_machine=HTTP2Machine}),
-				CookieStore, EvHandlerState};
 		{ok, HTTP2Machine} ->
 			{maybe_ack_or_notify(State#http2_state{http2_machine=HTTP2Machine}, Frame),
+				CookieStore, EvHandlerState};
+		%% Non-empty DATA for a reset stream. The window was reduced.
+		{window_changed, _Increment, HTTP2Machine} ->
+			{update_window(State#http2_state{http2_machine=HTTP2Machine}),
 				CookieStore, EvHandlerState};
 		{ok, {data, StreamID, IsFin, Data}, HTTP2Machine} ->
 			data_frame(State#http2_state{http2_machine=HTTP2Machine},
