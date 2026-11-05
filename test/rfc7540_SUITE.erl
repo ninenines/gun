@@ -330,7 +330,7 @@ prior_knowledge_preface_other_frame(_) ->
 lingering_data_counts_toward_connection_window(_) ->
 	doc("DATA frames received after sending RST_STREAM must be counted "
 		"toward the connection flow-control window. (RFC7540 5.1)"),
-	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(Parent, _, Socket, Transport) ->
 		%% Step 2.
 		%% Receive a HEADERS frame.
 		{ok, <<SkipLen:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 1000),
@@ -356,7 +356,8 @@ lingering_data_counts_toward_connection_window(_) ->
 		{ok, << 4:24, 3:8, 1:40, _:32 >>} = gen_tcp:recv(Socket, 13, 1000),
 		%% Received a WINDOW_UPDATE frame after we got RST_STREAM.
 		{ok, << 4:24, 8:8, 0:40, Increment:32 >>} = gen_tcp:recv(Socket, 13, 1000),
-		true = Increment > 0
+		true = Increment > 0,
+		Parent ! {self(), window_update_received}
 	end),
 	{ok, ConnPid} = gun:open("localhost", Port, #{
 		protocols => [http2],
@@ -374,8 +375,7 @@ lingering_data_counts_toward_connection_window(_) ->
 	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
 	%% Step 6.
 	gun:cancel(ConnPid, StreamRef),
-	%% Make sure Gun sends the WINDOW_UPDATE and the server test passes.
-	timer:sleep(300),
+	window_update_received = receive_from(OriginPid),
 	gun:close(ConnPid).
 
 max_concurrent_streams_headers(_) ->
