@@ -12,7 +12,7 @@ With Erlang.mk this is done by adding `gun` to the `DEPS` variable
 in your Makefile.
 
 .Adding Gun as an Erlang.mk dependency
-[source,make]
+[source,makefile]
 ----
 DEPS = gun
 ----
