@@ -1,0 +1,37 @@
+[appendix]
+== Migrating from Gun 2.7 to 2.8
+
+Gun 2.8 is a maintenance release. It adds
+one HTTP/2 option.
+
+Gun 2.8 requires Erlang/OTP 27.0 or greater.
+
+=== Features added
+
+* Potential incompatibility: the HTTP/2 option
+  `max_header_list_size` defaults to 32768.
+
+* HTTP/2 lingering streams are now kept for two
+  generations, with at most 100 local and 10
+  remote stream ids per generation.
+
+* Update Cowlib to 2.22.0.
+
+=== Bugs fixed
+
+* HTTP/2 204 responses may now include a
+  content-length header of 0.
+
+* HTTP/2 DATA frames following a stream
+  reset now properly update flow control
+  windows.
+
+* Padded HTTP/2 DATA frames now properly
+  update flow control windows.
+
+* Chunked transfer-encoding parsing was
+  made stricter.
+
+* Incomplete HTTP/2 GOAWAY frames now
+  wait for more data instead of being
+  a connection error.

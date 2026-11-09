@@ -18,8 +18,8 @@ developers to focus on writing their code without worrying.
 
 == Online documentation
 
-* https://ninenines.eu/docs/en/gun/2.7/guide[User guide]
-* https://ninenines.eu/docs/en/gun/2.7/manual[Function reference]
+* https://ninenines.eu/docs/en/gun/2.8/guide[User guide]
+* https://ninenines.eu/docs/en/gun/2.8/manual[Function reference]
 
 == Offline documentation
 
