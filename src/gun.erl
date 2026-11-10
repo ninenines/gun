@@ -767,13 +767,34 @@ maybe_invalid_request_headers(Headers, ReqOpts) ->
 	end.
 
 validate_request_headers([{Name, Value}|Tail]) ->
-	case is_field_name(Name) andalso is_valid_request(Value) of
+	case is_field_name(Name) andalso is_field_value(Value) of
 		true -> validate_request_headers(Tail);
 		false -> error({invalid_request_header, Name,
 			"An invalid request header was detected."})
 	end;
 validate_request_headers([]) ->
 	ok.
+
+is_field_value(Value) ->
+	is_field_value1(iolist_to_binary(Value)).
+
+is_field_value1(<<>>) ->
+	true;
+is_field_value1(<<C, _/bits>>) when C =:= $\s; C =:= $\t ->
+	false;
+is_field_value1(Value) ->
+	case binary:last(Value) of
+		$\s -> false;
+		$\t -> false;
+		_ -> is_field_value2(Value)
+	end.
+
+is_field_value2(<<C, R/bits>>) when ?IS_VCHAR_OBS(C) ->
+	is_field_value2(R);
+is_field_value2(<<>>) ->
+	true;
+is_field_value2(_) ->
+	false.
 
 is_field_name(<<>>) ->
 	false;

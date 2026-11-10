@@ -689,7 +689,8 @@ do_wpt_prefix_common(Config, TestCase, Expected, Name) ->
 	%% Set and retrieve the cookie.
 	StreamRef1 = gun:get(ConnPid, "/cookies/resources/set.py?prefix", #{
 		<<"host">> => ?WPT_HOST,
-		<<"please-set-cookie">> => TestCase
+		%% A trailing SP in the fixture is OWS. Field-content rejects it.
+		<<"please-set-cookie">> => string:trim(TestCase, trailing)
 	}),
 	{response, fin, 204, Headers1} = gun:await(ConnPid, StreamRef1),
 	ct:log("Headers1:~n~p", [Headers1]),
