@@ -15,6 +15,8 @@
 -module(gun).
 -behavior(gen_statem).
 
+-include_lib("cowlib/include/cow_parse.hrl").
+
 %% Connection.
 -export([open/2]).
 -export([open/3]).
@@ -765,13 +767,25 @@ maybe_invalid_request_headers(Headers, ReqOpts) ->
 	end.
 
 validate_request_headers([{Name, Value}|Tail]) ->
-	case is_valid_request(Name) andalso is_valid_request(Value) of
+	case is_field_name(Name) andalso is_valid_request(Value) of
 		true -> validate_request_headers(Tail);
 		false -> error({invalid_request_header, Name,
 			"An invalid request header was detected."})
 	end;
 validate_request_headers([]) ->
 	ok.
+
+is_field_name(<<>>) ->
+	false;
+is_field_name(Name) ->
+	is_field_name1(Name).
+
+is_field_name1(<<C, R/bits>>) when ?IS_LTOKEN(C) ->
+	is_field_name1(R);
+is_field_name1(<<>>) ->
+	true;
+is_field_name1(_) ->
+	false.
 
 %% headers/5 frames the body from this value. request/6 replaces it
 %% with the size of the body, so the check lives here.
