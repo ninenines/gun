@@ -294,6 +294,18 @@ invalid_request_headers_raise_ws_upgrade(_) ->
 	end,
 	gun:close(Pid).
 
+invalid_request_headers_raise_token_name(_) ->
+	doc("Ensure a request header name that is not a lowercase token "
+		"raises an exception."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	try
+		gun:get(Pid, "/", [{<<"x:test">>, <<"value">>}]),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, _, _} -> ok
+	end,
+	gun:close(Pid).
+
 invalid_request_headers_raise_name(_) ->
 	doc("Ensure a request header with a CRLF in its name raises an "
 		"exception, the same way a CRLF in its value already does."),
@@ -364,15 +376,38 @@ invalid_request_line_raise_connect(_) ->
 	end,
 	gun:close(Pid).
 
-invalid_request_headers_raise_nul_value(_) ->
-	doc("Ensure a NUL byte in a request header value raises an exception."),
+invalid_request_headers_raise_value_ok(_) ->
+	doc("A request header value may be empty, contain SP or HTAB "
+		"between characters, or contain obs-text."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
-	try
-		gun:get(Pid, "/", [{<<"x-test">>, <<"bad", 0, "value">>}]),
-		ct:fail("expected exception")
-	catch
-		error:{invalid_request_header, _, _} -> ok
-	end,
+	_ = gun:get(Pid, "/", [{<<"x-test">>, <<"a b">>}]),
+	_ = gun:get(Pid, "/", [{<<"x-test">>, [<<"a">>, <<$\t>>, <<"b">>]}]),
+	_ = gun:get(Pid, "/", [{<<"x-test">>, <<$a, 128, 255>>}]),
+	_ = gun:get(Pid, "/", [{<<"x-test">>, <<>>}]),
+	gun:close(Pid).
+
+invalid_request_headers_raise_value_error(_) ->
+	doc("Ensure a request header value that is not field-content raises."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	Bads = [
+		<<" ">>,
+		<<$\t>>,
+		<<" a">>,
+		<<"a ">>,
+		<<$a, $\t>>,
+		<<$a, 127>>,
+		<<$a, 1>>,
+		[" ", "a"],
+		<<"bad", 0, "value">>
+	],
+	_ = [begin
+		try
+			gun:get(Pid, "/", [{<<"x-test">>, Bad}]),
+			ct:fail({expected_exception, Bad})
+		catch
+			error:{invalid_request_header, _, _} -> ok
+		end
+	end || Bad <- Bads],
 	gun:close(Pid).
 
 invalid_request_headers_raise_nul_name(_) ->

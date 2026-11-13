@@ -209,7 +209,8 @@ set_cookie_connect_tls(Config) ->
 %% also includes a string representation of the CTL in
 %% the cookie name. We don't bother.
 %%
-%% The expected value is only used for the \t CTL.
+%% The expected value is used for HTAB when the header is kept.
+%% HTTP/2 rejects a leading or trailing HTAB before that.
 %% The original test retains the \t in the value because
 %% it uses the DOM. The Set-Cookie algorithm requires
 %% us to drop it.
@@ -495,7 +496,8 @@ wpt_name(Config) ->
 %% also includes a string representation of the CTL in
 %% the cookie name. We don't bother.
 %%
-%% The expected value is only used for the \t CTL.
+%% The expected value is used for HTAB when the header is kept.
+%% HTTP/2 rejects a leading or trailing HTAB before that.
 %% The original test retains the \t in the value because
 %% it uses the DOM. The Set-Cookie algorithm requires
 %% us to drop it.
@@ -689,7 +691,8 @@ do_wpt_prefix_common(Config, TestCase, Expected, Name) ->
 	%% Set and retrieve the cookie.
 	StreamRef1 = gun:get(ConnPid, "/cookies/resources/set.py?prefix", #{
 		<<"host">> => ?WPT_HOST,
-		<<"please-set-cookie">> => TestCase
+		%% A trailing SP in the fixture is OWS. Field-content rejects it.
+		<<"please-set-cookie">> => string:trim(TestCase, trailing)
 	}),
 	{response, fin, 204, Headers1} = gun:await(ConnPid, StreamRef1),
 	ct:log("Headers1:~n~p", [Headers1]),
@@ -843,7 +846,8 @@ wpt_value(Config) ->
 %% also includes a string representation of the CTL in
 %% the cookie value. We don't bother.
 %%
-%% The expected value is only used for the \t CTL.
+%% The expected value is used for HTAB when the header is kept.
+%% HTTP/2 rejects a leading or trailing HTAB before that.
 %% The original test retains the \t in the value because
 %% it uses the DOM. The Set-Cookie algorithm requires
 %% us to drop it.
@@ -909,28 +913,77 @@ do_wpt_json_test(TestFile, TestPath, Config) ->
 	ok.
 
 do_wpt_ctl_test(Fun, TestPath, Config) ->
-	%% Control characters are defined by RFC5234 to be %x00-1F / %x7F.
-	%% We exclude NUL, CR and LF bytes because this causes errors
-	%% at the header parsing level.
-	CTLs0 = lists:seq(16#01, 16#1F) ++ [16#7F],
-	CTLs = CTLs0 -- "\r\n",
-	%% All CTLs except \t should cause the cookie to be rejected.
+	%% Control characters are %x00-1F / %x7F (RFC5234).
+	%% HTAB is valid inside a field value. HTTP/1 strips a
+	%% leading or trailing HTAB as OWS. HTTP/2 rejects it.
+	%% Every other CTL is rejected when the header is parsed.
+	CTLs = lists:seq(16#00, 16#1F) ++ [16#7F],
 	_ = [begin
 		{Name, Cookie, Expected} = Fun(CTL),
-		case CTL of
-			$\t ->
-				do_wpt_set_test(TestPath, Name, Cookie, Expected, false, Config);
-			_ ->
-				do_wpt_set_test(TestPath, Name, Cookie, <<>>, false, Config)
+		case CTL =/= $\t of
+			true ->
+				do_wpt_ctl_header_error(Cookie, Config);
+			false ->
+				do_wpt_set_test(TestPath, Name, Cookie, Expected, false, Config)
 		end
 	end || CTL <- CTLs],
 	ok.
+
+%% HTTP/1 strips a leading or trailing SP or HTAB as OWS.
+%% HTTP/2 rejects that whitespace when the header is parsed.
+header_rejects_ends(http2, Cookie) when is_binary(Cookie) ->
+	header_rejects_ends(http2, [Cookie]);
+header_rejects_ends(http2, Cookies) when is_list(Cookies) ->
+	lists:any(fun
+		(<<>>) ->
+			false;
+		(<<C, _/bits>>) when C =:= $\s; C =:= $\t ->
+			true;
+		(Bin) ->
+			case binary:last(Bin) of
+				$\s -> true;
+				$\t -> true;
+				_ -> false
+			end
+	end, Cookies);
+header_rejects_ends(_, _) ->
+	false.
+
+do_wpt_ctl_header_error(Cookie, Config) ->
+	Protocol = config(protocol, Config),
+	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{
+		transport => config(transport, Config),
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
+		protocols => [Protocol],
+		cookie_store => gun_cookies_list:init()
+	}),
+	{ok, Protocol} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid,
+		["/cookie-set?ttb=", cow_qs:urlencode(term_to_binary(Cookie))],
+		#{<<"host">> => ?WPT_HOST}),
+	case Protocol of
+		http ->
+			{error, {connection_error, {connection_error, protocol_error, _}}}
+				= gun:await(ConnPid, StreamRef);
+		http2 ->
+			{error, {stream_error, {stream_error, protocol_error, _}}}
+				= gun:await(ConnPid, StreamRef)
+	end,
+	gun:close(ConnPid).
 
 %% Equivalent to httpCookieTest.
 do_wpt_set_test(TestPath, Name, Cookie, Expected, Config) ->
 	do_wpt_set_test(TestPath, Name, Cookie, Expected, true, Config).
 
 do_wpt_set_test(TestPath, Name, Cookie, Expected, DefaultPath, Config) ->
+	case header_rejects_ends(config(protocol, Config), Cookie) of
+		true ->
+			do_wpt_ctl_header_error(Cookie, Config);
+		false ->
+			do_wpt_set_cookie(TestPath, Name, Cookie, Expected, DefaultPath, Config)
+	end.
+
+do_wpt_set_cookie(TestPath, Name, Cookie, Expected, DefaultPath, Config) ->
 	ct:log("Name: ~s", [Name]),
 	Protocol = config(protocol, Config),
 	{ok, ConnPid} = gun:open("localhost", config(port, Config), #{

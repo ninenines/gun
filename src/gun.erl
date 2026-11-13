@@ -15,6 +15,8 @@
 -module(gun).
 -behavior(gen_statem).
 
+-include_lib("cowlib/include/cow_parse.hrl").
+
 %% Connection.
 -export([open/2]).
 -export([open/3]).
@@ -765,13 +767,46 @@ maybe_invalid_request_headers(Headers, ReqOpts) ->
 	end.
 
 validate_request_headers([{Name, Value}|Tail]) ->
-	case is_valid_request(Name) andalso is_valid_request(Value) of
+	case is_field_name(Name) andalso is_field_value(Value) of
 		true -> validate_request_headers(Tail);
 		false -> error({invalid_request_header, Name,
 			"An invalid request header was detected."})
 	end;
 validate_request_headers([]) ->
 	ok.
+
+is_field_value(Value) ->
+	is_field_value1(iolist_to_binary(Value)).
+
+is_field_value1(<<>>) ->
+	true;
+is_field_value1(<<C, _/bits>>) when C =:= $\s; C =:= $\t ->
+	false;
+is_field_value1(Value) ->
+	case binary:last(Value) of
+		$\s -> false;
+		$\t -> false;
+		_ -> is_field_value2(Value)
+	end.
+
+is_field_value2(<<C, R/bits>>) when ?IS_VCHAR_OBS(C) ->
+	is_field_value2(R);
+is_field_value2(<<>>) ->
+	true;
+is_field_value2(_) ->
+	false.
+
+is_field_name(<<>>) ->
+	false;
+is_field_name(Name) ->
+	is_field_name1(Name).
+
+is_field_name1(<<C, R/bits>>) when ?IS_LTOKEN(C) ->
+	is_field_name1(R);
+is_field_name1(<<>>) ->
+	true;
+is_field_name1(_) ->
+	false.
 
 %% headers/5 frames the body from this value. request/6 replaces it
 %% with the size of the body, so the check lives here.
