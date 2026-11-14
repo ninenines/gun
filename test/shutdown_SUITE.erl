@@ -532,6 +532,74 @@ http2_server_goaway_many_streams(_) ->
 	{response, fin, 200, _} = gun:await(ConnPid, StreamRef3),
 	gun_is_down(ConnPid, ConnRef, normal).
 
+goaway_window_update(_) ->
+	doc("HTTP/2: Confirm that gun does not crash when a GOAWAY frame "
+		"is followed by a connection-level WINDOW_UPDATE while "
+		"cow_http2_machine has buffered send data for a stream "
+		"removed by the GOAWAY handler."),
+	%% We use 'http' here because we need a custom handshake: with
+	%% initial_connection_window_size=65535 gun does not send the
+	%% connection-level WINDOW_UPDATE that http2_handshake/2 expects.
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http, fun(Parent, ListenSocket, Socket, Transport) ->
+		%% Perform a custom HTTP/2 handshake. Advertise max_frame_size=32768
+		%% so each 30720-byte POST body fits in a single DATA frame.
+		ok = Transport:send(Socket, cow_http2:settings(#{max_frame_size => 32768})),
+		{ok, <<"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n">>} = Transport:recv(Socket, 24, 5000),
+		%% Receive the client SETTINGS.
+		{ok, <<Len:24>>} = Transport:recv(Socket, 3, 5000),
+		{ok, <<4:8, 0:40, _:Len/binary>>} = Transport:recv(Socket, 6 + Len, 5000),
+		ok = Transport:send(Socket, cow_http2:settings_ack()),
+		%% Receive the client SETTINGS ack.
+		{ok, <<0:24, 4:8, 1:8, 0:32>>} = Transport:recv(Socket, 9, 5000),
+		Parent ! {self(), origin_ready},
+		%% Stream 1.
+		%% Receive a HEADERS frame.
+		{ok, <<HLen1:24, 1:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 5000),
+		{ok, _} = Transport:recv(Socket, HLen1, 5000),
+		%% Receive a DATA frame.
+		{ok, <<DLen1:24, 0:8, _:8, 1:32>>} = Transport:recv(Socket, 9, 5000),
+		{ok, _} = Transport:recv(Socket, DLen1, 5000),
+		%% Stream 3.
+		%% Receive a HEADERS frame.
+		{ok, <<HLen3:24, 1:8, _:8, 3:32>>} = Transport:recv(Socket, 9, 5000),
+		{ok, _} = Transport:recv(Socket, HLen3, 5000),
+		%% Receive a DATA frame.
+		{ok, <<DLen3:24, 0:8, _:8, 3:32>>} = Transport:recv(Socket, 9, 5000),
+		{ok, _} = Transport:recv(Socket, DLen3, 5000),
+		%% Send 200 response for stream 1.
+		{HeadersBlock1, EncState0} = cow_hpack:encode([{<<":status">>, <<"200">>}]),
+		ok = Transport:send(Socket, cow_http2:headers(1, fin, HeadersBlock1)),
+		%% Send 200 response for stream 3.
+		{HeadersBlock3, _} = cow_hpack:encode([{<<":status">>, <<"200">>}], EncState0),
+		ok = Transport:send(Socket, cow_http2:headers(3, fin, HeadersBlock3)),
+		%% GOAWAY(3) + WINDOW_UPDATE(65535) in one write — the crash trigger.
+		ok = Transport:send(Socket, [
+			cow_http2:goaway(3, no_error, <<>>),
+			cow_http2:window_update(65535)
+		]),
+		gun_test:loop_origin(Parent, ListenSocket, Socket, Transport)
+	end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort, #{
+		protocols => [http2],
+		retry => 0,
+		http2_opts => #{
+			initial_connection_window_size => 65535,
+			initial_stream_window_size => 65535
+		}
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	origin_ready = receive_from(OriginPid),
+	ConnRef = monitor(process, ConnPid),
+	Body = binary:copy(<<$x>>, 30720),
+	Headers = [{<<"content-type">>, <<"application/octet-stream">>}],
+	StreamRef1 = gun:post(ConnPid, "/req1", Headers, Body),
+	StreamRef2 = gun:post(ConnPid, "/req2", Headers, Body),
+	_StreamRef3 = gun:post(ConnPid, "/req3", Headers, Body),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef1),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef2),
+	gun_is_down(ConnPid, ConnRef, normal).
+
 ws_gun_shutdown(Config) ->
 	doc("Websocket: Confirm that the Gun process shuts down gracefully "
 		"when calling gun:shutdown/1."),
