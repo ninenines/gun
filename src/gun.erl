@@ -767,7 +767,7 @@ maybe_invalid_request_headers(Headers, ReqOpts) ->
 validate_request_headers([{Name, Value}|Tail]) ->
 	try
 		_ = cow_http:ensure_token_lowercase(Name),
-		true = is_valid_request(Value)
+		cow_http:ensure_field_value(iolist_to_binary(Value))
 	of
 		_ -> validate_request_headers(Tail)
 	catch _:_ ->
