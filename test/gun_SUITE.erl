@@ -294,6 +294,18 @@ invalid_request_headers_raise_ws_upgrade(_) ->
 	end,
 	gun:close(Pid).
 
+invalid_request_headers_raise_token_name(_) ->
+	doc("Ensure a request header name that is not a lowercase token "
+		"raises an exception."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	try
+		gun:get(Pid, "/", [{<<"x:test">>, <<"value">>}]),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_header, _, _} -> ok
+	end,
+	gun:close(Pid).
+
 invalid_request_headers_raise_name(_) ->
 	doc("Ensure a request header with a CRLF in its name raises an "
 		"exception, the same way a CRLF in its value already does."),

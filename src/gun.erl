@@ -765,9 +765,13 @@ maybe_invalid_request_headers(Headers, ReqOpts) ->
 	end.
 
 validate_request_headers([{Name, Value}|Tail]) ->
-	case is_valid_request(Name) andalso is_valid_request(Value) of
-		true -> validate_request_headers(Tail);
-		false -> error({invalid_request_header, Name,
+	try
+		_ = cow_http:ensure_token_lowercase(Name),
+		true = is_valid_request(Value)
+	of
+		_ -> validate_request_headers(Tail)
+	catch _:_ ->
+		error({invalid_request_header, Name,
 			"An invalid request header was detected."})
 	end;
 validate_request_headers([]) ->
