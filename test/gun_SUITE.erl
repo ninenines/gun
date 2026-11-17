@@ -419,6 +419,27 @@ invalid_request_headers_raise_host(_) ->
 	end || Host <- Bad],
 	gun:close(Pid).
 
+invalid_request_headers_raise_duplicate_host(_) ->
+	doc("A request must not contain more than one host field."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	_ = gun:get(Pid, "/", [{<<"host">>, <<"example.com">>}]),
+	Bads = [
+		[{<<"host">>, <<"example.com">>}, {<<"host">>, <<"example.com">>}],
+		[{<<"host">>, <<"example.com">>}, {<<"host">>, <<"other.example">>}],
+		[{<<"host">>, <<"example.com">>}, {<<"x-test">>, <<"a">>},
+			{<<"host">>, <<"example.com">>}],
+		[{host, <<"example.com">>}, {<<"host">>, <<"other.example">>}]
+	],
+	_ = [begin
+		try
+			gun:get(Pid, "/", Headers),
+			ct:fail({expected_exception, Headers})
+		catch
+			error:{invalid_request_header, _, _} -> ok
+		end
+	end || Headers <- Bads],
+	gun:close(Pid).
+
 invalid_request_headers_raise_value_error(_) ->
 	doc("Ensure a request header value that is not field-content raises."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),

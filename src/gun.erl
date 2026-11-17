@@ -765,11 +765,18 @@ maybe_invalid_request_headers(Headers, ReqOpts) ->
 	end.
 
 validate_request_headers([{<<"host">>, Value}|Tail]) ->
-	try cow_http_hd:parse_host(iolist_to_binary(Value)) of
-		{_, _} -> validate_request_headers(Tail)
-	catch _:_ ->
-		error({invalid_request_header, <<"host">>,
-			"An invalid request header was detected."})
+	%% Host is not a list field, so a second field must not be sent. (RFC9110 5.3)
+	case lists:keymember(<<"host">>, 1, Tail) of
+		true ->
+			error({invalid_request_header, <<"host">>,
+				"An invalid request header was detected."});
+		false ->
+			try cow_http_hd:parse_host(iolist_to_binary(Value)) of
+				{_, _} -> validate_request_headers(Tail)
+			catch _:_ ->
+				error({invalid_request_header, <<"host">>,
+					"An invalid request header was detected."})
+			end
 	end;
 validate_request_headers([{Name, Value}|Tail]) ->
 	try
