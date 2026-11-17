@@ -764,6 +764,13 @@ maybe_invalid_request_headers(Headers, ReqOpts) ->
 			ok
 	end.
 
+validate_request_headers([{<<"host">>, Value}|Tail]) ->
+	try cow_http_hd:parse_host(iolist_to_binary(Value)) of
+		{_, _} -> validate_request_headers(Tail)
+	catch _:_ ->
+		error({invalid_request_header, <<"host">>,
+			"An invalid request header was detected."})
+	end;
 validate_request_headers([{Name, Value}|Tail]) ->
 	try
 		_ = cow_http:ensure_token_lowercase(Name),

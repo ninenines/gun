@@ -386,6 +386,39 @@ invalid_request_headers_raise_value_ok(_) ->
 	_ = gun:get(Pid, "/", [{<<"x-test">>, <<>>}]),
 	gun:close(Pid).
 
+invalid_request_headers_raise_host(_) ->
+	doc("A caller-supplied host is parsed as an authority. "
+		"Port 0 and an empty host with a port raise. "
+		"An empty host and ports 1 and 65535 do not."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	Ok = [
+		<<"example.com">>,
+		<<"example.com:1">>,
+		<<"example.com:65535">>,
+		<<>>,
+		["example.com", ":8080"]
+	],
+	_ = [gun:get(Pid, "/", [{<<"host">>, Host}]) || Host <- Ok],
+	Bad = [
+		<<"example.com:0">>,
+		<<"example.com:65536">>,
+		<<":1">>,
+		<<":80">>,
+		<<":65535">>,
+		<<" example.com">>,
+		<<0>>,
+		["example.com", ":0"]
+	],
+	_ = [begin
+		try
+			gun:get(Pid, "/", [{<<"host">>, Host}]),
+			ct:fail({expected_exception, Host})
+		catch
+			error:{invalid_request_header, _, _} -> ok
+		end
+	end || Host <- Bad],
+	gun:close(Pid).
+
 invalid_request_headers_raise_value_error(_) ->
 	doc("Ensure a request header value that is not field-content raises."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
