@@ -1408,15 +1408,10 @@ connect(State, StreamRef, ReplyTo, Destination, TunnelInfo, Headers,
 
 connect1(State=#http2_state{socket=Socket, transport=Transport, opts=Opts,
 		http2_machine=HTTP2Machine0}, StreamRef, ReplyTo,
-		Destination=#{host := Host0}, TunnelInfo, Headers0, InitialFlow0,
+		Destination, TunnelInfo, Headers0, InitialFlow0,
 		CookieStore, EvHandler, EvHandlerState0)
 		when is_reference(StreamRef) ->
-	Host = case Host0 of
-		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
-		_ -> Host0
-	end,
-	Port = maps:get(port, Destination, 1080),
-	Authority = [Host, $:, integer_to_binary(Port)],
+	Authority = gun:connect_authority(Destination),
 	PseudoHeaders = #{
 		method => <<"CONNECT">>,
 		authority => iolist_to_binary(Authority)
