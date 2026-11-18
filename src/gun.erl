@@ -95,6 +95,7 @@
 -export([ws_send/3]).
 
 %% Internals.
+-export([connect_authority/1]).
 -export([start_link/4]).
 -export([callback_mode/0]).
 -export([init/1]).
@@ -768,13 +769,6 @@ validate_request_path(Method, Path) ->
 			"An invalid request line was detected."})
 	end.
 
-validate_request_line(Type, Value) ->
-	case is_valid_request(Value) of
-		true -> ok;
-		false -> error({invalid_request_line, Type,
-			"An invalid request line was detected."})
-	end.
-
 is_valid_request(Value) ->
 	nomatch =:= binary:match(iolist_to_binary(Value), [<<$\r>>, <<$\n>>, <<0>>]).
 
@@ -836,15 +830,56 @@ validate_content_length(Headers) ->
 			end
 	end.
 
-maybe_invalid_connect_destination(#{host := Host}, ReqOpts) when not is_tuple(Host) ->
+maybe_invalid_connect_destination(Destination=#{host := _}, ReqOpts) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of
 		raise ->
-			validate_request_line(host, Host);
+			validate_connect_destination(Destination);
 		ignore ->
 			ok
 	end;
 maybe_invalid_connect_destination(_, _) ->
 	ok.
+
+validate_connect_destination(Destination=#{host := Host}) ->
+	try
+		Port = maps:get(port, Destination, 1080),
+		true = is_integer(Port) andalso Port > 0 andalso Port =< 65535,
+		ok = validate_connect_host(Host)
+	catch _:_ ->
+		error({invalid_request_line, host,
+			"An invalid request line was detected."})
+	end.
+
+%% A tuple is an address. Anything else is a host.
+validate_connect_host(Host) when tuple_size(Host) =:= 4 ->
+	true = inet:is_ipv4_address(Host),
+	ok;
+%% inet:ntoa emits a zone id when the first word is 16#fe80 or 16#ff02
+%% and the second word is not 0. A zone id is not a uri-host. (RFC3986 3.2.2)
+validate_connect_host({A, B, _, _, _, _, _, _}=Host)
+		when A =:= 16#fe80, B =:= 0;
+			A =:= 16#ff02, B =:= 0;
+			A =/= 16#fe80, A =/= 16#ff02 ->
+	true = inet:is_ipv6_address(Host),
+	ok;
+%% No port in the host. parse_host lowercases; the original host is sent.
+validate_connect_host(Host) ->
+	HostBin = iolist_to_binary(Host),
+	true = HostBin =/= <<>>,
+	{_, undefined} = cow_http_hd:parse_host(HostBin),
+	ok.
+
+-spec connect_authority(connect_destination()) -> binary().
+connect_authority(Destination=#{host := Host0}) ->
+	Port = maps:get(port, Destination, 1080),
+	iolist_to_binary([connect_host(Host0), $:, integer_to_binary(Port)]).
+
+connect_host(Tuple) when tuple_size(Tuple) =:= 8 ->
+	[$[, inet:ntoa(Tuple), $]];
+connect_host(Tuple) when tuple_size(Tuple) =:= 4 ->
+	inet:ntoa(Tuple);
+connect_host(Host) ->
+	Host.
 
 %% Streaming data.
 

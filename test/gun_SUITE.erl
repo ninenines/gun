@@ -366,14 +366,49 @@ invalid_request_line_raise_ws_upgrade(_) ->
 	gun:close(Pid).
 
 invalid_request_line_raise_connect(_) ->
-	doc("Ensure an invalid CONNECT destination host raises an exception."),
+	doc("Ensure an invalid CONNECT destination raises an exception."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
-	try
-		gun:connect(Pid, #{host => "localhost\r\nX-Injected: 1", port => 1234}, []),
-		ct:fail("expected exception")
-	catch
-		error:{invalid_request_line, host, _} -> ok
-	end,
+	Goods = [
+		#{host => <<"example.com">>, port => 1},
+		#{host => <<"example.com">>, port => 65535},
+		#{host => <<"ex%2Eample.com">>, port => 80},
+		#{host => <<"%2Ftmp">>, port => 80},
+		#{host => {16#fe80, 0, 0, 0, 0, 0, 0, 1}, port => 443},
+		#{host => {16#ff02, 0, 0, 0, 0, 0, 0, 1}, port => 443},
+		#{host => {16#fe81, 1, 0, 0, 0, 0, 0, 1}, port => 443},
+		#{host => "[::1]", port => 443},
+		#{host => <<"[::1]">>, port => 443},
+		#{host => "[fe80:1::1]", port => 443},
+		#{host => "[::ffff:192.0.2.1]", port => 443},
+		#{host => "[]", port => 443}
+	],
+	_ = [gun:connect(Pid, Destination, []) || Destination <- Goods],
+	Bads = [
+		#{host => "localhost\r\nX-Injected: 1", port => 1234},
+		#{host => <<"example.com:80">>, port => 1234},
+		#{host => <<"[::1]:443">>, port => 1234},
+		#{host => <<>>, port => 80},
+		#{host => <<"example.com">>, port => 0},
+		#{host => <<"example.com">>, port => 65536},
+		#{host => <<"example.com">>, port => -1},
+		#{host => <<"%">>, port => 80},
+		#{host => <<"%2">>, port => 80},
+		#{host => <<"%ZZ">>, port => 80},
+		#{host => <<"100%">>, port => 80},
+		#{host => {16#fe80, 1, 0, 0, 0, 0, 0, 1}, port => 443},
+		#{host => {16#ff02, 1, 0, 0, 0, 0, 0, 1}, port => 443},
+		#{host => "[fe80::1%1]", port => 443},
+		#{host => <<"[::1">>, port => 443},
+		#{host => "[hello]", port => 443}
+	],
+	_ = [begin
+		try
+			gun:connect(Pid, Destination, []),
+			ct:fail({expected_exception, Destination})
+		catch
+			error:{invalid_request_line, host, _} -> ok
+		end
+	end || Destination <- Bads],
 	gun:close(Pid).
 
 invalid_request_headers_raise_value_ok(_) ->
@@ -499,6 +534,18 @@ invalid_request_line_raise_path_pchar(_) ->
 	_ = gun:get(Pid, <<"/foo[]">>, []),
 	_ = gun:get(Pid, <<"/%">>, []),
 	_ = gun:get(Pid, <<"/?a[]=1">>, []),
+	gun:close(Pid).
+
+connect_ipv6_authority(_) ->
+	doc("An IPv6 CONNECT destination is sent in brackets. (RFC3986 3.2.2)"),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, Pid} = gun:open("localhost", Port, #{protocols => [http]}),
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:connect(Pid, #{host => {0, 0, 0, 0, 0, 0, 0, 1}, port => 443}),
+	{ok, Data} = gen_tcp:recv(ClientSocket, 0, 5000),
+	{_, _} = binary:match(Data, <<"CONNECT [::1]:443 HTTP/1.1\r\n">>),
 	gun:close(Pid).
 
 invalid_request_line_raise_method_nul(_) ->
