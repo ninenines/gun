@@ -64,6 +64,7 @@
 -export([connect/2]).
 -export([connect/3]).
 -export([connect/4]).
+-export([connect_authority/1]).
 
 %% Cookies.
 %% @todo -export([gc_cookies/1]).
@@ -768,13 +769,6 @@ validate_request_path(Method, Path) ->
 			"An invalid request line was detected."})
 	end.
 
-validate_request_line(Type, Value) ->
-	case is_valid_request(Value) of
-		true -> ok;
-		false -> error({invalid_request_line, Type,
-			"An invalid request line was detected."})
-	end.
-
 is_valid_request(Value) ->
 	nomatch =:= binary:match(iolist_to_binary(Value), [<<$\r>>, <<$\n>>, <<0>>]).
 
@@ -836,15 +830,36 @@ validate_content_length(Headers) ->
 			end
 	end.
 
-maybe_invalid_connect_destination(#{host := Host}, ReqOpts) when not is_tuple(Host) ->
+maybe_invalid_connect_destination(Destination=#{host := _}, ReqOpts) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of
 		raise ->
-			validate_request_line(host, Host);
+			validate_connect_destination(Destination);
 		ignore ->
 			ok
 	end;
 maybe_invalid_connect_destination(_, _) ->
 	ok.
+
+validate_connect_destination(Destination) ->
+	try
+		{Host, _} = cow_http_hd:parse_host(connect_authority(Destination)),
+		true = Host =/= <<>>
+	catch _:_ ->
+		error({invalid_request_line, host,
+			"An invalid request line was detected."})
+	end.
+
+-spec connect_authority(connect_destination()) -> binary().
+connect_authority(Destination=#{host := Host0}) ->
+	Port = maps:get(port, Destination, 1080),
+	iolist_to_binary([connect_host(Host0), $:, integer_to_binary(Port)]).
+
+connect_host(Tuple) when tuple_size(Tuple) =:= 8 ->
+	[$[, inet:ntoa(Tuple), $]];
+connect_host(Tuple) when tuple_size(Tuple) =:= 4 ->
+	inet:ntoa(Tuple);
+connect_host(Host) ->
+	Host.
 
 %% Streaming data.
 

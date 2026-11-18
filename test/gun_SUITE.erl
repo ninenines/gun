@@ -500,6 +500,29 @@ invalid_request_line_raise_path_pchar(_) ->
 	_ = gun:get(Pid, <<"/?a[]=1">>, []),
 	gun:close(Pid).
 
+invalid_request_line_raise_connect_empty_host(_) ->
+	doc("An empty CONNECT host must raise."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	try
+		gun:connect(Pid, #{host => <<>>, port => 80}, []),
+		ct:fail("expected exception")
+	catch
+		error:{invalid_request_line, host, _} -> ok
+	end,
+	gun:close(Pid).
+
+connect_ipv6_authority(_) ->
+	doc("An IPv6 CONNECT destination is sent in brackets. (RFC3986 3.2.2)"),
+	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
+	{ok, {_, Port}} = inet:sockname(ListenSocket),
+	{ok, Pid} = gun:open("localhost", Port, #{protocols => [http]}),
+	{ok, ClientSocket} = gen_tcp:accept(ListenSocket, 5000),
+	{ok, http} = gun:await_up(Pid),
+	_ = gun:connect(Pid, #{host => {0, 0, 0, 0, 0, 0, 0, 1}, port => 443}),
+	{ok, Data} = gen_tcp:recv(ClientSocket, 0, 5000),
+	{_, _} = binary:match(Data, <<"CONNECT [::1]:443 HTTP/1.1\r\n">>),
+	gun:close(Pid).
+
 invalid_request_line_raise_path_nul(_) ->
 	doc("Ensure a NUL byte in the request path raises an exception."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
