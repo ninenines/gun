@@ -475,15 +475,30 @@ invalid_request_headers_raise_nul_name(_) ->
 	end,
 	gun:close(Pid).
 
-invalid_request_line_raise_path_nul(_) ->
-	doc("Ensure a NUL byte in the request path raises an exception."),
+invalid_request_line_raise_path_pchar(_) ->
+	doc("A path that is not absolute-path must raise. OPTIONS * is asterisk-form."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
-	try
-		gun:get(Pid, <<"/search", 0, "q=1">>, []),
-		ct:fail("expected exception")
-	catch
-		error:{invalid_request_line, path, _} -> ok
-	end,
+	Bads = [
+		<<"/foo bar">>,
+		<<"/a\\b">>,
+		<<"/a^b">>,
+		<<"*">>,
+		<<"/search", 0, "q=1">>
+	],
+	_ = [begin
+		try
+			gun:get(Pid, Bad, []),
+			ct:fail({expected_exception, Bad})
+		catch
+			error:{invalid_request_line, path, _} -> ok
+		end
+	end || Bad <- Bads],
+	_ = gun:request(Pid, <<"OPTIONS">>, <<"*">>, [], <<>>),
+	_ = gun:get(Pid, <<"//x">>, []),
+	_ = gun:get(Pid, <<"/%2F">>, []),
+	_ = gun:get(Pid, <<"/foo[]">>, []),
+	_ = gun:get(Pid, <<"/%">>, []),
+	_ = gun:get(Pid, <<"/?a[]=1">>, []),
 	gun:close(Pid).
 
 invalid_request_line_raise_method_nul(_) ->

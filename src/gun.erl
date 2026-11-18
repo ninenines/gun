@@ -740,10 +740,32 @@ normalize_headers(Headers) when is_map(Headers) ->
 maybe_invalid_request_line(Method, Path, ReqOpts) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of
 		raise ->
-			validate_request_line(method, Method),
-			validate_request_line(path, Path);
+			validate_request_line(Method),
+			validate_request_path(Method, Path);
 		ignore ->
 			ok
+	end.
+
+validate_request_line(Value) ->
+	case is_valid_request(Value) of
+		true -> ok;
+		false -> error({invalid_request_line, method,
+			"An invalid request line was detected."})
+	end.
+
+validate_request_path(Method, Path) ->
+	try
+		Bin = iolist_to_binary(Path),
+		case {iolist_to_binary(Method), Bin} of
+			{<<"OPTIONS">>, <<"*">>} ->
+				ok;
+			_ ->
+				_ = cow_http:ensure_absolute_path(Bin),
+				ok
+		end
+	catch _:_ ->
+		error({invalid_request_line, path,
+			"An invalid request line was detected."})
 	end.
 
 validate_request_line(Type, Value) ->
