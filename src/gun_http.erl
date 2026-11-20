@@ -912,14 +912,9 @@ connect(State=#http_state{streams=Streams}, StreamRef, ReplyTo, _, _, _, _,
 		"CONNECT can only be used with HTTP/1.1 when no other streams are active."}}),
 	{[], CookieStore, EvHandlerState};
 connect(State=#http_state{socket=Socket, transport=Transport, opts=Opts, version=Version},
-		StreamRef, ReplyTo, Destination=#{host := Host0}, _TunnelInfo, Headers0, InitialFlow0,
+		StreamRef, ReplyTo, Destination, _TunnelInfo, Headers0, InitialFlow0,
 		CookieStore, EvHandler, EvHandlerState0) ->
-	Host = case Host0 of
-		Tuple when is_tuple(Tuple) -> inet:ntoa(Tuple);
-		_ -> Host0
-	end,
-	Port = maps:get(port, Destination, 1080),
-	Authority = [Host, $:, integer_to_binary(Port)],
+	Authority = gun:connect_authority(Destination),
 	Headers1 = lists:keydelete(<<"content-length">>, 1,
 		lists:keydelete(<<"transfer-encoding">>, 1, Headers0)),
 	Headers2 = case lists:keymember(<<"host">>, 1, Headers1) of

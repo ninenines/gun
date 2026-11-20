@@ -15,6 +15,8 @@
 -module(gun).
 -behavior(gen_statem).
 
+-include_lib("cowlib/include/cow_parse.hrl").
+
 %% Connection.
 -export([open/2]).
 -export([open/3]).
@@ -95,6 +97,7 @@
 -export([ws_send/3]).
 
 %% Internals.
+-export([connect_authority/1]).
 -export([start_link/4]).
 -export([callback_mode/0]).
 -export([init/1]).
@@ -740,16 +743,31 @@ normalize_headers(Headers) when is_map(Headers) ->
 maybe_invalid_request_line(Method, Path, ReqOpts) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of
 		raise ->
-			validate_request_line(method, Method),
-			validate_request_line(path, Path);
+			validate_request_line(Method),
+			validate_request_path(Method, Path);
 		ignore ->
 			ok
 	end.
 
-validate_request_line(Type, Value) ->
+validate_request_line(Value) ->
 	case is_valid_request(Value) of
 		true -> ok;
-		false -> error({invalid_request_line, Type,
+		false -> error({invalid_request_line, method,
+			"An invalid request line was detected."})
+	end.
+
+validate_request_path(Method, Path) ->
+	try
+		Bin = iolist_to_binary(Path),
+		case {iolist_to_binary(Method), Bin} of
+			{<<"OPTIONS">>, <<"*">>} ->
+				ok;
+			_ ->
+				_ = cow_http:ensure_absolute_path(Bin),
+				ok
+		end
+	catch _:_ ->
+		error({invalid_request_line, path,
 			"An invalid request line was detected."})
 	end.
 
@@ -814,15 +832,100 @@ validate_content_length(Headers) ->
 			end
 	end.
 
-maybe_invalid_connect_destination(#{host := Host}, ReqOpts) when not is_tuple(Host) ->
+maybe_invalid_connect_destination(Destination=#{host := _}, ReqOpts) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of
 		raise ->
-			validate_request_line(host, Host);
+			validate_connect_destination(Destination);
 		ignore ->
 			ok
 	end;
 maybe_invalid_connect_destination(_, _) ->
 	ok.
+
+validate_connect_destination(Destination=#{host := Host}) ->
+	try
+		Port = maps:get(port, Destination, 1080),
+		true = is_integer(Port) andalso Port > 0 andalso Port =< 65535,
+		ok = validate_connect_host(Host)
+	catch _:_ ->
+		error({invalid_request_line, host,
+			"An invalid request line was detected."})
+	end.
+
+%% A tuple is an address. Brackets are an IP-literal.
+%% Anything else is a reg-name.
+validate_connect_host(Host) when tuple_size(Host) =:= 4 ->
+	validate_ipv4(Host);
+validate_connect_host(Host) when tuple_size(Host) =:= 8 ->
+	validate_ipv6(Host);
+validate_connect_host(Host) ->
+	validate_host_name(iolist_to_binary(Host)).
+
+validate_host_name(<<$[, Rest/bits>>) ->
+	validate_ip_literal(Rest);
+validate_host_name(Name) ->
+	validate_reg_name(Name).
+
+%% "[" (hex / ":" / ".")* "]". No zone id. Empty brackets stay.
+%% This is not an IPv6 grammar. (RFC3986 3.2.2)
+validate_ip_literal(<<$]>>) ->
+	ok;
+validate_ip_literal(<<C, Rest/bits>>)
+		when ?IS_HEX(C) or (C =:= $:) or (C =:= $.) ->
+	validate_ip_literal(Rest).
+
+validate_ipv4({A, B, C, D})
+		when is_integer(A), A >= 0, A =< 255,
+			is_integer(B), B >= 0, B =< 255,
+			is_integer(C), C >= 0, C =< 255,
+			is_integer(D), D >= 0, D =< 255 ->
+	ok.
+
+validate_ipv6({A, B, C, D, E, F, G, H})
+		when is_integer(A), A >= 0, A =< 65535,
+			is_integer(B), B >= 0, B =< 65535,
+			is_integer(C), C >= 0, C =< 65535,
+			is_integer(D), D >= 0, D =< 65535,
+			is_integer(E), E >= 0, E =< 65535,
+			is_integer(F), F >= 0, F =< 65535,
+			is_integer(G), G >= 0, G =< 65535,
+			is_integer(H), H >= 0, H =< 65535 ->
+	validate_ipv6_no_zone(A, B).
+
+%% inet:ntoa emits a zone id when the first word is 16#fe80 or 16#ff02
+%% and the second word is not 0. A zone id is not a uri-host. (RFC3986 3.2.2)
+validate_ipv6_no_zone(A, B)
+		when A =:= 16#fe80, B =:= 0;
+			A =:= 16#ff02, B =:= 0;
+			A =/= 16#fe80, A =/= 16#ff02 ->
+	ok.
+
+validate_reg_name(<<>>) ->
+	error(empty);
+validate_reg_name(Name) ->
+	validate_reg_name_chars(Name).
+
+validate_reg_name_chars(<<>>) ->
+	ok;
+%% Percent-encoded octets are allowed in reg-name. (RFC3986 3.2.2)
+validate_reg_name_chars(<<$%, H, L, Rest/bits>>)
+		when ?IS_HEX(H), ?IS_HEX(L) ->
+	validate_reg_name_chars(Rest);
+validate_reg_name_chars(<<C, Rest/bits>>)
+		when ?IS_URI_UNRESERVED(C) or ?IS_URI_SUB_DELIMS(C) ->
+	validate_reg_name_chars(Rest).
+
+-spec connect_authority(connect_destination()) -> binary().
+connect_authority(Destination=#{host := Host0}) ->
+	Port = maps:get(port, Destination, 1080),
+	iolist_to_binary([connect_host(Host0), $:, integer_to_binary(Port)]).
+
+connect_host(Tuple) when tuple_size(Tuple) =:= 8 ->
+	[$[, inet:ntoa(Tuple), $]];
+connect_host(Tuple) when tuple_size(Tuple) =:= 4 ->
+	inet:ntoa(Tuple);
+connect_host(Host) ->
+	Host.
 
 %% Streaming data.
 
