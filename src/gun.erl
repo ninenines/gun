@@ -761,7 +761,7 @@ validate_request_path(Method, Path) ->
 			{<<"OPTIONS">>, <<"*">>} ->
 				ok;
 			_ ->
-				_ = cow_http:ensure_path(Bin),
+				_ = cow_http:ensure_absolute_path(Bin),
 				ok
 		end
 	catch _:_ ->
