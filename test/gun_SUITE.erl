@@ -511,6 +511,80 @@ invalid_request_line_raise_connect_empty_host(_) ->
 	end,
 	gun:close(Pid).
 
+invalid_request_line_raise_connect_port(_) ->
+	doc("A CONNECT port must be an integer in 1..65535."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	_ = gun:connect(Pid, #{host => <<"example.com">>, port => 1}, []),
+	_ = gun:connect(Pid, #{host => <<"example.com">>, port => 65535}, []),
+	Bads = [0, 65536, -1],
+	_ = [begin
+		try
+			gun:connect(Pid, #{host => <<"example.com">>, port => Port}, []),
+			ct:fail({expected_exception, Port})
+		catch
+			error:{invalid_request_line, host, _} -> ok
+		end
+	end || Port <- Bads],
+	gun:close(Pid).
+
+invalid_request_line_raise_connect_pct(_) ->
+	doc("A percent in a CONNECT reg-name must be a percent-encoded octet."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	_ = gun:connect(Pid, #{host => <<"ex%2Eample.com">>, port => 80}, []),
+	_ = gun:connect(Pid, #{host => <<"%2Ftmp">>, port => 80}, []),
+	Bads = [<<"%">>, <<"%2">>, <<"%ZZ">>, <<"100%">>],
+	_ = [begin
+		try
+			gun:connect(Pid, #{host => Host, port => 80}, []),
+			ct:fail({expected_exception, Host})
+		catch
+			error:{invalid_request_line, host, _} -> ok
+		end
+	end || Host <- Bads],
+	gun:close(Pid).
+
+invalid_request_line_raise_connect_zone(_) ->
+	doc("A CONNECT IPv6 zone id is not a uri-host."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	_ = gun:connect(Pid, #{host => {16#fe80, 0, 0, 0, 0, 0, 0, 1}, port => 443}, []),
+	_ = gun:connect(Pid, #{host => {16#ff02, 0, 0, 0, 0, 0, 0, 1}, port => 443}, []),
+	_ = gun:connect(Pid, #{host => {16#fe81, 1, 0, 0, 0, 0, 0, 1}, port => 443}, []),
+	Bads = [
+		{16#fe80, 1, 0, 0, 0, 0, 0, 1},
+		{16#ff02, 1, 0, 0, 0, 0, 0, 1}
+	],
+	_ = [begin
+		try
+			gun:connect(Pid, #{host => Host, port => 443}, []),
+			ct:fail({expected_exception, Host})
+		catch
+			error:{invalid_request_line, host, _} -> ok
+		end
+	end || Host <- Bads],
+	gun:close(Pid).
+
+invalid_request_line_raise_connect_ip_literal(_) ->
+	doc("A bracketed CONNECT host is an IP-literal, not a reg-name."),
+	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
+	Goods = [
+		"[::1]",
+		<<"[::1]">>,
+		"[fe80:1::1]",
+		"[::ffff:192.0.2.1]",
+		"[]"
+	],
+	_ = [gun:connect(Pid, #{host => Host, port => 443}, []) || Host <- Goods],
+	Bads = ["[fe80::1%1]", <<"[::1">>, "[hello]"],
+	_ = [begin
+		try
+			gun:connect(Pid, #{host => Host, port => 443}, []),
+			ct:fail({expected_exception, Host})
+		catch
+			error:{invalid_request_line, host, _} -> ok
+		end
+	end || Host <- Bads],
+	gun:close(Pid).
+
 connect_ipv6_authority(_) ->
 	doc("An IPv6 CONNECT destination is sent in brackets. (RFC3986 3.2.2)"),
 	{ok, ListenSocket} = gen_tcp:listen(0, [binary, {active, false}]),
