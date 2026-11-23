@@ -747,10 +747,11 @@ maybe_invalid_request_line(Method, Path, ReqOpts) ->
 			ok
 	end.
 
-validate_request_line(Value) ->
-	case is_valid_request(Value) of
-		true -> ok;
-		false -> error({invalid_request_line, method,
+validate_request_line(Method) ->
+	try cow_http:ensure_token(iolist_to_binary(Method)) of
+		_ -> ok
+	catch _:_ ->
+		error({invalid_request_line, method,
 			"An invalid request line was detected."})
 	end.
 
@@ -768,9 +769,6 @@ validate_request_path(Method, Path) ->
 		error({invalid_request_line, path,
 			"An invalid request line was detected."})
 	end.
-
-is_valid_request(Value) ->
-	nomatch =:= binary:match(iolist_to_binary(Value), [<<$\r>>, <<$\n>>, <<0>>]).
 
 maybe_invalid_request_headers(Headers, ReqOpts) ->
 	case maps:get(invalid_request_headers, ReqOpts, raise) of

@@ -346,12 +346,21 @@ invalid_request_line_raise_path(_) ->
 invalid_request_line_raise_method(_) ->
 	doc("Ensure an invalid request method raises an exception."),
 	{ok, Pid} = gun:open("localhost", 12345, #{protocols => [http]}),
-	try
-		gun:request(Pid, <<"GET\r\nX-Injected: 1">>, "/", [], <<>>),
-		ct:fail("expected exception")
-	catch
-		error:{invalid_request_line, method, _} -> ok
-	end,
+	Bads = [
+		<<>>,
+		<<" ">>,
+		<<"GET/">>,
+		<<"G(ET">>,
+		<<"GET\r\nX-Injected: 1">>
+	],
+	_ = [begin
+		try
+			gun:request(Pid, Bad, "/", [], <<>>),
+			ct:fail({expected_exception, Bad})
+		catch
+			error:{invalid_request_line, method, _} -> ok
+		end
+	end || Bad <- Bads],
 	gun:close(Pid).
 
 invalid_request_line_raise_ws_upgrade(_) ->
