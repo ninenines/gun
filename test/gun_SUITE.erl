@@ -1205,7 +1205,7 @@ do_shutdown_reason() ->
 stream_info_http(_) ->
 	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/1.1."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http,
-		fun(_, _, ClientSocket, ClientTransport) ->
+		fun(_, ListenSocket, ClientSocket, ClientTransport) ->
 			%% Wait for the cancel signal.
 			receive cancel -> ok end,
 			%% Then terminate the stream.
@@ -1214,7 +1214,9 @@ stream_info_http(_) ->
 				"content-length: 0\r\n"
 				"\r\n"
 			),
-			receive disconnect -> ok end
+			receive disconnect -> ok end,
+			%% Close the listen socket first so that Gun cannot reconnect.
+			gen_tcp:close(ListenSocket)
 		end),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{
 		event_handler => {gun_test_event_h, self()}
@@ -1252,7 +1254,11 @@ stream_info_http(_) ->
 stream_info_http2(_) ->
 	doc("Ensure the function gun:stream_info/2 works as expected for HTTP/2."),
 	{ok, OriginPid, OriginPort} = init_origin(tcp, http2,
-		fun(_, _, _, _) -> receive disconnect -> ok end end),
+		fun(_, ListenSocket, _, _) ->
+			receive disconnect -> ok end,
+			%% Close the listen socket first so that Gun cannot reconnect.
+			gen_tcp:close(ListenSocket)
+		end),
 	{ok, Pid} = gun:open("localhost", OriginPort, #{
 		event_handler => {gun_test_event_h, self()},
 		protocols => [http2]
