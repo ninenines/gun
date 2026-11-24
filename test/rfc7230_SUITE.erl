@@ -218,6 +218,42 @@ malformed_status_line_no_crash(_) ->
 		gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+status_line_reason_phrase(_) ->
+	doc("A reason-phrase of HTAB, SP, VCHAR, or obs-text is accepted. (RFC9112 4)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				<<"HTTP/1.1 200 \tA ", 128, "\r\n"
+				"content-length: 0\r\n"
+				"\r\n">>
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+status_line_reject_reason_phrase(_) ->
+	doc("A reason-phrase octet other than HTAB, SP, VCHAR, or obs-text "
+		"is a protocol error. (RFC9112 4)"),
+	{ok, _, OriginPort} = init_origin(tcp, http,
+		fun(_, _, ClientSocket, ClientTransport) ->
+			{ok, _} = ClientTransport:recv(ClientSocket, 0, 1000),
+			ClientTransport:send(ClientSocket,
+				"HTTP/1.1 200 OK\nX\r\n"
+				"content-length: 0\r\n"
+				"\r\n"
+			)
+		end),
+	{ok, ConnPid} = gun:open("localhost", OriginPort),
+	{ok, http} = gun:await_up(ConnPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, protocol_error, _}}} =
+		gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
 malformed_response_headers_no_crash(_) ->
 	doc("A header line with no colon must not crash the connection. (RFC9112 5)"),
 	{ok, _, OriginPort} = init_origin(tcp, http,
