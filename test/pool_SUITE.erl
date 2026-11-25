@@ -403,9 +403,13 @@ reconnect_h1(_) ->
 		{response, nofin, 200, _} = gun_pool:await(StreamRef),
 		{ok, <<"Hello world!">>} = gun_pool:await_body(StreamRef)
 	end || {async, StreamRef} <- Streams1],
-	%% Wait for the idle timeout to trigger.
-	timer:sleep(600),
-%		{degraded, _} = gun_pool:info(ManagerPid),
+	%% Wait for the idle timeout to close all connections and for the
+	%% pool to reconnect them. A fixed sleep is not enough: when a
+	%% connection is still up at the time we call await_up and only
+	%% gets closed afterwards, there are fewer than 8 HTTP/1.1
+	%% connections available for the 8 requests below.
+	OldConns = ranch:procs(?FUNCTION_NAME, connections),
+	do_await_new_conns(?FUNCTION_NAME, OldConns, length(OldConns)),
 	gun_pool:await_up(ManagerPid),
 	Streams2 = [{async, _} = gun_pool:get("/", #{<<"host">> => Authority}) || _ <- lists:seq(1, 8)],
 	_ = [begin
@@ -473,6 +477,19 @@ push_promise_no_crash(Config) ->
 		#{scope => ?FUNCTION_NAME}),
 	{response, nofin, 200, _} = gun_pool:await(NextRef),
 	{ok, <<"Hello world!">>} = gun_pool:await_body(NextRef).
+
+%% Gun sends gun_down to the pool before reconnecting, so once
+%% the server sees the new connections the pool has been told
+%% about the old ones going down.
+do_await_new_conns(Ref, OldConns, Num) ->
+	NewConns = ranch:procs(Ref, connections) -- OldConns,
+	case length(NewConns) >= Num of
+		true ->
+			ok;
+		false ->
+			timer:sleep(10),
+			do_await_new_conns(Ref, OldConns, Num)
+	end.
 
 do_await_pushed(PoolRef) ->
 	case gun_pool:await(PoolRef) of
