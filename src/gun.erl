@@ -1406,13 +1406,17 @@ ensure_tls_opts(Protocols0, TransOpts0, OriginHost) ->
 			[{server_name_indication, OriginHost}|TransOpts];
 		false when is_atom(OriginHost) ->
 			[{server_name_indication, atom_to_list(OriginHost)}|TransOpts];
+		false when is_binary(OriginHost) ->
+			[{server_name_indication, binary_to_list(OriginHost)}|TransOpts];
 		_ ->
 			TransOpts
 	end.
 
-%% Normal TLS handshake.
+%% Cleartext tunnel. A list, atom or binary origin is checked via SNI.
+%% An IP tuple must not use this upgrade: the TCP peer is the proxy.
 tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
-		State0=#state{socket=Socket, transport=gun_tcp}) ->
+		State0=#state{socket=Socket, transport=gun_tcp, origin_host=OriginHost})
+		when is_list(OriginHost); is_atom(OriginHost); is_binary(OriginHost) ->
 	StreamRef = maps:get(stream_ref, HandshakeEvent, undefined),
 	case normal_tls_handshake(Socket, State0, HandshakeEvent, Protocols) of
 		{ok, TLSSocket, NewProtocol0, State} ->
@@ -1430,7 +1434,8 @@ tls_handshake(internal, {tls_handshake, HandshakeEvent, Protocols, ReplyTo},
 		{error, Reason, State} ->
 			commands({error, Reason}, State)
 	end;
-%% TLS over TLS.
+%% TLS over TLS, and a cleartext tunnel whose origin is an IP address.
+%% ssl:connect/4 checks that tuple as {ip, OriginHost}.
 tls_handshake(internal, {tls_handshake,
 		HandshakeEvent0=#{tls_opts := TLSOpts0, timeout := TLSTimeout}, Protocols, ReplyTo},
 		State=#state{socket=Socket, transport=Transport, origin_host=OriginHost, origin_port=OriginPort,

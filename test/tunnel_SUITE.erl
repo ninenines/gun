@@ -20,6 +20,8 @@
 -import(gun_test, [init_origin/3]).
 -import(gun_test, [receive_from/1]).
 
+-include_lib("public_key/include/public_key.hrl").
+
 all() ->
 	ct_helper:all(?MODULE).
 
@@ -1190,3 +1192,193 @@ stream_ref_without_tunnel_option_no_crash(_) ->
 	nomatch = binary:match(Data, <<"/post">>),
 	{_, _} = binary:match(Data, <<"/tunneled">>),
 	gun:close(ConnPid).
+
+%% A cleartext CONNECT tunnel must check the origin, not the proxy.
+%% The proxy always connects to the local TLS listener. The name Gun
+%% checks is the destination host, which is not that listener's address.
+
+http_ip_origin_rejects_proxy_cert(_) ->
+	doc("An origin IP is not accepted when the certificate names the proxy."),
+	%% 93.184.216.34 is not the proxy. The certificate only names 127.0.0.1.
+	{CaCerts, OriginPort} = do_origin_tls({iPAddress, [127, 0, 0, 1]}, <<"MITM">>),
+	ConnPid = do_clear_proxy(OriginPort),
+	Tunnel = gun:connect(ConnPid, #{
+		host => {93, 184, 216, 34},
+		port => OriginPort,
+		transport => tls,
+		protocols => [http],
+		tls_opts => [{verify, verify_peer}, {cacerts, CaCerts}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{error, {stream_error, {closed, {tls_alert, {bad_certificate, _}}}}}
+		= gun:await(ConnPid, Tunnel),
+	gun:close(ConnPid).
+
+http_ip_origin_accepts_ip_cert(_) ->
+	doc("An origin IP is accepted when the certificate names that IP."),
+	%% The proxy is 127.0.0.1. Checking the proxy would reject this certificate.
+	{CaCerts, OriginPort} = do_origin_tls({iPAddress, [10, 1, 2, 3]}, <<"ok">>),
+	ConnPid = do_clear_proxy(OriginPort),
+	Tunnel = gun:connect(ConnPid, #{
+		host => {10, 1, 2, 3},
+		port => OriginPort,
+		transport => tls,
+		protocols => [http],
+		tls_opts => [{verify, verify_peer}, {cacerts, CaCerts}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{up, http} = gun:await(ConnPid, Tunnel),
+	StreamRef = gun:get(ConnPid, "/", [], #{tunnel => Tunnel}),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"ok">>} = gun:await_body(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+http_binary_origin_accepts_dns_cert(_) ->
+	doc("A binary origin is accepted when the certificate names that host."),
+	{CaCerts, OriginPort} = do_origin_tls({dNSName, "origin.example"}, <<"ok">>),
+	ConnPid = do_clear_proxy(OriginPort),
+	Tunnel = gun:connect(ConnPid, #{
+		host => <<"origin.example">>,
+		port => OriginPort,
+		transport => tls,
+		protocols => [http],
+		tls_opts => [{verify, verify_peer}, {cacerts, CaCerts}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{up, http} = gun:await(ConnPid, Tunnel),
+	StreamRef = gun:get(ConnPid, "/", [], #{tunnel => Tunnel}),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"ok">>} = gun:await_body(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+http_binary_origin_rejects_proxy_cert(_) ->
+	doc("A binary origin is not accepted when the certificate names the proxy."),
+	{CaCerts, OriginPort} = do_origin_tls({iPAddress, [127, 0, 0, 1]}, <<"MITM">>),
+	ConnPid = do_clear_proxy(OriginPort),
+	Tunnel = gun:connect(ConnPid, #{
+		host => <<"origin.example">>,
+		port => OriginPort,
+		transport => tls,
+		protocols => [http],
+		tls_opts => [{verify, verify_peer}, {cacerts, CaCerts}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{error, {stream_error, {closed, {tls_alert, {bad_certificate, _}}}}}
+		= gun:await(ConnPid, Tunnel),
+	gun:close(ConnPid).
+
+http_list_origin_rejects_proxy_cert(_) ->
+	doc("A list origin is not accepted when the certificate names the proxy."),
+	{CaCerts, OriginPort} = do_origin_tls({iPAddress, [127, 0, 0, 1]}, <<"MITM">>),
+	ConnPid = do_clear_proxy(OriginPort),
+	Tunnel = gun:connect(ConnPid, #{
+		host => "origin.example",
+		port => OriginPort,
+		transport => tls,
+		protocols => [http],
+		tls_opts => [{verify, verify_peer}, {cacerts, CaCerts}]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{error, {stream_error, {closed, {tls_alert, {bad_certificate, _}}}}}
+		= gun:await(ConnPid, Tunnel),
+	gun:close(ConnPid).
+
+http_caller_sni_unchanged(_) ->
+	doc("A caller-supplied server name is not replaced with the origin."),
+	%% The certificate names the caller-supplied name, not the origin.
+	{CaCerts, OriginPort} = do_origin_tls({dNSName, "origin.example"}, <<"ok">>),
+	ConnPid = do_clear_proxy(OriginPort),
+	Tunnel = gun:connect(ConnPid, #{
+		host => <<"other.example">>,
+		port => OriginPort,
+		transport => tls,
+		protocols => [http],
+		tls_opts => [
+			{verify, verify_peer},
+			{cacerts, CaCerts},
+			{server_name_indication, "origin.example"}
+		]
+	}),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	{up, http} = gun:await(ConnPid, Tunnel),
+	StreamRef = gun:get(ConnPid, "/", [], #{tunnel => Tunnel}),
+	{response, nofin, 200, _} = gun:await(ConnPid, StreamRef),
+	{ok, <<"ok">>} = gun:await_body(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+%% The origin listens on 127.0.0.1. The proxy accepts CONNECT and
+%% forwards bytes there, ignoring the destination in the request.
+
+do_origin_tls(SAN, Body) ->
+	Opts = public_key:pkix_test_data(#{
+		root => [{digest, sha256}, {key, {rsa, 2048, 17}}],
+		peer => [{digest, sha256}, {key, {rsa, 2048, 17}}, {extensions, [
+			#'Extension'{
+				extnID = ?'id-ce-subjectAltName',
+				extnValue = [SAN],
+				critical = false
+			}
+		]}]
+	}),
+	CaCerts = proplists:get_value(cacerts, Opts),
+	{ok, LSock} = ssl:listen(0, [binary, {active, false}, {ip, {127, 0, 0, 1}},
+		{verify, verify_none}, {fail_if_no_peer_cert, false},
+		{cert, proplists:get_value(cert, Opts)},
+		{key, proplists:get_value(key, Opts)},
+		{cacerts, CaCerts}]),
+	{ok, {_, Port}} = ssl:sockname(LSock),
+	spawn_link(fun() ->
+		{ok, Sock0} = ssl:transport_accept(LSock, 5000),
+		case ssl:handshake(Sock0, 5000) of
+			{ok, Sock} ->
+				{ok, _} = ssl:recv(Sock, 0, 5000),
+				ok = ssl:send(Sock, [
+					"HTTP/1.1 200 OK\r\n"
+					"content-length: ", integer_to_binary(byte_size(Body)), "\r\n"
+					"\r\n",
+					Body
+				]),
+				receive after infinity -> ok end;
+			{error, _} ->
+				ok
+		end
+	end),
+	{CaCerts, Port}.
+
+do_clear_proxy(OriginPort) ->
+	{ok, LSock} = gen_tcp:listen(0, [binary, {active, false}, {ip, {127, 0, 0, 1}}]),
+	{ok, {_, ProxyPort}} = inet:sockname(LSock),
+	spawn_link(fun() ->
+		{ok, Client} = gen_tcp:accept(LSock, 5000),
+		{ok, _} = gen_tcp:recv(Client, 0, 5000),
+		ok = gen_tcp:send(Client, <<"HTTP/1.1 200 Connection Established\r\n\r\n">>),
+		{ok, Origin} = gen_tcp:connect({127, 0, 0, 1}, OriginPort,
+			[binary, {active, false}]),
+		ok = inet:setopts(Client, [{active, true}]),
+		ok = inet:setopts(Origin, [{active, true}]),
+		do_relay(Client, Origin)
+	end),
+	{ok, ConnPid} = gun:open({127, 0, 0, 1}, ProxyPort, #{
+		protocols => [http],
+		retry => 0
+	}),
+	{ok, http} = gun:await_up(ConnPid),
+	ConnPid.
+
+do_relay(Client, Origin) ->
+	receive
+		{tcp, Client, Data} ->
+			case gen_tcp:send(Origin, Data) of
+				ok -> do_relay(Client, Origin);
+				{error, _} -> ok
+			end;
+		{tcp, Origin, Data} ->
+			case gen_tcp:send(Client, Data) of
+				ok -> do_relay(Client, Origin);
+				{error, _} -> ok
+			end;
+		{tcp_closed, _} ->
+			ok;
+		{tcp_error, _, _} ->
+			ok
+	end.
