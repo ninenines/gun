@@ -19,6 +19,10 @@
 -import(ct_helper, [config/2]).
 -import(ct_helper, [doc/1]).
 
+%% Use port outside Linux's ephemeral port range 32768-60999
+%% Test cases use ports 30000 and higher
+-define(REPORT_PORT, 29999).
+
 %% ct.
 
 all() ->
@@ -63,7 +67,7 @@ h2specd(Config) ->
 start_port(Config, Pid) ->
 	H2specd = os:getenv("H2SPECD"),
 	Port = open_port(
-		{spawn, H2specd ++ " -S -p 45678"},
+		{spawn, H2specd ++ " -S -p " ++ integer_to_list(?REPORT_PORT)},
 		[{line, 10000}, {cd, config(priv_dir, Config)}, binary, exit_status]),
 	Pid ! ready,
 	receive_infinity(Port, []).
@@ -116,7 +120,7 @@ run_tests([Port|Tail]) ->
 	end.
 
 scrape_tests() ->
-	{ok, Conn} = gun:open("127.0.0.1", 45678),
+	{ok, Conn} = gun:open("127.0.0.1", ?REPORT_PORT),
 	{ok, http} = gun:await_up(Conn),
 	StreamRef = gun:get(Conn, "/"),
 	{response, nofin, 200, _} = gun:await(Conn, StreamRef),
@@ -127,7 +131,7 @@ scrape_tests() ->
 		|| [_, <<"http://127.0.0.1:", Port:5/binary, "/">>] <- Matches].
 
 maybe_fail() ->
-	{ok, Conn} = gun:open("127.0.0.1", 45678),
+	{ok, Conn} = gun:open("127.0.0.1", ?REPORT_PORT),
 	{ok, http} = gun:await_up(Conn),
 	StreamRef = gun:get(Conn, "/report", [{<<"accept">>, "text/plain"}]),
 	{response, nofin, 200, _} = gun:await(Conn, StreamRef),
