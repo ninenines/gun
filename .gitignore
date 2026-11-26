@@ -7,5 +7,6 @@ doc/html
 doc/man*
 ebin/test
 ebin/*.beam
+lock.mk
 logs
 test/*.beam
