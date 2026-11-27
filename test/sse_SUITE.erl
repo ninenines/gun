@@ -20,7 +20,9 @@
 
 all() ->
 	[http_clock, http2_clock, lone_id, malformed_content_type_no_crash,
-		with_mime_param, http_clock_close].
+		max_event_size_http, max_event_size_http2,
+		max_event_size_option, with_mime_param,
+		http_clock_close].
 
 init_per_suite(Config) ->
 	gun_test:init_cowboy_tls(?MODULE, #{
@@ -39,6 +41,7 @@ malformed_content_type_no_crash(_) ->
 init_routes() -> [
 	{"localhost", [
 		{"/clock", sse_clock_h, date},
+		{"/large", sse_large_h, []},
 		{"/lone_id", sse_lone_id_h, []},
 		{"/with_mime_param", sse_mime_param_h, []},
 		{"/connection_close", sse_clock_close_h, []}
@@ -138,6 +141,74 @@ lone_id(Config) ->
 	after 5000 ->
 		error(timeout)
 	end.
+
+max_event_size_http(Config) ->
+	{ok, Pid} = gun:open("localhost", config(port, Config), #{
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
+		protocols => [http],
+		http_opts => #{content_handlers => [gun_sse_h, gun_data_h]},
+		event_handler => {gun_test_event_h, self()}
+	}),
+	{ok, http} = gun:await_up(Pid),
+	Ref = gun:get(Pid, "/large", [
+		{<<"host">>, <<"localhost">>},
+		{<<"accept">>, <<"text/event-stream">>}
+	]),
+	{response, nofin, 200, _} = gun:await(Pid, Ref),
+	{error, {connection_error, {connection_error, limit_reached, _}}}
+		= gun:await(Pid, Ref),
+	ok = await_response_end(Pid, Ref),
+	receive
+		{gun_sse, Pid, Ref, _} ->
+			error(sse)
+	after 200 ->
+		gun:close(Pid)
+	end.
+
+max_event_size_http2(Config) ->
+	{ok, Pid} = gun:open("localhost", config(port, Config), #{
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
+		protocols => [http2],
+		http2_opts => #{content_handlers => [gun_sse_h, gun_data_h]},
+		event_handler => {gun_test_event_h, self()}
+	}),
+	{ok, http2} = gun:await_up(Pid),
+	Ref = gun:get(Pid, "/large", [
+		{<<"host">>, <<"localhost">>},
+		{<<"accept">>, <<"text/event-stream">>}
+	]),
+	{response, nofin, 200, _} = gun:await(Pid, Ref),
+	{error, {stream_error, {stream_error, internal_error, _}}}
+		= gun:await(Pid, Ref),
+	ok = await_response_end(Pid, Ref),
+	receive
+		{gun_down, Pid, _, _, _} ->
+			error(gun_down)
+	after 500 ->
+		gun:close(Pid)
+	end.
+
+await_response_end(Pid, Ref) ->
+	receive
+		{Pid, response_end, #{stream_ref := Ref}} ->
+			ok
+	after 1000 ->
+		error(timeout)
+	end.
+
+max_event_size_option(_) ->
+	{error, {options, {http, {content_handlers, _}}}} = gun:open("localhost", 1, #{
+		http_opts => #{content_handlers =>
+			[{gun_sse_h, #{max_event_size => 0}}]}
+	}),
+	{error, {options, {http2, {content_handlers, _}}}} = gun:open("localhost", 1, #{
+		http2_opts => #{content_handlers =>
+			[{gun_sse_h, #{max_event_size => false}}]}
+	}),
+	ok = gun_sse_h:check_options(#{max_event_size => infinity}),
+	ok = gun_sse_h:check_options(#{}).
 
 with_mime_param(Config) ->
 	{ok, Pid} = gun:open("localhost", config(port, Config), #{
