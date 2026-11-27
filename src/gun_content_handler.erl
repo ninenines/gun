@@ -30,6 +30,7 @@
 -callback handle(fin | nofin, any(), State)
 	-> {ok, any(), non_neg_integer(), State}
 	| {done, non_neg_integer(), State}
+	| {error, any()}
 	when State::any().
 
 -spec init(pid(), any(), cow_http:status(),
@@ -46,7 +47,9 @@ init(ReplyTo, StreamRef, Status, Headers, [Handler|Tail]) ->
 		disable -> init(ReplyTo, StreamRef, Status, Headers, Tail)
 	end.
 
--spec handle(fin | nofin, any(), State) -> {ok, non_neg_integer(), State} when State::state().
+-spec handle(fin | nofin, any(), State)
+	-> {ok, non_neg_integer(), State} | {error, any()}
+	when State::state().
 handle(IsFin, Data, State) ->
 	handle(IsFin, Data, State, 0, []).
 
@@ -57,7 +60,9 @@ handle(IsFin, Data0, [{Mod, State0}|Tail], Flow, Acc) ->
 		{ok, Data, Inc, State} ->
 			handle(IsFin, Data, Tail, Flow + Inc, [{Mod, State}|Acc]);
 		{done, Inc, State} ->
-			{ok, Flow + Inc, lists:reverse([{Mod, State}|Acc], Tail)}
+			{ok, Flow + Inc, lists:reverse([{Mod, State}|Acc], Tail)};
+		{error, Reason} ->
+			{error, Reason}
 	end.
 
 -spec check_option(list()) -> ok | error.
@@ -70,6 +75,11 @@ check_option1([]) ->
 	ok;
 check_option1([Atom|Tail]) when is_atom(Atom) ->
 	check_option1(Tail);
+check_option1([{gun_sse_h, Opts}|Tail]) when is_map(Opts) ->
+	case gun_sse_h:check_options(Opts) of
+		ok -> check_option1(Tail);
+		error -> error
+	end;
 check_option1([{Atom, #{}}|Tail]) when is_atom(Atom) ->
 	check_option1(Tail);
 check_option1(_) ->
