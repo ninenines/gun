@@ -871,6 +871,115 @@ max_informational_cookie(_) ->
 			gun:close(ConnPid)
 	end.
 
+max_pushed_streams(_) ->
+	doc("The number of pushed streams is limited so that "
+		"a peer cannot queue an unbounded series of gun_push messages."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, ReqBlock} = Transport:recv(Socket, Len, 1000),
+		{ReqHeaders, _} = cow_hpack:decode(ReqBlock),
+		{_, Scheme} = lists:keyfind(<<":scheme">>, 1, ReqHeaders),
+		{_, Authority} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
+		{Promise, _} = cow_hpack:encode([
+			{<<":method">>, <<"GET">>},
+			{<<":scheme">>, Scheme},
+			{<<":authority">>, Authority},
+			{<<":path">>, <<"/">>}
+		]),
+		ok = Transport:send(Socket, [
+			cow_http2:push_promise(StreamID, PromisedID, Promise)
+		|| PromisedID <- lists:seq(2, 18, 2)])
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	Pushed = [begin
+		{push, Ref, <<"GET">>, _, _} = gun:await(ConnPid, StreamRef),
+		Ref
+	end || _ <- lists:seq(1, 8)],
+	{error, {connection_error, {connection_error, limit_reached, _}}}
+		= gun:await(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http2,
+				{error, {connection_error, limit_reached, _}}, Killed} ->
+			[] = Pushed -- Killed,
+			gun:close(ConnPid)
+	end.
+
+max_pushed_streams_infinity(_) ->
+	doc("The max_pushed_streams option set to infinity disables the limit."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, ReqBlock} = Transport:recv(Socket, Len, 1000),
+		{ReqHeaders, _} = cow_hpack:decode(ReqBlock),
+		{_, Scheme} = lists:keyfind(<<":scheme">>, 1, ReqHeaders),
+		{_, Authority} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
+		{Promise, _} = cow_hpack:encode([
+			{<<":method">>, <<"GET">>},
+			{<<":scheme">>, Scheme},
+			{<<":authority">>, Authority},
+			{<<":path">>, <<"/">>}
+		]),
+		{Status, _} = cow_hpack:encode([{<<":status">>, <<"200">>}]),
+		ok = Transport:send(Socket, [
+			[cow_http2:push_promise(StreamID, PromisedID, Promise)
+				|| PromisedID <- lists:seq(2, 18, 2)],
+			cow_http2:headers(StreamID, fin, Status)
+		])
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2],
+		http2_opts => #{max_pushed_streams => infinity}
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	_ = [begin
+		{push, _, <<"GET">>, _, _} = gun:await(ConnPid, StreamRef)
+	end || _ <- lists:seq(1, 9)],
+	{response, fin, 200, _} = gun:await(ConnPid, StreamRef),
+	gun:close(ConnPid).
+
+max_pushed_streams_zero(_) ->
+	doc("The max_pushed_streams option set to 0 rejects the first pushed stream."),
+	{ok, OriginPid, Port} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, ReqBlock} = Transport:recv(Socket, Len, 1000),
+		{ReqHeaders, _} = cow_hpack:decode(ReqBlock),
+		{_, Scheme} = lists:keyfind(<<":scheme">>, 1, ReqHeaders),
+		{_, Authority} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
+		{Promise, _} = cow_hpack:encode([
+			{<<":method">>, <<"GET">>},
+			{<<":scheme">>, Scheme},
+			{<<":authority">>, Authority},
+			{<<":path">>, <<"/">>}
+		]),
+		ok = Transport:send(Socket, cow_http2:push_promise(StreamID, 2, Promise))
+	end),
+	{ok, ConnPid} = gun:open("localhost", Port, #{
+		transport => tcp,
+		protocols => [http2],
+		http2_opts => #{max_pushed_streams => 0}
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(OriginPid),
+	StreamRef = gun:get(ConnPid, "/"),
+	{error, {connection_error, {connection_error, limit_reached, _}}}
+		= gun:await(ConnPid, StreamRef),
+	receive
+		{gun_down, ConnPid, http2,
+				{error, {connection_error, limit_reached, _}}, _} ->
+			gun:close(ConnPid)
+	end.
+
 max_informational_zero(_) ->
 	doc("The max_informational option set to 0 rejects the first informational response."),
 	{ok, _, OriginPort} = init_origin(tcp, http,

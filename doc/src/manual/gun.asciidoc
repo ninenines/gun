@@ -269,6 +269,7 @@ http2_opts() :: #{
     max_header_list_size           => 0..16#ffffffff | infinity,
     max_headers                    => non_neg_integer(),
     max_informational              => non_neg_integer() | infinity,
+    max_pushed_streams             => non_neg_integer() | infinity,
     max_stream_window_size         => 0..16#7fffffff,
     preface_timeout                => timeout(),
     settings_timeout               => timeout(),
@@ -326,6 +327,14 @@ Maximum number of informational responses allowed for
 a stream before the final response. Informational
 responses use status codes from 100 to 199. When the
 number of informational responses exceeds this limit
+Gun closes the connection with a `limit_reached`
+connection error. The value `infinity` disables the
+limit.
+
+max_pushed_streams (8)::
+
+Maximum number of pushed streams accepted for a request.
+When the number of pushed streams exceeds this limit
 Gun closes the connection with a `limit_reached`
 connection error. The value `infinity` disables the
 limit.
@@ -696,6 +705,7 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.8*: The `max_pushed_streams` HTTP/2 option was added.
 * *2.8*: The `max_informational` option was added.
 * *2.8*: The `max_header_list_size` HTTP/2 option was added.
 * *2.6*: The `max_headers` HTTP/1.1 option was added.

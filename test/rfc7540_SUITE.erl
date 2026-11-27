@@ -870,6 +870,64 @@ connect_handshake_timeout(_) ->
 		= gun:await(ConnPid, StreamRef),
 	gun:close(ConnPid).
 
+max_pushed_streams_tunnel(_) ->
+	doc("A pushed-stream limit inside a tunnel closes that tunnel "
+		"and leaves other requests on the proxy connection usable."),
+	{ok, OriginPid, OriginPort} = init_origin(tcp, http2, fun(_, _, Socket, Transport) ->
+		{ok, <<Len:24, 1:8, _:8, StreamID:32>>}
+			= Transport:recv(Socket, 9, 1000),
+		{ok, ReqBlock} = Transport:recv(Socket, Len, 1000),
+		{ReqHeaders, _} = cow_hpack:decode(ReqBlock),
+		{_, Scheme} = lists:keyfind(<<":scheme">>, 1, ReqHeaders),
+		{_, Authority} = lists:keyfind(<<":authority">>, 1, ReqHeaders),
+		{Promise, _} = cow_hpack:encode([
+			{<<":method">>, <<"GET">>},
+			{<<":scheme">>, Scheme},
+			{<<":authority">>, Authority},
+			{<<":path">>, <<"/">>}
+		]),
+		ok = Transport:send(Socket, cow_http2:push_promise(StreamID, 2, Promise))
+	end),
+	{ok, ProxyPid, ProxyPort} = do_proxy_start(tcp, [
+		#proxy_stream{id=1, status=200},
+		#proxy_stream{id=3, status=299}
+	]),
+	{ok, ConnPid} = gun:open("localhost", ProxyPort, #{
+		protocols => [http2]
+	}),
+	{ok, http2} = gun:await_up(ConnPid),
+	handshake_completed = receive_from(ProxyPid),
+	Tunnel = gun:connect(ConnPid, #{
+		host => "localhost",
+		port => OriginPort,
+		protocols => [{http2, #{max_pushed_streams => 0}}]
+	}),
+	{request, #{
+		<<":method">> := <<"CONNECT">>
+	}} = receive_from(ProxyPid),
+	{response, fin, 200, _} = gun:await(ConnPid, Tunnel),
+	handshake_completed = receive_from(OriginPid),
+	{up, http2} = gun:await(ConnPid, Tunnel),
+	%% The proxy response stays in the mailbox until the tunnel fails.
+	OuterRef = gun:get(ConnPid, "/"),
+	{request, #{<<":method">> := <<"GET">>}} = receive_from(ProxyPid),
+	Proxied = gun:get(ConnPid, "/proxied", [], #{tunnel => Tunnel}),
+	{error, {stream_error, {connection_error, limit_reached, _}}}
+		= gun:await(ConnPid, Proxied),
+	{error, {stream_error, {stream_error,
+			{connection_error, limit_reached, _}, _}}}
+		= gun:await(ConnPid, Tunnel),
+	{response, fin, 299, _} = gun:await(ConnPid, OuterRef),
+	receive
+		{gun_error, ConnPid, {connection_error, limit_reached, _}} ->
+			error(streamless);
+		{gun_down, ConnPid, _, _, _} ->
+			error(down)
+	after 0 ->
+		ok
+	end,
+	gun:close(ConnPid).
+
 connect_http_via_http_via_h2c(_) ->
 	doc("CONNECT can be used to establish a TCP connection "
 		"to an HTTP/1.1 server via a tunnel going through both "

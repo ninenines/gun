@@ -258,6 +258,7 @@
 	max_header_list_size => 0..16#ffffffff | infinity,
 	max_headers => non_neg_integer(),
 	max_informational => non_neg_integer() | infinity,
+	max_pushed_streams => non_neg_integer() | infinity,
 	max_stream_window_size => 0..16#7fffffff,
 	preface_timeout => timeout(),
 	settings_timeout => timeout(),
