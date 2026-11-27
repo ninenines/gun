@@ -156,6 +156,7 @@ http_opts() :: #{
     keepalive                   => timeout(),
     max_headers                 => non_neg_integer(),
     max_header_block_size       => non_neg_integer(),
+    max_informational           => non_neg_integer() | infinity,
     max_trailer_block_size      => non_neg_integer(),
     transform_header_name       => fun((binary()) -> binary()),
     version                     => 'HTTP/1.1' | 'HTTP/1.0'
@@ -200,6 +201,17 @@ this is checked only after the full header block was
 received. When the number of headers exceeds this limit
 Gun closes the connection with a `limit_reached`
 connection error.
+
+max_informational (8)::
+
+Maximum number of informational responses allowed for
+a stream before the final response. Informational
+responses use status codes from 100 to 199, except
+a 101 response that completes an upgrade. When the
+number of informational responses exceeds this limit
+Gun closes the connection with a `limit_reached`
+connection error. The value `infinity` disables the
+limit.
 
 max_header_block_size (100000)::
 
@@ -256,6 +268,8 @@ http2_opts() :: #{
     max_frame_size_sent            => 16384..16777215 | infinity,
     max_header_list_size           => 0..16#ffffffff | infinity,
     max_headers                    => non_neg_integer(),
+    max_informational              => non_neg_integer() | infinity,
+    max_pushed_streams             => non_neg_integer() | infinity,
     max_stream_window_size         => 0..16#7fffffff,
     preface_timeout                => timeout(),
     settings_timeout               => timeout(),
@@ -306,6 +320,24 @@ to the user when settings are changed by the server.
 max_header_list_size (32768)::
 
 Maximum size of the header fields block.
+
+max_informational (8)::
+
+Maximum number of informational responses allowed for
+a stream before the final response. Informational
+responses use status codes from 100 to 199. When the
+number of informational responses exceeds this limit
+Gun closes the connection with a `limit_reached`
+connection error. The value `infinity` disables the
+limit.
+
+max_pushed_streams (8)::
+
+Maximum number of pushed streams accepted for a request.
+When the number of pushed streams exceeds this limit
+Gun closes the connection with a `limit_reached`
+connection error. The value `infinity` disables the
+limit.
 
 === opts()
 
@@ -673,6 +705,8 @@ By default no user option is defined.
 
 == Changelog
 
+* *2.8*: The `max_pushed_streams` HTTP/2 option was added.
+* *2.8*: The `max_informational` option was added.
 * *2.8*: The `max_header_list_size` HTTP/2 option was added.
 * *2.6*: The `max_headers` HTTP/1.1 option was added.
 * *2.5*: The `max_headers` HTTP/2 option was added.

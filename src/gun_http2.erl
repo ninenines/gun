@@ -79,6 +79,12 @@
 	%% Content handlers state.
 	handler_state :: undefined | gun_content_handler:state(),
 
+	%% Informational responses received for this stream.
+	inform_count = 0 :: non_neg_integer(),
+
+	%% Pushed streams accepted for this request.
+	pushed_count = 0 :: non_neg_integer(),
+
 	%% CONNECT tunnel.
 	tunnel :: undefined | #tunnel{}
 }).
@@ -157,6 +163,14 @@ do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 do_check_options([{keepalive_tolerance, K}|Opts]) when is_integer(K), K >= 0 ->
 	do_check_options(Opts);
 do_check_options([{notify_settings_changed, B}|Opts]) when is_boolean(B) ->
+	do_check_options(Opts);
+do_check_options([{max_informational, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{max_informational, M}|Opts]) when is_integer(M), M >= 0 ->
+	do_check_options(Opts);
+do_check_options([{max_pushed_streams, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{max_pushed_streams, M}|Opts]) when is_integer(M), M >= 0 ->
 	do_check_options(Opts);
 do_check_options([Opt={Name, _}|Opts]) ->
 	%% We blindly accept all cow_http2_machine options.
@@ -262,6 +276,10 @@ parse(Data, State0=#http2_state{status=Status, http2_machine=HTTP2Machine, strea
 			case frame(State0, Frame, CookieStore0, EvHandler, EvHandlerState0) of
 				{Error={error, _}, CookieStore, EvHandlerState} ->
 					{Error, CookieStore, EvHandlerState};
+				%% Keep streams accepted earlier in this read. commands/2
+				%% applies the state before disconnect, so gun_down lists them.
+				{[{state, State}, Error={error, _}], CookieStore, EvHandlerState} ->
+					{[{state, State}, Error], CookieStore, EvHandlerState};
 				{[{state, State}, close], CookieStore, EvHandlerState} ->
 					{[{state, State}, close], CookieStore, EvHandlerState};
 				{{state, State}, CookieStore, EvHandlerState} ->
@@ -561,29 +579,46 @@ headers_frame(State0=#http2_state{opts=Opts},
 		path=Path,
 		tunnel=Tunnel
 	} = Stream,
-	CookieStore = gun_cookies:set_cookie_header(scheme(State0),
-		Authority, Path, Status, Headers, CookieStore0, Opts),
-	{StateOrError, EvHandlerState} = if
+	if
 		Status >= 100, Status =< 199 ->
-			headers_frame_inform(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
-		Status >= 200, Status =< 299, element(#tunnel.state, Tunnel) =:= requested, IsFin =:= nofin ->
-			headers_frame_connect(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
+			headers_frame_inform(State0, Stream, Status, Headers,
+				CookieStore0, EvHandler, EvHandlerState0);
 		true ->
-			headers_frame_response(State0, Stream, IsFin, Status, Headers, EvHandler, EvHandlerState0)
-	end,
-	{StateOrError, CookieStore, EvHandlerState}.
+			CookieStore = gun_cookies:set_cookie_header(scheme(State0),
+				Authority, Path, Status, Headers, CookieStore0, Opts),
+			{StateOrError, EvHandlerState} = if
+				Status >= 200, Status =< 299, element(#tunnel.state, Tunnel) =:= requested, IsFin =:= nofin ->
+					headers_frame_connect(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
+				true ->
+					headers_frame_response(State0, Stream, IsFin, Status, Headers, EvHandler, EvHandlerState0)
+			end,
+			{StateOrError, CookieStore, EvHandlerState}
+	end.
 
-headers_frame_inform(State, #stream{ref=StreamRef, reply_to=ReplyTo},
-		Status, Headers, EvHandler, EvHandlerState0) ->
-	RealStreamRef = stream_ref(State, StreamRef),
-	gun:reply(ReplyTo, {gun_inform, self(), RealStreamRef, Status, Headers}),
-	EvHandlerState = EvHandler:response_inform(#{
-		stream_ref => RealStreamRef,
-		reply_to => ReplyTo,
-		status => Status,
-		headers => Headers
-	}, EvHandlerState0),
-	{{state, State}, EvHandlerState}.
+headers_frame_inform(State0=#http2_state{opts=Opts},
+		Stream0=#stream{ref=StreamRef, reply_to=ReplyTo,
+			inform_count=Count0, authority=Authority, path=Path},
+		Status, Headers, CookieStore0, EvHandler, EvHandlerState0) ->
+	Count = Count0 + 1,
+	case maps:get(max_informational, Opts, 8) of
+		Max when Max =:= infinity; Count =< Max ->
+			CookieStore = gun_cookies:set_cookie_header(scheme(State0),
+				Authority, Path, Status, Headers, CookieStore0, Opts),
+			RealStreamRef = stream_ref(State0, StreamRef),
+			gun:reply(ReplyTo, {gun_inform, self(), RealStreamRef, Status, Headers}),
+			EvHandlerState = EvHandler:response_inform(#{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo,
+				status => Status,
+				headers => Headers
+			}, EvHandlerState0),
+			State = store_stream(State0, Stream0#stream{inform_count=Count}),
+			{{state, State}, CookieStore, EvHandlerState};
+		_ ->
+			{limit_error(State0,
+				"The number of informational responses exceeds the configured limit."),
+				CookieStore0, EvHandlerState0}
+	end.
 
 headers_frame_connect(State0=#http2_state{http2_machine=HTTP2Machine0},
 		Stream=#stream{id=StreamID, ref=StreamRef, reply_to=ReplyTo, tunnel=#tunnel{
@@ -804,11 +839,12 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 			method := PromisedMethod, scheme := PromisedScheme,
 			authority := PromisedAuthority, path := PromisedPath},
 		EvHandler, EvHandlerState0) ->
-	#stream{
+	Stream0 = #stream{
 		ref=StreamRef,
 		authority=Authority,
 		reply_to=ReplyTo,
-		flow=InitialFlow
+		flow=InitialFlow,
+		pushed_count=Count0
 	} = get_stream_by_id(State, StreamID),
 	Scheme = scheme(State),
 	%% We cancel the push_promise immediately when we are shutting
@@ -824,8 +860,6 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 		_ ->
 			cancel
 	end,
-	PromisedStreamRef = make_ref(),
-	RealPromisedStreamRef = stream_ref(State, PromisedStreamRef),
 	URI = iolist_to_binary([PromisedScheme, <<"://">>, PromisedAuthority, PromisedPath]),
 	PushPromiseEvent0 = #{
 		stream_ref => stream_ref(State, StreamRef),
@@ -834,25 +868,16 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 		uri => URI,
 		headers => Headers
 	},
-	PushPromiseEvent = case OKOrError of
-		ok ->
-			gun:reply(ReplyTo, {gun_push, self(), stream_ref(State, StreamRef),
-				RealPromisedStreamRef, PromisedMethod, URI, Headers}),
-			PushPromiseEvent0#{promised_stream_ref => RealPromisedStreamRef};
-		_ ->
-			PushPromiseEvent0
-	end,
-	EvHandlerState = EvHandler:push_promise_end(PushPromiseEvent, EvHandlerState0),
 	case OKOrError of
 		ok ->
-			NewStream = #stream{
-				id=PromisedStreamID, ref=PromisedStreamRef,
-				reply_to=ReplyTo, flow=InitialFlow,
-				authority=PromisedAuthority, path=PromisedPath
-			},
-			{{state, create_stream(State, NewStream)}, EvHandlerState};
+			accept_push_promise(State, Stream0, Count0, PromisedStreamID,
+				ReplyTo, InitialFlow, PromisedMethod, PromisedAuthority,
+				PromisedPath, URI, Headers, PushPromiseEvent0,
+				EvHandler, EvHandlerState0);
 		%% Invalid push_promise gets canceled immediately.
 		_ ->
+			EvHandlerState = EvHandler:push_promise_end(
+				PushPromiseEvent0, EvHandlerState0),
 			{ok, HTTP2Machine} = cow_http2_machine:reset_stream(PromisedStreamID, HTTP2Machine0),
 			case Transport:send(Socket, cow_http2:rst_stream(PromisedStreamID, OKOrError)) of
 				ok ->
@@ -860,6 +885,36 @@ push_promise_frame(State=#http2_state{socket=Socket, transport=Transport,
 				Error={error, _} ->
 					{Error, EvHandlerState}
 			end
+	end.
+
+accept_push_promise(State=#http2_state{opts=Opts}, Stream0, Count0,
+		PromisedStreamID, ReplyTo, InitialFlow, PromisedMethod,
+		PromisedAuthority, PromisedPath, URI, Headers,
+		PushPromiseEvent0, EvHandler, EvHandlerState0) ->
+	Count = Count0 + 1,
+	case maps:get(max_pushed_streams, Opts, 8) of
+		Max when Max =:= infinity; Count =< Max ->
+			PromisedStreamRef = make_ref(),
+			RealPromisedStreamRef = stream_ref(State, PromisedStreamRef),
+			gun:reply(ReplyTo, {gun_push, self(),
+				maps:get(stream_ref, PushPromiseEvent0),
+				RealPromisedStreamRef, PromisedMethod, URI, Headers}),
+			EvHandlerState = EvHandler:push_promise_end(
+				PushPromiseEvent0#{promised_stream_ref => RealPromisedStreamRef},
+				EvHandlerState0),
+			NewStream = #stream{
+				id=PromisedStreamID, ref=PromisedStreamRef,
+				reply_to=ReplyTo, flow=InitialFlow,
+				authority=PromisedAuthority, path=PromisedPath
+			},
+			State1 = store_stream(State, Stream0#stream{pushed_count=Count}),
+			{{state, create_stream(State1, NewStream)}, EvHandlerState};
+		_ ->
+			EvHandlerState = EvHandler:push_promise_end(
+				PushPromiseEvent0, EvHandlerState0),
+			{limit_error(State,
+				"The number of pushed streams exceeds the configured limit."),
+				EvHandlerState}
 	end.
 
 ignored_frame(State=#http2_state{http2_machine=HTTP2Machine0}) ->
@@ -1667,6 +1722,33 @@ ws_send(Frames, State, RealStreamRef, ReplyTo, EvHandler, EvHandlerState0) ->
 			tunnel_commands(Commands, Stream, State, EvHandler, EvHandlerState1)
 		%% @todo Error conditions?
 	end.
+
+limit_error(State=#http2_state{socket=Socket, transport=Transport,
+		http2_machine=HTTP2Machine, streams=Streams,
+		base_stream_ref=BaseStreamRef}, Human) ->
+	Reason = {connection_error, limit_reached, Human},
+	%% A streamless gun_error matches every await on this process.
+	%% Inside a tunnel the Gun process stays up, so each inner
+	%% stream is told with its own ref. The tunnel reset reports
+	%% the session failure.
+	_ = case BaseStreamRef of
+		undefined ->
+			Pids = lists:usort(maps:fold(
+				fun(_, #stream{reply_to=ReplyTo}, Acc) -> [ReplyTo|Acc] end,
+				[], Streams)),
+			[gun:reply(Pid, {gun_error, self(), Reason}) || Pid <- Pids];
+		_ ->
+			maps:fold(fun(_, Stream, _) ->
+				close_stream(State, Stream, Reason)
+			end, ok, Streams)
+	end,
+	%% limit_reached is not an HTTP/2 error code.
+	%% ENHANCE_YOUR_CALM covers excessive peer traffic.
+	Transport:send(Socket, cow_http2:goaway(
+		cow_http2_machine:get_last_streamid(HTTP2Machine),
+		enhance_your_calm, <<>>)),
+	%% The state includes streams accepted earlier in this read.
+	[{state, State}, {error, Reason}].
 
 connection_error(#http2_state{socket=Socket, transport=Transport,
 		http2_machine=HTTP2Machine, streams=Streams},

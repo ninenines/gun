@@ -30,6 +30,12 @@ to the original request.
 This message will not be sent when using the HTTP/1.1 protocol
 because it lacks the concept of server-initiated push.
 
+Gun accepts a limited number of pushed streams per request.
+The link:man:gun(3)[gun(3)] HTTP/2 option `max_pushed_streams`
+sets that limit. It defaults to 8. The value `infinity`
+disables the limit. A further pushed stream closes the
+connection.
+
 == Elements
 
 ConnPid::
