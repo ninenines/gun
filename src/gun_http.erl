@@ -179,7 +179,14 @@ handle(Data, State=#http_state{opts=Opts, in=head, buffer=Buffer,
 	end;
 %% Everything sent to the socket until it closes is part of the response body.
 handle(Data, State=#http_state{in=body_close}, CookieStore, _, EvHandlerState) ->
-	{send_data(Data, State, nofin), CookieStore, EvHandlerState};
+	case send_data(Data, State, nofin) of
+		%% The headers may be in this same buffer, so the connection state
+		%% is still head. close/4 must see body_close to end the response.
+		Error={error, _} ->
+			{[{state, State}, Error], CookieStore, EvHandlerState};
+		Commands ->
+			{Commands, CookieStore, EvHandlerState}
+	end;
 %% Chunked transfer-encoding may contain both data and trailers.
 handle(Data, State=#http_state{in=body_chunked, in_state=InState, buffer=Buffer,
 		streams=[#stream{ref=StreamRef, reply_to=ReplyTo}|_], connection=Conn},
@@ -333,8 +340,13 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 							{[{state, end_stream(State1)}, close],
 								CookieStore, EvHandlerState}
 					end;
+				%% The content-length body was fully received.
 				Error={error, _} ->
-					{Error, CookieStore, EvHandlerState0}
+					EvHandlerState = EvHandler:response_end(#{
+						stream_ref => stream_ref(State, StreamRef),
+						reply_to => ReplyTo
+					}, EvHandlerState0),
+					{Error, CookieStore, EvHandlerState}
 			end;
 		%% Stream finished, rest.
 		true ->
@@ -354,8 +366,13 @@ handle(Data, State=#http_state{in={body, Length}, connection=Conn,
 							{[{state, end_stream(State1)}, close],
 								CookieStore, EvHandlerState}
 					end;
+				%% The content-length body was fully received.
 				Error={error, _} ->
-					{Error, CookieStore, EvHandlerState0}
+					EvHandlerState = EvHandler:response_end(#{
+						stream_ref => stream_ref(State, StreamRef),
+						reply_to => ReplyTo
+					}, EvHandlerState0),
+					{Error, CookieStore, EvHandlerState}
 			end
 	end.
 
@@ -679,7 +696,13 @@ close(Reason, State=#http_state{in=body_close,
 		EvHandler, EvHandlerState) ->
 	%% We may have more than one stream in case we somehow close abruptly.
 	close_streams(State, Tail, close_reason(Reason)),
-	_ = send_data(<<>>, State, fin),
+	%% A limit error already rejected the event. Do not parse an empty fin.
+	_ = case Reason of
+		{error, {connection_error, limit_reached, _}} ->
+			ok;
+		_ ->
+			send_data(<<>>, State, fin)
+	end,
 	EvHandler:response_end(#{
 		stream_ref => stream_ref(State, StreamRef),
 		reply_to => ReplyTo

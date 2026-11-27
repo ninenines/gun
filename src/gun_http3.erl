@@ -341,7 +341,17 @@ data_frame1(State0, Stream=#stream{ref=StreamRef, reply_to=ReplyTo,
 		{error, {limit_reached, Human}} ->
 			gun:reply(ReplyTo, {gun_error, self(), StreamRef,
 				{connection_error, limit_reached, Human}}),
-			{{error, {connection_error, limit_reached, Human}}, EvHandlerState0};
+			%% The response is complete only when this DATA frame ended it.
+			EvHandlerState = case IsFin of
+				fin ->
+					EvHandler:response_end(#{
+						stream_ref => StreamRef, %% @todo stream_ref(State0, StreamRef),
+						reply_to => ReplyTo
+					}, EvHandlerState0);
+				nofin ->
+					EvHandlerState0
+			end,
+			{{error, {connection_error, limit_reached, Human}}, EvHandlerState};
 		{ok, _Dec, Handlers} ->
 %			Flow = case Flow0 of
 %				infinity -> infinity;

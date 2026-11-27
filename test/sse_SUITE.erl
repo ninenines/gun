@@ -20,7 +20,8 @@
 
 all() ->
 	[http_clock, http2_clock, lone_id, malformed_content_type_no_crash,
-		max_event_size_http, max_event_size_http2,
+		max_event_size_http, max_event_size_http10,
+		max_event_size_http10_one_buffer, max_event_size_http2,
 		max_event_size_option, with_mime_param,
 		http_clock_close].
 
@@ -162,6 +163,76 @@ max_event_size_http(Config) ->
 	receive
 		{gun_sse, Pid, Ref, _} ->
 			error(sse)
+	after 200 ->
+		gun:close(Pid)
+	end.
+
+%% HTTP/1.0 has no chunked body. Closing must not deliver a final event.
+max_event_size_http10(Config) ->
+	{ok, Pid} = gun:open("localhost", config(port, Config), #{
+		transport => tls,
+		tls_opts => [{verify, verify_none}, {versions, ['tlsv1.2']}],
+		protocols => [http],
+		http_opts => #{
+			content_handlers => [gun_sse_h, gun_data_h],
+			version => 'HTTP/1.0'
+		},
+		event_handler => {gun_test_event_h, self()}
+	}),
+	{ok, http} = gun:await_up(Pid),
+	Ref = gun:get(Pid, "/large", [
+		{<<"host">>, <<"localhost">>},
+		{<<"accept">>, <<"text/event-stream">>}
+	]),
+	{response, nofin, 200, _} = gun:await(Pid, Ref),
+	{error, {connection_error, {connection_error, limit_reached, _}}}
+		= gun:await(Pid, Ref),
+	ok = await_response_end(Pid, Ref),
+	receive
+		{gun_sse, Pid, Ref, _} ->
+			error(sse)
+	after 200 ->
+		gun:close(Pid)
+	end.
+
+%% Headers and the whole body in one read. The body_close state is not
+%% stored yet when the event is rejected.
+max_event_size_http10_one_buffer(_) ->
+	Body = <<"data: ", (binary:copy(<<$x>>, 12000))/binary, "\n\n">>,
+	{ok, Origin, Port} = gun_test:init_origin(tcp, http,
+		fun(_, _, Socket, Transport) ->
+			{ok, _} = Transport:recv(Socket, 0, 5000),
+			ok = Transport:send(Socket, [
+				<<"HTTP/1.0 200 OK\r\n">>,
+				<<"content-type: text/event-stream\r\n\r\n">>,
+				Body
+			]),
+			receive after 5000 -> ok end
+		end),
+	{ok, Pid} = gun:open("localhost", Port, #{
+		protocols => [http],
+		tcp_opts => [{buffer, 65536}, {recbuf, 65536}],
+		http_opts => #{
+			content_handlers => [gun_sse_h, gun_data_h],
+			version => 'HTTP/1.0'
+		},
+		event_handler => {gun_test_event_h, self()}
+	}),
+	{ok, http} = gun:await_up(Pid),
+	receive {Origin, handshake_completed} -> ok after 5000 -> error(timeout) end,
+	Ref = gun:get(Pid, "/", [
+		{<<"host">>, <<"localhost">>},
+		{<<"accept">>, <<"text/event-stream">>}
+	]),
+	{response, nofin, 200, _} = gun:await(Pid, Ref),
+	{error, {connection_error, {connection_error, limit_reached, _}}}
+		= gun:await(Pid, Ref),
+	ok = await_response_end(Pid, Ref),
+	receive
+		{gun_sse, Pid, Ref, _} ->
+			error(sse);
+		{gun_error, Pid, Ref, _} ->
+			error(stream_error)
 	after 200 ->
 		gun:close(Pid)
 	end.
