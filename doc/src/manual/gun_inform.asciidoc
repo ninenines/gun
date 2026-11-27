@@ -26,6 +26,13 @@ and provide no guarantees as to what the final response
 will be. An informational response always precedes the
 response to the original request.
 
+Gun accepts a limited number of informational responses
+per stream on HTTP/1.1, HTTP/2 and HTTP/3. The
+link:man:gun(3)[gun(3)] option `max_informational`
+sets that limit. It defaults to 8. The value `infinity`
+disables the limit. A further informational response
+closes the connection.
+
 == Elements
 
 ConnPid::

@@ -222,6 +222,7 @@
 	keepalive => timeout(),
 	max_headers => non_neg_integer(),
 	max_header_block_size => non_neg_integer(),
+	max_informational => non_neg_integer() | infinity,
 	max_trailer_block_size => non_neg_integer(),
 	transform_header_name => fun((binary()) -> binary()),
 	version => 'HTTP/1.1' | 'HTTP/1.0',
@@ -256,6 +257,7 @@
 	max_frame_size_sent => 16384..16777215 | infinity,
 	max_header_list_size => 0..16#ffffffff | infinity,
 	max_headers => non_neg_integer(),
+	max_informational => non_neg_integer() | infinity,
 	max_stream_window_size => 0..16#7fffffff,
 	preface_timeout => timeout(),
 	settings_timeout => timeout(),
@@ -270,6 +272,7 @@
 
 %% @todo
 -type http3_opts() :: #{
+	max_informational => non_neg_integer() | infinity
 }.
 -export_type([http3_opts/0]).
 
@@ -417,7 +420,9 @@ check_options([{http2_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 check_options([{http3_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_http3:check_options(ProtoOpts) of
 		ok ->
-			check_options(Opts)
+			check_options(Opts);
+		Error ->
+			Error
 	end;
 check_options([Opt = {protocols, L}|Opts]) when is_list(L) ->
 	case check_protocols_opt(L) of

@@ -67,7 +67,10 @@
 	upgrade = [] :: [binary()],
 
 	is_alive :: boolean(),
-	handler_state :: undefined | gun_content_handler:state()
+	handler_state :: undefined | gun_content_handler:state(),
+
+	%% Informational responses received for this stream.
+	inform_count = 0 :: non_neg_integer()
 }).
 
 -record(http_state, {
@@ -111,6 +114,10 @@ do_check_options([{keepalive, infinity}|Opts]) ->
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
 do_check_options([{max_headers, M}|Opts]) when is_integer(M), M > 0 ->
+	do_check_options(Opts);
+do_check_options([{max_informational, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{max_informational, M}|Opts]) when is_integer(M), M >= 0 ->
 	do_check_options(Opts);
 do_check_options([{max_header_block_size, M}|Opts]) when is_integer(M), M > 0 ->
 	do_check_options(Opts);
@@ -375,9 +382,7 @@ handle_head(Data, State=#http_state{opts=Opts,
 										Authority, Path, Status, Headers, CookieStore0, Opts),
 									handle_connect(Rest, State, CookieStore, EvHandler, EvHandlerState, Status, Headers);
 								_ when Status >= 100, Status =< 199 ->
-									CookieStore = gun_cookies:set_cookie_header(scheme(State),
-										Authority, Path, Status, Headers, CookieStore0, Opts),
-									handle_inform(Rest, State, CookieStore, EvHandler, EvHandlerState, Version, Status, Headers);
+									handle_inform(Rest, State, CookieStore0, EvHandler, EvHandlerState, Version, Status, Headers);
 								_ ->
 									case response_io_from_headers(Method, Version, Status, Headers) of
 										{error, Human} ->
@@ -462,24 +467,24 @@ handle_connect(Rest, State=#http_state{
 %% @todo We probably shouldn't send info messages if the stream is not alive.
 handle_inform(Rest, State=#http_state{
 		streams=[Stream=#stream{ref=StreamRef, reply_to=ReplyTo}|_]},
-		CookieStore, EvHandler, EvHandlerState0, Version, Status, Headers) ->
-	EvHandlerState = EvHandler:response_inform(#{
-		stream_ref => stream_ref(State, StreamRef),
-		reply_to => ReplyTo,
-		status => Status,
-		headers => Headers
-	}, EvHandlerState0),
+		CookieStore0, EvHandler, EvHandlerState0, Version, Status, Headers) ->
 	case {Version, Status, StreamRef} of
 		{'HTTP/1.1', 101, #websocket{}} ->
+			CookieStore = inform_cookies(State, Status, Headers, CookieStore0),
+			EvHandlerState = inform_event(State, StreamRef, ReplyTo,
+				Status, Headers, EvHandler, EvHandlerState0),
 			{ws_handshake(Rest, State, StreamRef, Headers), CookieStore, EvHandlerState};
 		%% Any other 101 response results in us switching to the raw protocol,
 		%% except when we didn't request an upgrade.
 		{'HTTP/1.1', 101, _} when is_reference(StreamRef) ->
+			CookieStore = inform_cookies(State, Status, Headers, CookieStore0),
+			EvHandlerState = inform_event(State, StreamRef, ReplyTo,
+				Status, Headers, EvHandler, EvHandlerState0),
 			case is_expected_upgrade_response(Headers, Stream) of
 				{true, Upgrade} ->
 					gun:reply(ReplyTo, {gun_upgrade, self(), stream_ref(State, StreamRef), Upgrade, Headers}),
 					%% @todo We probably need to add_stream_ref?
-					{{switch_protocol, raw, ReplyTo, Rest}, CookieStore, EvHandlerState0};
+					{{switch_protocol, raw, ReplyTo, Rest}, CookieStore, EvHandlerState};
 				false ->
 					gun:reply(ReplyTo, {gun_error, self(),
 						{connection_error, protocol_error,
@@ -487,8 +492,44 @@ handle_inform(Rest, State=#http_state{
 					{close, CookieStore, EvHandlerState}
 			end;
 		_ ->
-			gun:reply(ReplyTo, {gun_inform, self(), stream_ref(State, StreamRef), Status, Headers}),
-			handle(Rest, State, CookieStore, EvHandler, EvHandlerState)
+			case increment_inform_count(State) of
+				{ok, State1} ->
+					CookieStore = inform_cookies(State, Status, Headers, CookieStore0),
+					EvHandlerState = inform_event(State, StreamRef, ReplyTo,
+						Status, Headers, EvHandler, EvHandlerState0),
+					gun:reply(ReplyTo, {gun_inform, self(),
+						stream_ref(State, StreamRef), Status, Headers}),
+					handle(Rest, State1, CookieStore, EvHandler, EvHandlerState);
+				error ->
+					Reason = {connection_error, limit_reached,
+						"The number of informational responses exceeds the configured limit."},
+					gun:reply(ReplyTo, {gun_error, self(), Reason}),
+					{{error, Reason}, CookieStore0, EvHandlerState0}
+			end
+	end.
+
+inform_cookies(State=#http_state{opts=Opts,
+		streams=[#stream{authority=Authority, path=Path}|_]},
+		Status, Headers, CookieStore) ->
+	gun_cookies:set_cookie_header(scheme(State),
+		Authority, Path, Status, Headers, CookieStore, Opts).
+
+inform_event(State, StreamRef, ReplyTo, Status, Headers, EvHandler, EvHandlerState) ->
+	EvHandler:response_inform(#{
+		stream_ref => stream_ref(State, StreamRef),
+		reply_to => ReplyTo,
+		status => Status,
+		headers => Headers
+	}, EvHandlerState).
+
+increment_inform_count(State=#http_state{opts=Opts,
+		streams=[Stream=#stream{inform_count=Count0}|Tail]}) ->
+	Count = Count0 + 1,
+	case maps:get(max_informational, Opts, 8) of
+		Max when Max =:= infinity; Count =< Max ->
+			{ok, State#http_state{streams=[Stream#stream{inform_count=Count}|Tail]}};
+		_ ->
+			error
 	end.
 
 is_expected_upgrade_response(_, #stream{upgrade=[]}) ->

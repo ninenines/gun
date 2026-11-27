@@ -64,7 +64,10 @@
 	path :: undefined | iodata(),
 
 	%% Content handlers state.
-	handler_state :: undefined | gun_content_handler:state()
+	handler_state :: undefined | gun_content_handler:state(),
+
+	%% Informational responses received for this stream.
+	inform_count = 0 :: non_neg_integer()
 }).
 
 -record(http3_state, {
@@ -93,8 +96,20 @@
 	stream_refs = #{} :: #{reference() => reference()}
 }).
 
-check_options(_) ->
-	ok. %% @todo
+check_options(Opts) ->
+	do_check_options(maps:to_list(Opts)).
+
+%% @todo Validate the remaining options.
+do_check_options([]) ->
+	ok;
+do_check_options([{max_informational, infinity}|Opts]) ->
+	do_check_options(Opts);
+do_check_options([{max_informational, M}|Opts]) when is_integer(M), M >= 0 ->
+	do_check_options(Opts);
+do_check_options([Opt={max_informational, _}|_]) ->
+	{error, {options, {http3, Opt}}};
+do_check_options([_|Opts]) ->
+	do_check_options(Opts).
 
 name() -> http3.
 opts_name() -> http3_opts.
@@ -209,10 +224,11 @@ parse1(Data, State, Stream=#stream{id=StreamID}, IsFin,
 			FrameIsFin = is_fin(IsFin, Rest),
 			case frame(State, Stream, Frame, FrameIsFin,
 					CookieStore, EvHandler, EvHandlerState) of
-				%% @todo {error, _}.
 				{{state, State1}, CookieStore1, EvHandlerState1} ->
 					parse(Rest, State1, StreamID, IsFin,
-						CookieStore1, EvHandler, EvHandlerState1)
+						CookieStore1, EvHandler, EvHandlerState1);
+				Error = {{error, _}, _, _} ->
+					Error
 			end;
 		{more, Frame = {data, _}, Len} ->
 			%% We're at the end of the data so FrameIsFin is equivalent to IsFin.
@@ -369,29 +385,49 @@ headers_frame(State0=#http3_state{opts=Opts}, Stream, IsFin, Headers,
 		path=Path%,
 %		tunnel=Tunnel
 	} = Stream,
-	CookieStore = gun_cookies:set_cookie_header(<<"https">>,
-		Authority, Path, Status, Headers, CookieStore0, Opts),
-	{StateOrError, EvHandlerState} = if
+	if
 		Status >= 100, Status =< 199 ->
-			headers_frame_inform(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
+			headers_frame_inform(State0, Stream, Status, Headers,
+				CookieStore0, EvHandler, EvHandlerState0);
 %		Status >= 200, Status =< 299, element(#tunnel.state, Tunnel) =:= requested, IsFin =:= nofin ->
 %			headers_frame_connect(State0, Stream, Status, Headers, EvHandler, EvHandlerState0);
 		true ->
-			headers_frame_response(State0, Stream, IsFin, Status, Headers, EvHandler, EvHandlerState0)
-	end,
-	{StateOrError, CookieStore, EvHandlerState}.
+			CookieStore = gun_cookies:set_cookie_header(<<"https">>,
+				Authority, Path, Status, Headers, CookieStore0, Opts),
+			{StateOrError, EvHandlerState} = headers_frame_response(State0,
+				Stream, IsFin, Status, Headers, EvHandler, EvHandlerState0),
+			{StateOrError, CookieStore, EvHandlerState}
+	end.
 
-headers_frame_inform(State, #stream{ref=StreamRef, reply_to=ReplyTo},
-		Status, Headers, EvHandler, EvHandlerState0) ->
-	RealStreamRef = StreamRef, %% @todo stream_ref(State, StreamRef),
-	gun:reply(ReplyTo, {gun_inform, self(), RealStreamRef, Status, Headers}),
-	EvHandlerState = EvHandler:response_inform(#{
-		stream_ref => RealStreamRef,
-		reply_to => ReplyTo,
-		status => Status,
-		headers => Headers
-	}, EvHandlerState0),
-	{{state, State}, EvHandlerState}.
+headers_frame_inform(State0=#http3_state{opts=Opts},
+		Stream0=#stream{ref=StreamRef, reply_to=ReplyTo,
+			inform_count=Count0, authority=Authority, path=Path},
+		Status, Headers, CookieStore0, EvHandler, EvHandlerState0) ->
+	Count = Count0 + 1,
+	case maps:get(max_informational, Opts, 8) of
+		Max when Max =:= infinity; Count =< Max ->
+			CookieStore = gun_cookies:set_cookie_header(<<"https">>,
+				Authority, Path, Status, Headers, CookieStore0, Opts),
+			RealStreamRef = StreamRef, %% @todo stream_ref(State0, StreamRef),
+			gun:reply(ReplyTo, {gun_inform, self(), RealStreamRef, Status, Headers}),
+			EvHandlerState = EvHandler:response_inform(#{
+				stream_ref => RealStreamRef,
+				reply_to => ReplyTo,
+				status => Status,
+				headers => Headers
+			}, EvHandlerState0),
+			State = stream_update(State0, Stream0#stream{inform_count=Count}),
+			{{state, State}, CookieStore, EvHandlerState};
+		_ ->
+			{inform_limit_error(State0), CookieStore0, EvHandlerState0}
+	end.
+
+inform_limit_error(State) ->
+	Reason = {connection_error, limit_reached,
+		"The number of informational responses exceeds the configured limit."},
+	Pids = lists:usort([ReplyTo || #stream{reply_to=ReplyTo} <- active_streams(State)]),
+	_ = [gun:reply(Pid, {gun_error, self(), Reason}) || Pid <- Pids],
+	{error, Reason}.
 
 headers_frame_response(State=#http3_state{content_handlers=Handlers0},
 		Stream=#stream{ref=StreamRef, reply_to=ReplyTo},
@@ -667,10 +703,27 @@ timeout(_State, _Timeout, _TRef) ->
 stream_info(_State, StreamRef) when is_reference(StreamRef) ->
 	error(unimplemented).
 
--spec down(_) -> no_return().
+down(State) ->
+	[Ref || #stream{ref=Ref} <- active_streams(State)].
 
-down(_State) ->
-	error(todo).
+%% Response not finished. Unidirectional streams are omitted: their
+%% ref is a dummy that is never sent to the user. A finished response
+%% stays in the stream map until the QUIC stream closes.
+active_streams(#http3_state{streams=Streams, http3_machine=HTTP3Machine}) ->
+	maps:fold(fun(StreamID, Stream=#stream{reply_to=ReplyTo}, Acc) ->
+		case ReplyTo of
+			undefined ->
+				Acc;
+			_ ->
+				case cow_http3_machine:get_bidi_stream_remote_state(
+						StreamID, HTTP3Machine) of
+					{ok, fin} ->
+						Acc;
+					_ ->
+						[Stream|Acc]
+				end
+		end
+	end, [], Streams).
 
 -spec ws_upgrade(_, _, _, _, _, _, _, _, _, _, _) -> no_return().
 
